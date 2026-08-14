@@ -2,6 +2,8 @@ const { getDirectorFromRequest, kv } = require("./_directorAuth");
 
 const WEEKS_KEY = "reload-league-weeks"; // shared with the incentive site — read only, never written here
 const TEAMS_KEY = "consultant-teams";
+const RECORDS_KEY = "atlas-fee-records";
+const PLACEMENTS_KEY = "atlas-placements";
 
 // Same roster the incentive site's own Team Lead Bonus uses — coordinators
 // don't do CV/interview work, so they're deliberately excluded here too.
@@ -28,6 +30,13 @@ const TEAM_LEAD_NAMES = {
   "josh-stark": "Josh Stark",
 };
 
+function emptyMonthEntry(monthKey) {
+  return { month: monthKey, cvs: 0, interviews: 0, onsite: 0, offers: 0, placements: 0 };
+}
+function emptyYearTotal() {
+  return { cvs: 0, interviews: 0, onsite: 0, offers: 0, placements: 0 };
+}
+
 module.exports = async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
@@ -43,9 +52,11 @@ module.exports = async (req, res) => {
 
   const year = req.query.year ? parseInt(req.query.year, 10) : new Date().getUTCFullYear();
 
-  const [weeks, teamOverrides] = await Promise.all([
+  const [weeks, teamOverrides, records, placements] = await Promise.all([
     kv.get(WEEKS_KEY).then((v) => v || []),
     kv.get(TEAMS_KEY).then((v) => v || {}),
+    kv.get(RECORDS_KEY).then((v) => v || []),
+    kv.get(PLACEMENTS_KEY).then((v) => v || {}),
   ]);
 
   // Current roster: default list plus anyone who's had their team
@@ -56,53 +67,71 @@ module.exports = async (req, res) => {
     .filter((v, i, a) => a.indexOf(v) === i)
     .filter((cid) => DEFAULT_TEAM_BY_CONSULTANT[cid] || teamOverrides[cid]);
 
-  // Per consultant, per month — using the week's own recorded date, exactly
-  // like team-lead-bonus.js does, not re-deriving month from an ISO week
-  // number. Deliberately does NOT check the week's "excluded" flag — that
-  // flag only affects league ranking for that week, it doesn't mean the
-  // consultant's real CV/interview activity didn't happen.
   const perConsultant = {};
   for (const cid of roster) {
-    perConsultant[cid] = { consultantId: cid, consultantName: CONSULTANT_NAMES[cid] || cid, monthly: {}, yearTotal: { cvs: 0, interviews: 0 } };
+    perConsultant[cid] = { consultantId: cid, consultantName: CONSULTANT_NAMES[cid] || cid, monthly: {}, yearTotal: emptyYearTotal() };
   }
   // Team leads get their own entries too, built and populated in an
   // entirely separate pass below — never sharing a loop with the regular
   // consultant roster, so there's no code path where a mix-up could occur.
   for (const cid of Object.keys(TEAM_LEAD_NAMES)) {
-    perConsultant[cid] = { consultantId: cid, consultantName: TEAM_LEAD_NAMES[cid], isTeamLead: true, monthly: {}, yearTotal: { cvs: 0, interviews: 0 } };
+    perConsultant[cid] = { consultantId: cid, consultantName: TEAM_LEAD_NAMES[cid], isTeamLead: true, monthly: {}, yearTotal: emptyYearTotal() };
   }
 
+  // CVs, interviews, onsite, offers — from the incentive site's weekly
+  // tracking. Deliberately does NOT check the week's "excluded" flag —
+  // that flag only affects league ranking for that week, it doesn't mean
+  // the consultant's real activity didn't happen.
   for (const week of weeks) {
     if (!week.date || !week.date.startsWith(String(year))) continue;
     const monthKey = week.date.slice(0, 7); // YYYY-MM
 
     for (const [consultantId, row] of Object.entries(week.rows || {})) {
-      if (!perConsultant[consultantId]) continue; // not a currently tracked consultant
+      if (!perConsultant[consultantId]) continue;
+      if (!perConsultant[consultantId].monthly[monthKey]) perConsultant[consultantId].monthly[monthKey] = emptyMonthEntry(monthKey);
+      const m = perConsultant[consultantId].monthly[monthKey];
       const cvs = Number(row.cvs) || 0;
       const interviews = Number(row.interviews) || 0;
-      if (!perConsultant[consultantId].monthly[monthKey]) {
-        perConsultant[consultantId].monthly[monthKey] = { month: monthKey, cvs: 0, interviews: 0 };
-      }
-      perConsultant[consultantId].monthly[monthKey].cvs += cvs;
-      perConsultant[consultantId].monthly[monthKey].interviews += interviews;
-      perConsultant[consultantId].yearTotal.cvs += cvs;
-      perConsultant[consultantId].yearTotal.interviews += interviews;
+      const onsite = Number(row.onsite) || 0;
+      const offers = Number(row.offers) || 0;
+      m.cvs += cvs; m.interviews += interviews; m.onsite += onsite; m.offers += offers;
+      const yt = perConsultant[consultantId].yearTotal;
+      yt.cvs += cvs; yt.interviews += interviews; yt.onsite += onsite; yt.offers += offers;
     }
 
     // Separate pass over leadRows — deliberately its own loop, reading a
     // field that only ever contains James's and Josh's own numbers.
     for (const [consultantId, row] of Object.entries(week.leadRows || {})) {
       if (!perConsultant[consultantId]) continue;
+      if (!perConsultant[consultantId].monthly[monthKey]) perConsultant[consultantId].monthly[monthKey] = emptyMonthEntry(monthKey);
+      const m = perConsultant[consultantId].monthly[monthKey];
       const cvs = Number(row.cvs) || 0;
       const interviews = Number(row.interviews) || 0;
-      if (!perConsultant[consultantId].monthly[monthKey]) {
-        perConsultant[consultantId].monthly[monthKey] = { month: monthKey, cvs: 0, interviews: 0 };
-      }
-      perConsultant[consultantId].monthly[monthKey].cvs += cvs;
-      perConsultant[consultantId].monthly[monthKey].interviews += interviews;
-      perConsultant[consultantId].yearTotal.cvs += cvs;
-      perConsultant[consultantId].yearTotal.interviews += interviews;
+      const onsite = Number(row.onsite) || 0;
+      const offers = Number(row.offers) || 0;
+      m.cvs += cvs; m.interviews += interviews; m.onsite += onsite; m.offers += offers;
+      const yt = perConsultant[consultantId].yearTotal;
+      yt.cvs += cvs; yt.interviews += interviews; yt.onsite += onsite; yt.offers += offers;
     }
+  }
+
+  // Placements — a genuine placement (a real linked candidate name, not an
+  // onsite fee), bucketed by the placement's own start date, same fields
+  // the Yearly Deal Table already trusts. Counted regardless of currency
+  // or exchange rate availability, since this is a headcount of placements,
+  // not a revenue figure — a missing FX rate should never hide a real
+  // placement from this count.
+  for (const r of records) {
+    if (!r.consultantId || !perConsultant[r.consultantId]) continue;
+    const placement = r.placementId ? placements[r.placementId] : null;
+    const hasPlacementName = !!(placement && placement.candidateName);
+    if (!hasPlacementName) continue;
+    const startDate = placement.startDate;
+    if (!startDate || !startDate.startsWith(String(year))) continue;
+    const monthKey = startDate.slice(0, 7);
+    if (!perConsultant[r.consultantId].monthly[monthKey]) perConsultant[r.consultantId].monthly[monthKey] = emptyMonthEntry(monthKey);
+    perConsultant[r.consultantId].monthly[monthKey].placements += 1;
+    perConsultant[r.consultantId].yearTotal.placements += 1;
   }
 
   const consultants = Object.values(perConsultant).map((c) => ({
