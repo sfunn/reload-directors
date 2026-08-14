@@ -640,12 +640,127 @@ function ConsultantStatsPage({ token }) {
   );
 }
 
+function CompanyOverviewPage({ token }) {
+  const [year, setYear] = useState(new Date().getUTCFullYear());
+  const [data, setData] = useState(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [grossProfitInput, setGrossProfitInput] = useState("");
+  const [notesInput, setNotesInput] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState("");
+
+  const load = useCallback(async () => {
+    setError(""); setLoading(true);
+    try {
+      const res = await fetch(`/api/company-overview?year=${year}`, { headers: { Authorization: `Bearer ${token}` } });
+      const body = await res.json();
+      if (!res.ok) { setError(body.error || "Couldn't load company figures."); return; }
+      setData(body);
+      setGrossProfitInput(body.grossProfitUSD !== null && body.grossProfitUSD !== undefined ? String(body.grossProfitUSD) : "");
+      setNotesInput(body.grossProfitNotes || "");
+    } catch (e) {
+      setError("Couldn't reach the server.");
+    } finally {
+      setLoading(false);
+    }
+  }, [token, year]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function saveGrossProfit() {
+    setSaveError(""); setSaving(true);
+    try {
+      const res = await fetch("/api/company-overview?action=set-manual-metric", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ year, grossProfitUSD: grossProfitInput, notes: notesInput }),
+      });
+      if (!res.ok) { const body = await res.json(); setSaveError(body.error || "Couldn't save."); return; }
+      await load();
+    } catch (e) {
+      setSaveError("Couldn't reach the server.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 20 } },
+    React.createElement(Panel, null,
+      React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 } },
+        React.createElement(SectionTitle, { eyebrow: "Directors only", title: "Company Overview" }),
+        React.createElement("div", { style: { display: "flex", gap: 6 } },
+          YEAR_OPTIONS.map(y => React.createElement("button", {
+            key: y, onClick: () => setYear(y),
+            style: { ...chipStyle, background: year === y ? MELON : "rgba(255,176,140,0.14)", fontWeight: year === y ? 700 : 500 }
+          }, y))
+        )
+      )
+    ),
+    error && React.createElement("div", { style: errorStyle }, error),
+    loading && React.createElement(Panel, null, React.createElement("div", { style: { padding: 20, textAlign: "center", color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif" } }, "Loading…")),
+    !loading && data && React.createElement(React.Fragment, null,
+      React.createElement(Panel, null,
+        React.createElement("div", { style: { display: "flex", gap: 30, flexWrap: "wrap" } },
+          React.createElement("div", { style: { flex: 1, minWidth: 160 } },
+            React.createElement("div", { style: labelStyle }, "Revenue / NFI"),
+            React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO } }, `$${Math.round(data.totalRevenueUSD).toLocaleString()}`),
+            React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginTop: 2 } }, `${data.countedDeals} deals counted`)
+          ),
+          React.createElement("div", { style: { flex: 1, minWidth: 160 } },
+            React.createElement("div", { style: labelStyle }, "Average Fee"),
+            React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO } }, `$${Math.round(data.averageFeeUSD).toLocaleString()}`)
+          ),
+          React.createElement("div", { style: { flex: 1, minWidth: 160 } },
+            React.createElement("div", { style: labelStyle }, "Gross Profit"),
+            React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: data.grossProfitUSD !== null ? VERDIGRIS : INDIGO_MUTED } },
+              data.grossProfitUSD !== null ? `$${Math.round(data.grossProfitUSD).toLocaleString()}` : "Not set"
+            )
+          )
+        )
+      ),
+      React.createElement(Panel, null,
+        React.createElement("div", { style: labelStyle }, "Client Concentration"),
+        React.createElement("div", { style: { display: "flex", gap: 30, marginBottom: 14, fontSize: 13.5 } },
+          React.createElement("div", null, React.createElement("span", { style: labelStyle }, "Top 3 clients: "), React.createElement("strong", null, `${data.top3Percentage.toFixed(1)}%`), " of revenue"),
+          React.createElement("div", null, React.createElement("span", { style: labelStyle }, "Top 5 clients: "), React.createElement("strong", null, `${data.top5Percentage.toFixed(1)}%`), " of revenue")
+        ),
+        data.clientConcentration.length === 0
+          ? React.createElement("div", { style: { color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif", fontSize: 14 } }, "No deals recorded yet for this year.")
+          : data.clientConcentration.slice(0, 10).map(c => React.createElement("div", {
+              key: c.client, style: { display: "flex", justifyContent: "space-between", padding: "6px 0", fontFamily: "'Work Sans', sans-serif", fontSize: 14, borderBottom: `1px solid ${INDIGO_HAIRLINE}` }
+            },
+              React.createElement("span", null, c.client),
+              React.createElement("span", { style: { color: INDIGO_MUTED } }, `$${Math.round(c.totalUSD).toLocaleString()} · ${c.percentage.toFixed(1)}%`)
+            ))
+      ),
+      React.createElement(Panel, null,
+        React.createElement("div", { style: labelStyle }, "Gross Profit — manual entry"),
+        React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Atlas has no visibility into costs, so this has to be entered by hand from your accounts — e.g. once a quarter from Xero."),
+        saveError && React.createElement("div", { style: errorStyle }, saveError),
+        React.createElement("div", { style: { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" } },
+          React.createElement("div", null,
+            React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Gross profit (USD)"),
+            React.createElement("input", { type: "number", value: grossProfitInput, onChange: e => setGrossProfitInput(e.target.value), placeholder: "e.g. 250000", style: { ...inputStyle, width: 160, marginBottom: 0 } })
+          ),
+          React.createElement("div", { style: { flex: 1, minWidth: 200 } },
+            React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Notes"),
+            React.createElement("input", { type: "text", value: notesInput, onChange: e => setNotesInput(e.target.value), placeholder: "e.g. From Xero, Q3 export", style: { ...inputStyle, width: "100%", marginBottom: 0 } })
+          ),
+          React.createElement("button", { onClick: saveGrossProfit, disabled: saving, style: { ...ghostStyle, padding: "9px 16px" } }, saving ? "Saving…" : "Save")
+        )
+      )
+    )
+  );
+}
+
 function MainShell({ token, email, onLogout }) {
   const [tab, setTab] = useState("deals");
   const tabs = [
     { id: "deals", label: "Yearly Deal Table" },
     { id: "commission", label: "Commission" },
     { id: "stats", label: "Consultant Stats" },
+    { id: "overview", label: "Company Overview" },
   ];
 
   return React.createElement("div", { style: { minHeight: "100vh", background: IVORY, fontFamily: "'Work Sans', sans-serif" } },
@@ -674,7 +789,8 @@ function MainShell({ token, email, onLogout }) {
     React.createElement("div", { style: { maxWidth: 1300, margin: "0 auto", padding: "26px 20px 60px" } },
       tab === "deals" && React.createElement(DealsPage, { token }),
       tab === "commission" && React.createElement(CommissionPage, { token }),
-      tab === "stats" && React.createElement(ConsultantStatsPage, { token })
+      tab === "stats" && React.createElement(ConsultantStatsPage, { token }),
+      tab === "overview" && React.createElement(CompanyOverviewPage, { token })
     )
   );
 }
