@@ -541,6 +541,7 @@ const STATS_CONSULTANT_NAMES = {
   "max-hart": "Max Hart", "oleg-sokyrka": "Oleg Sokyrka",
   "alex-aparo": "Alex Aparo", "jack-routledge": "Jack Routledge", "joe-purton": "Joe Purton",
   "josh-davis": "Josh Davis", "natasha-barnard": "Natasha Barnard",
+  "james-lancer": "James Lancer", "josh-stark": "Josh Stark",
 };
 const STATS_CONSULTANTS = Object.entries(STATS_CONSULTANT_NAMES)
   .map(([id, name]) => ({ id, name }))
@@ -607,6 +608,9 @@ function ConsultantStatsPage({ token }) {
     error && React.createElement("div", { style: errorStyle }, error),
     loading && React.createElement(Panel, null, React.createElement("div", { style: { padding: 20, textAlign: "center", color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif" } }, "Loading…")),
     !loading && current && React.createElement(Panel, null,
+      current.isTeamLead && React.createElement("div", { style: { fontSize: 11, color: MELON, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 10 } },
+        "Team lead — own activity, not part of League Table scoring"
+      ),
       current.monthly.length === 0
         ? React.createElement("div", { style: { color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif", fontSize: 14 } }, `No finalized weeks recorded yet for ${year}.`)
         : React.createElement(React.Fragment, null,
