@@ -667,9 +667,15 @@ function CompanyOverviewPage({ token }) {
   const [loading, setLoading] = useState(false);
   const [grossProfitInput, setGrossProfitInput] = useState("");
   const [notesInput, setNotesInput] = useState("");
+  const [cashInput, setCashInput] = useState("");
+  const [cashCurrencyInput, setCashCurrencyInput] = useState("");
+  const [cashNotesInput, setCashNotesInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [xeroStatus, setXeroStatus] = useState(null);
+  const [xeroPull, setXeroPull] = useState(null);
+  const [xeroPullError, setXeroPullError] = useState("");
+  const [xeroPulling, setXeroPulling] = useState(false);
 
   const loadXeroStatus = useCallback(async () => {
     try {
@@ -693,6 +699,9 @@ function CompanyOverviewPage({ token }) {
       setData(body);
       setGrossProfitInput(body.grossProfitUSD !== null && body.grossProfitUSD !== undefined ? String(body.grossProfitUSD) : "");
       setNotesInput(body.grossProfitNotes || "");
+      setCashInput(body.cashAmount !== null && body.cashAmount !== undefined ? String(body.cashAmount) : "");
+      setCashCurrencyInput(body.cashCurrency || "");
+      setCashNotesInput(body.cashNotes || "");
     } catch (e) {
       setError("Couldn't reach the server.");
     } finally {
@@ -708,7 +717,10 @@ function CompanyOverviewPage({ token }) {
       const res = await fetch("/api/company-overview?action=set-manual-metric", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ year, grossProfitUSD: grossProfitInput, notes: notesInput }),
+        body: JSON.stringify({
+          year, grossProfitUSD: grossProfitInput, notes: notesInput,
+          cashAmount: cashInput, cashCurrency: cashCurrencyInput, cashNotes: cashNotesInput,
+        }),
       });
       if (!res.ok) { const body = await res.json(); setSaveError(body.error || "Couldn't save."); return; }
       await load();
@@ -718,6 +730,21 @@ function CompanyOverviewPage({ token }) {
       setSaving(false);
     }
   }
+
+  async function pullFromXero() {
+    setXeroPullError(""); setXeroPulling(true); setXeroPull(null);
+    try {
+      const res = await fetch(`/api/xero-reports?year=${year}`, { headers: { Authorization: `Bearer ${token}` } });
+      const body = await res.json();
+      if (!res.ok) { setXeroPullError(body.error || "Couldn't pull from Xero."); return; }
+      setXeroPull(body);
+    } catch (e) {
+      setXeroPullError("Couldn't reach the server.");
+    } finally {
+      setXeroPulling(false);
+    }
+  }
+
 
   return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 20 } },
     React.createElement(Panel, null,
@@ -759,6 +786,12 @@ function CompanyOverviewPage({ token }) {
             React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: data.grossProfitUSD !== null ? VERDIGRIS : INDIGO_MUTED } },
               data.grossProfitUSD !== null ? `$${Math.round(data.grossProfitUSD).toLocaleString()}` : "Not set"
             )
+          ),
+          React.createElement("div", { style: { flex: 1, minWidth: 160 } },
+            React.createElement("div", { style: labelStyle }, "Cash"),
+            React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: data.cashAmount !== null ? VERDIGRIS : INDIGO_MUTED } },
+              data.cashAmount !== null ? `${data.cashCurrency || ""} ${Math.round(data.cashAmount).toLocaleString()}` : "Not set"
+            )
           )
         )
       ),
@@ -777,11 +810,50 @@ function CompanyOverviewPage({ token }) {
               React.createElement("span", { style: { color: INDIGO_MUTED } }, `$${Math.round(c.totalUSD).toLocaleString()} · ${c.percentage.toFixed(1)}%`)
             ))
       ),
+      xeroStatus && xeroStatus.connected && React.createElement(Panel, null,
+        React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 12 } },
+          React.createElement("div", { style: labelStyle }, "Pull from Xero"),
+          React.createElement("button", { onClick: pullFromXero, disabled: xeroPulling, style: { ...ghostStyle, padding: "8px 14px" } }, xeroPulling ? "Pulling…" : "Pull latest figures")
+        ),
+        xeroPullError && React.createElement("div", { style: errorStyle }, xeroPullError),
+        xeroPull && React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 12 } },
+          React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED } }, xeroPull.note),
+          React.createElement("div", { style: { display: "flex", gap: 30, flexWrap: "wrap" } },
+            React.createElement("div", null,
+              React.createElement("div", { style: labelStyle }, "Gross Profit (from Xero P&L)"),
+              xeroPull.grossProfit !== null
+                ? React.createElement(React.Fragment, null,
+                    React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 20, color: INDIGO } }, Math.round(xeroPull.grossProfit).toLocaleString()),
+                    React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED } }, `Matched row: "${xeroPull.grossProfitMatchedLabel}"`),
+                    React.createElement("button", {
+                      onClick: () => { setGrossProfitInput(String(Math.round(xeroPull.grossProfit))); setNotesInput(`Pulled from Xero P&L, ${xeroPull.periodStart} to ${xeroPull.periodEnd}`); },
+                      style: { ...ghostStyle, fontSize: 11, padding: "4px 10px", marginTop: 6 }
+                    }, "Use this figure")
+                  )
+                : React.createElement("div", { style: { color: MELON_LINK, fontSize: 13 } }, "Couldn't find a Gross Profit line in this report.")
+            ),
+            React.createElement("div", null,
+              React.createElement("div", { style: labelStyle }, "Cash (from Xero Balance Sheet)"),
+              xeroPull.cash !== null
+                ? React.createElement(React.Fragment, null,
+                    React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 20, color: INDIGO } }, Math.round(xeroPull.cash).toLocaleString()),
+                    React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED } }, `Matched row: "${xeroPull.cashMatchedLabel}" · as at ${xeroPull.asAtDate}`),
+                    React.createElement("button", {
+                      onClick: () => { setCashInput(String(Math.round(xeroPull.cash))); setCashNotesInput(`Pulled from Xero Balance Sheet, as at ${xeroPull.asAtDate}`); },
+                      style: { ...ghostStyle, fontSize: 11, padding: "4px 10px", marginTop: 6 }
+                    }, "Use this figure")
+                  )
+                : React.createElement("div", { style: { color: MELON_LINK, fontSize: 13 } }, "Couldn't find a Cash line in this report.")
+            )
+          ),
+          React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED } }, "Review the figures above, then set the currency for Cash below if you use it, and click Save to actually store them.")
+        )
+      ),
       React.createElement(Panel, null,
         React.createElement("div", { style: labelStyle }, "Gross Profit — manual entry"),
         React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Atlas has no visibility into costs, so this has to be entered by hand from your accounts — e.g. once a quarter from Xero."),
         saveError && React.createElement("div", { style: errorStyle }, saveError),
-        React.createElement("div", { style: { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" } },
+        React.createElement("div", { style: { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 16 } },
           React.createElement("div", null,
             React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Gross profit (USD)"),
             React.createElement("input", { type: "number", value: grossProfitInput, onChange: e => setGrossProfitInput(e.target.value), placeholder: "e.g. 250000", style: { ...inputStyle, width: 160, marginBottom: 0 } })
@@ -789,6 +861,22 @@ function CompanyOverviewPage({ token }) {
           React.createElement("div", { style: { flex: 1, minWidth: 200 } },
             React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Notes"),
             React.createElement("input", { type: "text", value: notesInput, onChange: e => setNotesInput(e.target.value), placeholder: "e.g. From Xero, Q3 export", style: { ...inputStyle, width: "100%", marginBottom: 0 } })
+          )
+        ),
+        React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Cash"),
+        React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Kept in whatever currency you enter — usually your Xero organisation's own currency, not converted to USD."),
+        React.createElement("div", { style: { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" } },
+          React.createElement("div", null,
+            React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Amount"),
+            React.createElement("input", { type: "number", value: cashInput, onChange: e => setCashInput(e.target.value), placeholder: "e.g. 75000", style: { ...inputStyle, width: 140, marginBottom: 0 } })
+          ),
+          React.createElement("div", null,
+            React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Currency"),
+            React.createElement("input", { type: "text", value: cashCurrencyInput, onChange: e => setCashCurrencyInput(e.target.value), placeholder: "e.g. GBP", style: { ...inputStyle, width: 90, marginBottom: 0 } })
+          ),
+          React.createElement("div", { style: { flex: 1, minWidth: 200 } },
+            React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Notes"),
+            React.createElement("input", { type: "text", value: cashNotesInput, onChange: e => setCashNotesInput(e.target.value), placeholder: "e.g. From Xero Balance Sheet", style: { ...inputStyle, width: "100%", marginBottom: 0 } })
           ),
           React.createElement("button", { onClick: saveGrossProfit, disabled: saving, style: { ...ghostStyle, padding: "9px 16px" } }, saving ? "Saving…" : "Save")
         )
