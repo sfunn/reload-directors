@@ -97,17 +97,20 @@ async function handleConnect(req, res) {
   // callback — see the note in handleCallback below.)
   const state = Math.random().toString(36).slice(2) + Date.now().toString(36);
 
-  // These three scopes plus offline_access were the last known-working
-  // set on the incentive site, after accounting.settings.read was removed
-  // to fix an invalid_scope error. That fix was never verified against
-  // Xero's own current documentation, since there's no web search access
-  // in this environment. If this specific error recurs, check Xero's live
-  // developer docs directly rather than guessing at more scope names.
+  // Confirmed directly against this Xero app's own scope list (screenshot
+  // from developer.xero.com), not guessed — "accounting.reports.read"
+  // never existed as a real Xero scope at all, which is why every earlier
+  // attempt at this kept failing with invalid_scope, on both this site and
+  // the incentive site before it. Xero splits report access into specific
+  // report types instead. These two are scoped to exactly what Gross
+  // Profit (Profit and Loss) and Cash (Balance Sheet) actually need, not a
+  // broader grant than the feature requires.
   const scopes = [
     "openid",
     "profile",
     "email",
-    "accounting.reports.read",
+    "accounting.reports.profitandloss.read",
+    "accounting.reports.balancesheet.read",
     "offline_access",
   ].join(" ");
 
