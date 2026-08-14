@@ -78,19 +78,6 @@ async function handleConnect(req, res) {
     return res.status(500).json({ error: "Xero isn't configured yet — XERO_CLIENT_ID and XERO_REDIRECT_URI must be set in Vercel." });
   }
 
-  // Temporary diagnostic — visit this same URL with &debug=1 appended to
-  // see the EXACT value this server is about to send, with visible
-  // boundary markers so invisible trailing whitespace or a stray
-  // character shows up instead of hiding in a normal text comparison.
-  // Safe to remove once the redirect_uri mismatch is actually found.
-  if (req.query.debug) {
-    return res.status(200).json({
-      redirectUriBeingSent: `[${redirectUri}]`,
-      length: redirectUri.length,
-      charCodes: [...redirectUri].map((c) => c.charCodeAt(0)),
-    });
-  }
-
   // A random value Xero echoes back unchanged — lets the callback confirm
   // this specific request initiated the flow, rather than blindly trusting
   // whatever comes back. (Not yet verified against a stored value on
