@@ -154,52 +154,137 @@ function LoginPage({ onLoggedIn }) {
   );
 }
 
-function ProofPage({ token, email, onLogout }) {
+function TableHeader({ cols }) {
+  return React.createElement("div", {
+    style: { display: "flex", gap: 10, padding: "0 0 8px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, fontSize: 11, letterSpacing: "0.06em", color: INDIGO_MUTED, textTransform: "uppercase" }
+  }, cols.map((c, i) => {
+    const isObj = c && typeof c === "object";
+    const label = isObj ? c.label : c;
+    const width = isObj ? c.width : (i === 1 ? undefined : 70);
+    const flex = isObj ? c.flex : (i === 1 ? 1 : undefined);
+    return React.createElement("div", { key: i, style: { width: flex ? undefined : width, minWidth: flex ? undefined : width, flexShrink: flex ? undefined : 0, flex: flex ? 1 : undefined } }, label);
+  }));
+}
+function RowLine({ children, highlighted }) {
+  return React.createElement("div", {
+    style: { display: "flex", gap: 10, alignItems: "center", padding: "9px 0", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, background: highlighted ? "rgba(255,176,140,0.08)" : "transparent" }
+  }, children);
+}
+function Cell({ children, width, flex, bold, color }) {
+  return React.createElement("div", {
+    style: { width: flex ? undefined : width, minWidth: flex ? undefined : width, flexShrink: flex ? undefined : 0, flex: flex ? 1 : undefined, fontFamily: "'Work Sans', sans-serif", fontWeight: bold ? 700 : 400, fontSize: 14, color: color || INDIGO }
+  }, children);
+}
+const labelStyle = { display: "block", fontFamily: "'Work Sans', sans-serif", fontWeight: 600, fontSize: 11, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 };
+const chipStyle = { background: "rgba(255,176,140,0.14)", border: `1px solid ${MELON}`, color: MELON_LINK, borderRadius: 20, padding: "6px 12px", fontSize: 12.5, cursor: "pointer", fontFamily: "'Work Sans', sans-serif", fontWeight: 500 };
+
+const YEAR_OPTIONS = [2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026, 2027];
+
+function DealsPage({ token }) {
+  const [year, setYear] = useState(new Date().getUTCFullYear());
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
-    setError("");
+    setError(""); setLoading(true);
     try {
-      const res = await fetch("/api/overview", { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch(`/api/deals?year=${year}`, { headers: { Authorization: `Bearer ${token}` } });
       const body = await res.json();
-      if (!res.ok) { setError(body.error || "Couldn't load data."); return; }
+      if (!res.ok) { setError(body.error || "Couldn't load deals."); return; }
       setData(body);
     } catch (e) {
       setError("Couldn't reach the server.");
+    } finally {
+      setLoading(false);
     }
-  }, [token]);
+  }, [token, year]);
 
   useEffect(() => { load(); }, [load]);
+
+  return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 20 } },
+    React.createElement(Panel, null,
+      React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 } },
+        React.createElement(SectionTitle, { eyebrow: "Directors only", title: "Yearly Deal Table" }),
+        React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+          YEAR_OPTIONS.map(y => React.createElement("button", {
+            key: y, onClick: () => setYear(y),
+            style: { ...chipStyle, background: year === y ? MELON : "rgba(255,176,140,0.14)", fontWeight: year === y ? 700 : 500 }
+          }, y))
+        )
+      )
+    ),
+    error && React.createElement("div", { style: errorStyle }, error),
+    loading && React.createElement(Panel, null, React.createElement("div", { style: { padding: 20, textAlign: "center", color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif" } }, "Loading…")),
+    !loading && data && React.createElement(React.Fragment, null,
+      React.createElement(Panel, null,
+        React.createElement("div", { style: labelStyle }, "Deal details"),
+        data.records.length === 0
+          ? React.createElement("div", { style: { color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif", fontSize: 14, padding: "20px 0" } }, "No deals recorded yet for this year.")
+          : React.createElement(React.Fragment, null,
+              React.createElement(TableHeader, { cols: [
+                { label: "Consultant", width: 150 },
+                { label: "Candidate / Client", flex: 1 },
+                { label: "Start date", width: 110 },
+                { label: "Currency", width: 80 },
+                { label: "Amount (USD)", width: 130 },
+                { label: "Paid", width: 60 },
+              ] }),
+              data.records.map((r, i) => React.createElement(RowLine, { key: `${r.feeId}-${r.splitId}`, highlighted: !r.hasPlacementName },
+                React.createElement(Cell, { width: 150 }, r.consultantName || r.consultantId),
+                React.createElement(Cell, { flex: 1 },
+                  r.hasPlacementName ? r.candidateName : `${r.candidateName || "Onsite fee"} (onsite)`,
+                  r.clientCompanyName && React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED } }, r.clientCompanyName)
+                ),
+                React.createElement(Cell, { width: 110 }, r.placementStartDate ? new Date(r.placementStartDate).toLocaleDateString("en-GB") : "—"),
+                React.createElement(Cell, { width: 80 }, r.currency),
+                React.createElement(Cell, { width: 130, bold: true }, r.usdAmount !== null ? `$${Math.round(r.usdAmount).toLocaleString()}` : React.createElement("span", { style: { color: MELON_LINK } }, "No rate set")),
+                React.createElement(Cell, { width: 60, color: r.paid ? VERDIGRIS : INDIGO_MUTED }, r.paid ? "Yes" : "No")
+              ))
+            )
+      ),
+      React.createElement(Panel, null,
+        React.createElement("div", { style: labelStyle }, "Client breakdown"),
+        data.clientBreakdown.length === 0
+          ? React.createElement("div", { style: { color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif", fontSize: 14 } }, "No client data yet.")
+          : data.clientBreakdown.map(c => React.createElement("div", { key: c.firm, style: { display: "flex", justifyContent: "space-between", padding: "6px 0", fontFamily: "'Work Sans', sans-serif", fontSize: 14, borderBottom: `1px solid ${INDIGO_HAIRLINE}` } },
+              React.createElement("span", null, c.firm),
+              React.createElement("span", { style: { color: INDIGO_MUTED } }, `$${Math.round(c.totalUSD).toLocaleString()} · ${c.percentage.toFixed(1)}%`)
+            ))
+      )
+    )
+  );
+}
+
+function MainShell({ token, email, onLogout }) {
+  const [tab, setTab] = useState("deals");
+  const tabs = [{ id: "deals", label: "Yearly Deal Table" }];
 
   return React.createElement("div", { style: { minHeight: "100vh", background: IVORY, fontFamily: "'Work Sans', sans-serif" } },
     React.createElement("style", null, fontImport),
     React.createElement("div", { style: { padding: "24px 24px 0", background: WHITE, borderBottom: `1px solid ${INDIGO_HAIRLINE}` } },
-      React.createElement("div", { style: { maxWidth: 1300, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, paddingBottom: 18 } },
-        React.createElement("img", { src: LOGO_SRC, alt: "Reload", style: { height: 30 } }),
-        React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 14 } },
-          React.createElement("div", { style: { fontFamily: "'Work Sans', sans-serif", fontSize: 12, color: INDIGO_MUTED } }, email),
-          React.createElement("button", { onClick: onLogout, style: ghostStyle }, "Log out")
+      React.createElement("div", { style: { maxWidth: 1300, margin: "0 auto" } },
+        React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, paddingBottom: 18 } },
+          React.createElement("img", { src: LOGO_SRC, alt: "Reload", style: { height: 30 } }),
+          React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 14 } },
+            React.createElement("div", { style: { fontFamily: "'Work Sans', sans-serif", fontSize: 12, color: INDIGO_MUTED } }, email),
+            React.createElement("button", { onClick: onLogout, style: ghostStyle }, "Log out")
+          )
+        ),
+        React.createElement("div", { style: { display: "flex", gap: 4 } },
+          tabs.map(t => React.createElement("button", {
+            key: t.id, onClick: () => setTab(t.id),
+            style: {
+              background: "none", border: "none", cursor: "pointer", padding: "10px 14px",
+              fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, fontWeight: tab === t.id ? 700 : 500,
+              color: tab === t.id ? INDIGO : INDIGO_MUTED, borderBottom: tab === t.id ? `2px solid ${MELON}` : "2px solid transparent",
+            }
+          }, t.label))
         )
       )
     ),
     React.createElement("div", { style: { maxWidth: 1300, margin: "0 auto", padding: "26px 20px 60px" } },
-      React.createElement(SectionTitle, { eyebrow: "Company Overview", title: "Directors" }),
-      error && React.createElement("div", { style: errorStyle }, error),
-      !data && !error && React.createElement("div", { style: { fontFamily: "'Work Sans', sans-serif", color: INDIGO_MUTED } }, "Loading…"),
-      data && React.createElement(Panel, null,
-        React.createElement("div", { style: { fontSize: 12, color: VERDIGRIS, marginBottom: 16, fontFamily: "'Work Sans', sans-serif" } }, data.proof),
-        React.createElement("div", { style: { display: "flex", gap: 40, flexWrap: "wrap" } },
-          React.createElement("div", null,
-            React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif", textTransform: "uppercase", letterSpacing: "0.08em" } }, "Total deals in shared database"),
-            React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 28, color: INDIGO } }, data.totalDeals)
-          ),
-          React.createElement("div", null,
-            React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif", textTransform: "uppercase", letterSpacing: "0.08em" } }, "Total raw fee amount"),
-            React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 28, color: INDIGO } }, `$${Math.round(data.totalRawAmount).toLocaleString()}`)
-          )
-        )
-      )
+      tab === "deals" && React.createElement(DealsPage, { token })
     )
   );
 }
@@ -217,7 +302,7 @@ function App() {
 
   return !token
     ? React.createElement(LoginPage, { onLoggedIn: (t, e) => { setToken(t); setEmail(e); } })
-    : React.createElement(ProofPage, { token, email, onLogout: handleLogout });
+    : React.createElement(MainShell, { token, email, onLogout: handleLogout });
 }
 
 const root = ReactDOM.createRoot(document.getElementById("root"));
