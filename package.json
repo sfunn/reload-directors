@@ -1,1 +1,11 @@
 
+{
+  "name": "reload-directors",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "@vercel/kv": "^1.0.1",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2"
+  }
+}
