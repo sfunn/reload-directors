@@ -48,6 +48,25 @@ async function convertToUSD(record, allRates) {
   return record.shareAmount * rate;
 }
 
+// GBP is Reload's own real reporting currency — the one Xero and the
+// actual accounts use — so this is now the PRIMARY figure on this page,
+// with USD kept only as a secondary reference number. Same conversion
+// logic already proven in commission.js, ported here rather than
+// re-derived, including the via-USD bridge for EUR.
+function convertToGBP(record, allRates) {
+  if (record.currency === "GBP") return record.shareAmount;
+  const gbpRate = getRateForCurrency(record, allRates, "GBP");
+  if (!gbpRate) return null;
+  if (record.currency === "USD") return record.shareAmount / gbpRate;
+  if (record.currency === "EUR") {
+    const eurRate = getRateForCurrency(record, allRates, "EUR");
+    if (!eurRate) return null;
+    const usdEquivalent = record.shareAmount * eurRate;
+    return usdEquivalent / gbpRate;
+  }
+  return null;
+}
+
 // --- End direct port ---
 
 module.exports = async (req, res) => {
@@ -71,48 +90,94 @@ module.exports = async (req, res) => {
     ]);
 
     const yearRecords = records.filter((r) => effectiveYear(r, placements) === year);
+    let totalRevenueGBP = 0;
     let totalRevenueUSD = 0;
     let countedDeals = 0;
     const byClient = {};
     for (const r of yearRecords) {
+      const gbp = convertToGBP(r, allRates);
       const usd = await convertToUSD(r, allRates);
-      if (usd === null) continue;
-      totalRevenueUSD += usd;
+      // GBP is now the primary, deal-counting figure — a deal only counts
+      // toward the headline totals once it can actually convert to GBP.
+      // The USD figure is tracked alongside from the exact same set of
+      // deals wherever it's available, purely as a secondary reference,
+      // never driving its own separate deal count.
+      if (gbp === null) continue;
+      totalRevenueGBP += gbp;
+      if (usd !== null) totalRevenueUSD += usd;
       countedDeals += 1;
       const placement = r.placementId ? placements[r.placementId] : null;
       const client = (placement && placement.clientCompanyName) || r.projectClientName || "Unknown";
-      byClient[client] = (byClient[client] || 0) + usd;
+      if (!byClient[client]) byClient[client] = { gbp: 0, usd: 0 };
+      byClient[client].gbp += gbp;
+      if (usd !== null) byClient[client].usd += usd;
     }
 
+    const averageFeeGBP = countedDeals > 0 ? totalRevenueGBP / countedDeals : 0;
     const averageFeeUSD = countedDeals > 0 ? totalRevenueUSD / countedDeals : 0;
 
     const clientConcentration = Object.entries(byClient)
-      .map(([client, usd]) => ({ client, totalUSD: usd, percentage: totalRevenueUSD > 0 ? (usd / totalRevenueUSD) * 100 : 0 }))
-      .sort((a, b) => b.totalUSD - a.totalUSD);
+      .map(([client, v]) => ({
+        client,
+        totalGBP: v.gbp,
+        totalUSD: v.usd,
+        percentage: totalRevenueGBP > 0 ? (v.gbp / totalRevenueGBP) * 100 : 0,
+      }))
+      .sort((a, b) => b.totalGBP - a.totalGBP);
     const top3Percentage = clientConcentration.slice(0, 3).reduce((s, c) => s + c.percentage, 0);
     const top5Percentage = clientConcentration.slice(0, 5).reduce((s, c) => s + c.percentage, 0);
 
     const manual = manualMetrics[year] || {};
 
+    // A small USD reference figure alongside Gross Profit/Cash, reusing
+    // the exact same rate-lookup logic above rather than a new one — only
+    // computed when the entered currency is one we can actually convert
+    // (GBP, EUR, or already USD); left out entirely rather than guessed
+    // for anything else.
+    async function usdEquivalentFor(amount, currency) {
+      if (amount === null || amount === undefined || !currency) return null;
+      if (currency === "USD") return amount;
+      const pseudoRecord = { currency, shareAmount: amount, paid: false, paidMarkedAt: null };
+      return convertToUSD(pseudoRecord, allRates);
+    }
+    const grossProfitAmount = manual.grossProfitAmount ?? manual.grossProfitUSD ?? null;
+    const grossProfitCurrency = manual.grossProfitCurrency || (manual.grossProfitUSD != null ? "USD" : null);
+    const cashAmount = manual.cashAmount ?? null;
+    const cashCurrency = manual.cashCurrency || null;
+
     return res.status(200).json({
-      year, totalRevenueUSD, countedDeals, averageFeeUSD,
+      year,
+      totalRevenueGBP, totalRevenueUSD, countedDeals,
+      averageFeeGBP, averageFeeUSD,
       clientConcentration, top3Percentage, top5Percentage,
-      grossProfitUSD: manual.grossProfitUSD ?? null,
+      // grossProfitAmount/grossProfitCurrency replace the old grossProfitUSD
+      // field, which wrongly assumed this figure was always in USD — it
+      // isn't, since it now often comes straight from Xero in Reload's own
+      // GBP reporting currency. Falls back to reading a legacy grossProfitUSD
+      // value as USD, in case anything was saved before this fix existed.
+      grossProfitAmount,
+      grossProfitCurrency,
+      grossProfitUSDEquivalent: await usdEquivalentFor(grossProfitAmount, grossProfitCurrency),
       grossProfitNotes: manual.notes || null,
-      cashAmount: manual.cashAmount ?? null,
-      cashCurrency: manual.cashCurrency || null,
+      cashAmount,
+      cashCurrency,
+      cashUSDEquivalent: await usdEquivalentFor(cashAmount, cashCurrency),
       cashNotes: manual.cashNotes || null,
     });
   }
 
   if (req.method === "POST" && action === "set-manual-metric") {
-    const { year, grossProfitUSD, notes, cashAmount, cashCurrency, cashNotes } = req.body || {};
+    const { year, grossProfitAmount, grossProfitCurrency, notes, cashAmount, cashCurrency, cashNotes } = req.body || {};
     const y = parseInt(year, 10);
     if (!y) return res.status(400).json({ error: "A valid year is required." });
     const all = (await kv.get(MANUAL_METRICS_KEY)) || {};
     all[y] = {
       ...all[y],
-      grossProfitUSD: grossProfitUSD === "" || grossProfitUSD === undefined ? (all[y] && all[y].grossProfitUSD) || null : Number(grossProfitUSD),
+      // Gross Profit is now deliberately kept in whatever currency it was
+      // entered in, same reasoning as Cash below — never force-converted
+      // or silently assumed to be USD.
+      grossProfitAmount: grossProfitAmount === "" || grossProfitAmount === undefined ? (all[y] && (all[y].grossProfitAmount ?? all[y].grossProfitUSD)) || null : Number(grossProfitAmount),
+      grossProfitCurrency: grossProfitCurrency !== undefined ? grossProfitCurrency : (all[y] && all[y].grossProfitCurrency) || null,
       notes: notes !== undefined ? notes : (all[y] && all[y].notes) || null,
       // Cash is deliberately kept in whatever currency it was entered in —
       // Reload's own reporting currency from Xero, most likely — rather
