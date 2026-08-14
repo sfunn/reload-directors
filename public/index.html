@@ -666,10 +666,8 @@ function CompanyOverviewPage({ token }) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [grossProfitInput, setGrossProfitInput] = useState("");
-  const [grossProfitCurrencyInput, setGrossProfitCurrencyInput] = useState("");
   const [notesInput, setNotesInput] = useState("");
   const [cashInput, setCashInput] = useState("");
-  const [cashCurrencyInput, setCashCurrencyInput] = useState("");
   const [cashNotesInput, setCashNotesInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
@@ -699,10 +697,8 @@ function CompanyOverviewPage({ token }) {
       if (!res.ok) { setError(body.error || "Couldn't load company figures."); return; }
       setData(body);
       setGrossProfitInput(body.grossProfitAmount !== null && body.grossProfitAmount !== undefined ? String(body.grossProfitAmount) : "");
-      setGrossProfitCurrencyInput(body.grossProfitCurrency || "");
       setNotesInput(body.grossProfitNotes || "");
       setCashInput(body.cashAmount !== null && body.cashAmount !== undefined ? String(body.cashAmount) : "");
-      setCashCurrencyInput(body.cashCurrency || "");
       setCashNotesInput(body.cashNotes || "");
     } catch (e) {
       setError("Couldn't reach the server.");
@@ -720,8 +716,10 @@ function CompanyOverviewPage({ token }) {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
-          year, grossProfitAmount: grossProfitInput, grossProfitCurrency: grossProfitCurrencyInput, notes: notesInput,
-          cashAmount: cashInput, cashCurrency: cashCurrencyInput, cashNotes: cashNotesInput,
+          // Currency is fixed at GBP — Reload's own real accounting
+          // currency, per Scott's explicit confirmation, not guessed.
+          year, grossProfitAmount: grossProfitInput, grossProfitCurrency: "GBP", notes: notesInput,
+          cashAmount: cashInput, cashCurrency: "GBP", cashNotes: cashNotesInput,
         }),
       });
       if (!res.ok) { const body = await res.json(); setSaveError(body.error || "Couldn't save."); return; }
@@ -793,7 +791,7 @@ function CompanyOverviewPage({ token }) {
             React.createElement("div", { style: labelStyle }, "Gross Profit"),
             data.grossProfitAmount !== null
               ? React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" } },
-                  React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: VERDIGRIS } }, `${data.grossProfitCurrency || ""} ${Math.round(data.grossProfitAmount).toLocaleString()}`),
+                  React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: VERDIGRIS } }, `£${Math.round(data.grossProfitAmount).toLocaleString()}`),
                   data.grossProfitUSDEquivalent !== null && data.grossProfitCurrency !== "USD" && React.createElement("div", { style: { fontSize: 13, color: INDIGO_MUTED } }, `$${Math.round(data.grossProfitUSDEquivalent).toLocaleString()}`)
                 )
               : React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO_MUTED } }, "Not set")
@@ -802,7 +800,7 @@ function CompanyOverviewPage({ token }) {
             React.createElement("div", { style: labelStyle }, "Cash"),
             data.cashAmount !== null
               ? React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" } },
-                  React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: VERDIGRIS } }, `${data.cashCurrency || ""} ${Math.round(data.cashAmount).toLocaleString()}`),
+                  React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: VERDIGRIS } }, `£${Math.round(data.cashAmount).toLocaleString()}`),
                   data.cashUSDEquivalent !== null && data.cashCurrency !== "USD" && React.createElement("div", { style: { fontSize: 13, color: INDIGO_MUTED } }, `$${Math.round(data.cashUSDEquivalent).toLocaleString()}`)
                 )
               : React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO_MUTED } }, "Not set")
@@ -868,16 +866,12 @@ function CompanyOverviewPage({ token }) {
       ),
       React.createElement(Panel, null,
         React.createElement("div", { style: labelStyle }, "Gross Profit — manual entry"),
-        React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Atlas has no visibility into costs, so this has to be entered by hand from your accounts — e.g. once a quarter from Xero. Kept in whatever currency you enter, usually your Xero organisation's own currency, not converted to USD."),
+        React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Atlas has no visibility into costs, so this has to be entered by hand from your accounts — e.g. once a quarter from Xero. Always in GBP, Reload's own accounting currency."),
         saveError && React.createElement("div", { style: errorStyle }, saveError),
         React.createElement("div", { style: { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 16 } },
           React.createElement("div", null,
-            React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Amount"),
-            React.createElement("input", { type: "number", value: grossProfitInput, onChange: e => setGrossProfitInput(e.target.value), placeholder: "e.g. 250000", style: { ...inputStyle, width: 140, marginBottom: 0 } })
-          ),
-          React.createElement("div", null,
-            React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Currency"),
-            React.createElement("input", { type: "text", value: grossProfitCurrencyInput, onChange: e => setGrossProfitCurrencyInput(e.target.value), placeholder: "e.g. GBP", style: { ...inputStyle, width: 90, marginBottom: 0 } })
+            React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Amount (GBP)"),
+            React.createElement("input", { type: "number", value: grossProfitInput, onChange: e => setGrossProfitInput(e.target.value), placeholder: "e.g. 250000", style: { ...inputStyle, width: 160, marginBottom: 0 } })
           ),
           React.createElement("div", { style: { flex: 1, minWidth: 200 } },
             React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Notes"),
@@ -885,15 +879,11 @@ function CompanyOverviewPage({ token }) {
           )
         ),
         React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Cash"),
-        React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Kept in whatever currency you enter — usually your Xero organisation's own currency, not converted to USD."),
+        React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Always in GBP, Reload's own accounting currency."),
         React.createElement("div", { style: { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" } },
           React.createElement("div", null,
-            React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Amount"),
-            React.createElement("input", { type: "number", value: cashInput, onChange: e => setCashInput(e.target.value), placeholder: "e.g. 75000", style: { ...inputStyle, width: 140, marginBottom: 0 } })
-          ),
-          React.createElement("div", null,
-            React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Currency"),
-            React.createElement("input", { type: "text", value: cashCurrencyInput, onChange: e => setCashCurrencyInput(e.target.value), placeholder: "e.g. GBP", style: { ...inputStyle, width: 90, marginBottom: 0 } })
+            React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Amount (GBP)"),
+            React.createElement("input", { type: "number", value: cashInput, onChange: e => setCashInput(e.target.value), placeholder: "e.g. 75000", style: { ...inputStyle, width: 160, marginBottom: 0 } })
           ),
           React.createElement("div", { style: { flex: 1, minWidth: 200 } },
             React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Notes"),
