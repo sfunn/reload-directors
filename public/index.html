@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Reload Directors</title>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<style>
+  body { margin: 0; font-family: -apple-system, "Work Sans", Arial, sans-serif; background: #FDF4F0; color: #2E405B; }
+  input { font-family: inherit; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+const { useState, useEffect, useCallback } = React;
+const INDIGO = "#2E405B";
+const IVORY = "#FDF4F0";
+const MELON = "#FFB08C";
+const VERDIGRIS = "#8EB9B0";
+
+const inputStyle = { display: "block", width: "100%", padding: "10px 12px", marginBottom: 12, borderRadius: 6, border: "1px solid #d8d3ce", fontSize: 14, boxSizing: "border-box" };
+const buttonStyle = { width: "100%", padding: "12px", borderRadius: 6, border: "none", background: INDIGO, color: "white", fontSize: 14, fontWeight: 600, cursor: "pointer" };
+const cardStyle = { maxWidth: 380, margin: "80px auto", background: "white", padding: 32, borderRadius: 10, boxShadow: "0 2px 12px rgba(0,0,0,0.06)" };
+const linkStyle = { color: INDIGO, fontSize: 13, cursor: "pointer", textDecoration: "underline", textAlign: "center", display: "block", marginTop: 14 };
+const errorStyle = { color: "#c0392b", fontSize: 13, marginBottom: 12 };
+
+function LoginPage({ onLoggedIn }) {
+  const [mode, setMode] = useState("login"); // "login" | "setup"
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [setupCode, setSetupCode] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function submitLogin(e) {
+    e.preventDefault();
+    setError(""); setLoading(true);
+    try {
+      const res = await fetch("/api/auth?action=login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data.error || "Login failed."); return; }
+      localStorage.setItem("directorToken", data.token);
+      localStorage.setItem("directorEmail", data.email);
+      onLoggedIn(data.token, data.email);
+    } catch (e) {
+      setError("Couldn't reach the server. Try again.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function submitSetup(e) {
+    e.preventDefault();
+    setError(""); setLoading(true);
+    try {
+      const res = await fetch("/api/auth?action=setup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password, setupCode }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setError(data.error || "Couldn't set password."); return; }
+      setMode("login");
+      setError("");
+      setPassword("");
+      setSetupCode("");
+    } catch (e) {
+      setError("Couldn't reach the server. Try again.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return React.createElement("div", { style: cardStyle },
+    React.createElement("h2", { style: { marginTop: 0, marginBottom: 4 } }, "Reload Directors"),
+    React.createElement("div", { style: { fontSize: 13, color: "#7a7a7a", marginBottom: 24 } },
+      mode === "login" ? "Sign in" : "Set or reset your password"
+    ),
+    error && React.createElement("div", { style: errorStyle }, error),
+    React.createElement("form", { onSubmit: mode === "login" ? submitLogin : submitSetup },
+      React.createElement("input", {
+        style: inputStyle, type: "email", placeholder: "Email", value: email,
+        onChange: e => setEmail(e.target.value), required: true,
+      }),
+      React.createElement("input", {
+        style: inputStyle, type: "password", placeholder: "Password", value: password,
+        onChange: e => setPassword(e.target.value), required: true,
+      }),
+      mode === "setup" && React.createElement("input", {
+        style: inputStyle, type: "text", placeholder: "Setup code", value: setupCode,
+        onChange: e => setSetupCode(e.target.value), required: true,
+      }),
+      React.createElement("button", { style: buttonStyle, type: "submit", disabled: loading },
+        loading ? "Please wait…" : (mode === "login" ? "Sign in" : "Set password")
+      )
+    ),
+    React.createElement("div", {
+      style: linkStyle,
+      onClick: () => { setMode(mode === "login" ? "setup" : "login"); setError(""); },
+    }, mode === "login" ? "First time here, or need to reset your password?" : "Back to sign in")
+  );
+}
+
+function ProofPage({ token, email, onLogout }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async () => {
+    setError("");
+    try {
+      const res = await fetch("/api/overview", { headers: { Authorization: `Bearer ${token}` } });
+      const body = await res.json();
+      if (!res.ok) { setError(body.error || "Couldn't load data."); return; }
+      setData(body);
+    } catch (e) {
+      setError("Couldn't reach the server.");
+    }
+  }, [token]);
+
+  useEffect(() => { load(); }, [load]);
+
+  return React.createElement("div", { style: { maxWidth: 600, margin: "60px auto", padding: "0 20px" } },
+    React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 } },
+      React.createElement("h2", { style: { margin: 0 } }, "Reload Directors"),
+      React.createElement("div", null,
+        React.createElement("span", { style: { fontSize: 13, color: "#7a7a7a", marginRight: 12 } }, email),
+        React.createElement("button", {
+          style: { ...buttonStyle, width: "auto", padding: "8px 14px", background: "transparent", color: INDIGO, border: `1px solid ${INDIGO}` },
+          onClick: onLogout,
+        }, "Log out")
+      )
+    ),
+    error && React.createElement("div", { style: errorStyle }, error),
+    !data && !error && React.createElement("div", null, "Loading…"),
+    data && React.createElement("div", { style: { background: "white", padding: 24, borderRadius: 10, boxShadow: "0 2px 12px rgba(0,0,0,0.06)" } },
+      React.createElement("div", { style: { fontSize: 12, color: VERDIGRIS, marginBottom: 16 } }, data.proof),
+      React.createElement("div", { style: { display: "flex", gap: 40 } },
+        React.createElement("div", null,
+          React.createElement("div", { style: { fontSize: 12, color: "#7a7a7a" } }, "Total deals in shared database"),
+          React.createElement("div", { style: { fontSize: 28, fontWeight: 700 } }, data.totalDeals)
+        ),
+        React.createElement("div", null,
+          React.createElement("div", { style: { fontSize: 12, color: "#7a7a7a" } }, "Total raw fee amount"),
+          React.createElement("div", { style: { fontSize: 28, fontWeight: 700 } }, `$${Math.round(data.totalRawAmount).toLocaleString()}`)
+        )
+      )
+    )
+  );
+}
+
+function App() {
+  const [token, setToken] = useState(() => localStorage.getItem("directorToken"));
+  const [email, setEmail] = useState(() => localStorage.getItem("directorEmail"));
+
+  function handleLogout() {
+    localStorage.removeItem("directorToken");
+    localStorage.removeItem("directorEmail");
+    setToken(null);
+    setEmail(null);
+  }
+
+  return React.createElement("div", { style: { minHeight: "100vh", background: IVORY } },
+    !token
+      ? React.createElement(LoginPage, { onLoggedIn: (t, e) => { setToken(t); setEmail(e); } })
+      : React.createElement(ProofPage, { token, email, onLogout: handleLogout })
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(React.createElement(App, null));
+</script>
+</body>
+</html>
