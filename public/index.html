@@ -536,11 +536,112 @@ function CommissionPage({ token }) {
   );
 }
 
+const STATS_CONSULTANT_NAMES = {
+  "alex-silverman": "Alex Silverman", "ash-thiara": "Ash Thiara", "jack-thompson": "Jack Thompson",
+  "max-hart": "Max Hart", "oleg-sokyrka": "Oleg Sokyrka",
+  "alex-aparo": "Alex Aparo", "jack-routledge": "Jack Routledge", "joe-purton": "Joe Purton",
+  "josh-davis": "Josh Davis", "natasha-barnard": "Natasha Barnard",
+};
+const STATS_CONSULTANTS = Object.entries(STATS_CONSULTANT_NAMES)
+  .map(([id, name]) => ({ id, name }))
+  .sort((a, b) => a.name.localeCompare(b.name));
+
+const MONTH_LABELS = { "01": "Jan", "02": "Feb", "03": "Mar", "04": "Apr", "05": "May", "06": "Jun", "07": "Jul", "08": "Aug", "09": "Sep", "10": "Oct", "11": "Nov", "12": "Dec" };
+function monthLabel(monthKey) {
+  const mm = monthKey.slice(5, 7);
+  return MONTH_LABELS[mm] || monthKey;
+}
+function formatRatio(cvs, interviews) {
+  if (!interviews) return "—";
+  return `${(cvs / interviews).toFixed(1)} : 1`;
+}
+
+function ConsultantStatsPage({ token }) {
+  const [consultantId, setConsultantId] = useState(STATS_CONSULTANTS[0].id);
+  const [year, setYear] = useState(new Date().getUTCFullYear());
+  const [data, setData] = useState(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    setError(""); setLoading(true);
+    try {
+      const res = await fetch(`/api/consultant-stats?year=${year}`, { headers: { Authorization: `Bearer ${token}` } });
+      const body = await res.json();
+      if (!res.ok) { setError(body.error || "Couldn't load stats."); return; }
+      setData(body);
+    } catch (e) {
+      setError("Couldn't reach the server.");
+    } finally {
+      setLoading(false);
+    }
+  }, [token, year]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const current = data ? data.consultants.find(c => c.consultantId === consultantId) : null;
+
+  return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 20 } },
+    React.createElement(Panel, null,
+      React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 } },
+        React.createElement(SectionTitle, { eyebrow: "Directors only", title: "Consultant Stats" }),
+        React.createElement("div", { style: { display: "flex", gap: 6 } },
+          YEAR_OPTIONS.map(y => React.createElement("button", {
+            key: y, onClick: () => setYear(y),
+            style: { ...chipStyle, background: year === y ? MELON : "rgba(255,176,140,0.14)", fontWeight: year === y ? 700 : 500 }
+          }, y))
+        )
+      ),
+      React.createElement("div", { style: { marginTop: 12, display: "flex", flexWrap: "wrap", gap: 6 } },
+        STATS_CONSULTANTS.map(c => React.createElement("button", {
+          key: c.id, onClick: () => setConsultantId(c.id),
+          style: {
+            ...chipStyle,
+            background: consultantId === c.id ? INDIGO : "rgba(46,64,91,0.06)",
+            color: consultantId === c.id ? WHITE : INDIGO,
+            fontWeight: consultantId === c.id ? 700 : 500,
+          }
+        }, c.name))
+      )
+    ),
+    error && React.createElement("div", { style: errorStyle }, error),
+    loading && React.createElement(Panel, null, React.createElement("div", { style: { padding: 20, textAlign: "center", color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif" } }, "Loading…")),
+    !loading && current && React.createElement(Panel, null,
+      current.monthly.length === 0
+        ? React.createElement("div", { style: { color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif", fontSize: 14 } }, `No finalized weeks recorded yet for ${year}.`)
+        : React.createElement(React.Fragment, null,
+            React.createElement(TableHeader, { cols: [
+              { label: "Month", flex: 1 },
+              { label: "CVs Out", width: 100 },
+              { label: "Interviews", width: 100 },
+              { label: "CV : Interview", width: 120 },
+            ] }),
+            current.monthly.map(m => React.createElement(RowLine, { key: m.month },
+              React.createElement(Cell, { flex: 1 }, monthLabel(m.month)),
+              React.createElement(Cell, { width: 100 }, m.cvs),
+              React.createElement(Cell, { width: 100 }, m.interviews),
+              React.createElement(Cell, { width: 120, color: INDIGO_MUTED }, formatRatio(m.cvs, m.interviews))
+            )),
+            React.createElement(RowLine, { highlighted: true },
+              React.createElement(Cell, { flex: 1, bold: true }, `${year} total`),
+              React.createElement(Cell, { width: 100, bold: true }, current.yearTotal.cvs),
+              React.createElement(Cell, { width: 100, bold: true }, current.yearTotal.interviews),
+              React.createElement(Cell, { width: 120, bold: true, color: VERDIGRIS }, formatRatio(current.yearTotal.cvs, current.yearTotal.interviews))
+            )
+          )
+    ),
+    !loading && data && React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif" } },
+      "Sourced from the incentive site's finalized weekly records — only complete, finalized weeks are counted, so the current in-progress week won't appear here until it ends."
+    )
+  );
+}
+
 function MainShell({ token, email, onLogout }) {
   const [tab, setTab] = useState("deals");
   const tabs = [
     { id: "deals", label: "Yearly Deal Table" },
     { id: "commission", label: "Commission" },
+    { id: "stats", label: "Consultant Stats" },
   ];
 
   return React.createElement("div", { style: { minHeight: "100vh", background: IVORY, fontFamily: "'Work Sans', sans-serif" } },
@@ -568,7 +669,8 @@ function MainShell({ token, email, onLogout }) {
     ),
     React.createElement("div", { style: { maxWidth: 1300, margin: "0 auto", padding: "26px 20px 60px" } },
       tab === "deals" && React.createElement(DealsPage, { token }),
-      tab === "commission" && React.createElement(CommissionPage, { token })
+      tab === "commission" && React.createElement(CommissionPage, { token }),
+      tab === "stats" && React.createElement(ConsultantStatsPage, { token })
     )
   );
 }
