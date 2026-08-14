@@ -649,6 +649,20 @@ function CompanyOverviewPage({ token }) {
   const [notesInput, setNotesInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const [xeroStatus, setXeroStatus] = useState(null);
+
+  const loadXeroStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/xero-callback?action=status", { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) return;
+      const body = await res.json();
+      setXeroStatus(body);
+    } catch (e) {
+      // silent — the Connect button still works even if this check fails
+    }
+  }, [token]);
+
+  useEffect(() => { loadXeroStatus(); }, [loadXeroStatus]);
 
   const load = useCallback(async () => {
     setError(""); setLoading(true);
@@ -689,11 +703,20 @@ function CompanyOverviewPage({ token }) {
     React.createElement(Panel, null,
       React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 } },
         React.createElement(SectionTitle, { eyebrow: "Directors only", title: "Company Overview" }),
-        React.createElement("div", { style: { display: "flex", gap: 6 } },
-          YEAR_OPTIONS.map(y => React.createElement("button", {
-            key: y, onClick: () => setYear(y),
-            style: { ...chipStyle, background: year === y ? MELON : "rgba(255,176,140,0.14)", fontWeight: year === y ? 700 : 500 }
-          }, y))
+        React.createElement("div", { style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" } },
+          React.createElement("div", { style: { display: "flex", gap: 6 } },
+            YEAR_OPTIONS.map(y => React.createElement("button", {
+              key: y, onClick: () => setYear(y),
+              style: { ...chipStyle, background: year === y ? MELON : "rgba(255,176,140,0.14)", fontWeight: year === y ? 700 : 500 }
+            }, y))
+          ),
+          React.createElement("span", { style: { width: 1, height: 20, background: INDIGO_HAIRLINE } }),
+          xeroStatus && xeroStatus.connected
+            ? React.createElement("div", { style: { fontSize: 12, color: VERDIGRIS, fontFamily: "'Work Sans', sans-serif" } }, `Connected to ${xeroStatus.tenantName || "Xero"}`)
+            : React.createElement("button", {
+                onClick: () => { window.location.href = `/api/xero-callback?action=connect&token=${encodeURIComponent(token)}`; },
+                style: ghostStyle
+              }, "Connect to Xero")
         )
       )
     ),
