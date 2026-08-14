@@ -99,11 +99,14 @@ module.exports = async (req, res) => {
       clientConcentration, top3Percentage, top5Percentage,
       grossProfitUSD: manual.grossProfitUSD ?? null,
       grossProfitNotes: manual.notes || null,
+      cashAmount: manual.cashAmount ?? null,
+      cashCurrency: manual.cashCurrency || null,
+      cashNotes: manual.cashNotes || null,
     });
   }
 
   if (req.method === "POST" && action === "set-manual-metric") {
-    const { year, grossProfitUSD, notes } = req.body || {};
+    const { year, grossProfitUSD, notes, cashAmount, cashCurrency, cashNotes } = req.body || {};
     const y = parseInt(year, 10);
     if (!y) return res.status(400).json({ error: "A valid year is required." });
     const all = (await kv.get(MANUAL_METRICS_KEY)) || {};
@@ -111,6 +114,12 @@ module.exports = async (req, res) => {
       ...all[y],
       grossProfitUSD: grossProfitUSD === "" || grossProfitUSD === undefined ? (all[y] && all[y].grossProfitUSD) || null : Number(grossProfitUSD),
       notes: notes !== undefined ? notes : (all[y] && all[y].notes) || null,
+      // Cash is deliberately kept in whatever currency it was entered in —
+      // Reload's own reporting currency from Xero, most likely — rather
+      // than force-converted to USD like the deal-based figures above.
+      cashAmount: cashAmount === "" || cashAmount === undefined ? (all[y] && all[y].cashAmount) || null : Number(cashAmount),
+      cashCurrency: cashCurrency !== undefined ? cashCurrency : (all[y] && all[y].cashCurrency) || null,
+      cashNotes: cashNotes !== undefined ? cashNotes : (all[y] && all[y].cashNotes) || null,
     };
     await kv.set(MANUAL_METRICS_KEY, all);
     return res.status(200).json({ ok: true, year: y, metrics: all[y] });
