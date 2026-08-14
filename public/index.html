@@ -295,34 +295,42 @@ function DealsPage({ token }) {
 }
 
 const CONSULTANTS = [
+  { id: "alex-aparo", name: "Alex Aparo" },
   { id: "alex-silverman", name: "Alex Silverman" },
   { id: "ash-thiara", name: "Ash Thiara" },
-  { id: "jack-thompson", name: "Jack Thompson" },
-  { id: "max-hart", name: "Max Hart" },
-  { id: "oleg-sokyrka", name: "Oleg Sokyrka" },
-  { id: "alex-aparo", name: "Alex Aparo" },
   { id: "jack-routledge", name: "Jack Routledge" },
+  { id: "jack-thompson", name: "Jack Thompson" },
   { id: "joe-purton", name: "Joe Purton" },
   { id: "josh-davis", name: "Josh Davis" },
+  { id: "max-hart", name: "Max Hart" },
   { id: "natasha-barnard", name: "Natasha Barnard" },
+  { id: "oleg-sokyrka", name: "Oleg Sokyrka" },
   { id: "izzy-coordinator", name: "Izzy (Coordinator)" },
   { id: "zoe-coordinator", name: "Alexandra (Coordinator)" },
-];
+].sort((a, b) => a.name.localeCompare(b.name));
 
 function CommissionPage({ token }) {
   const [consultantId, setConsultantId] = useState(CONSULTANTS[0].id);
   const [year, setYear] = useState(new Date().getUTCFullYear());
   const [data, setData] = useState(null);
+  const [dealsLeaderboard, setDealsLeaderboard] = useState([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   const load = useCallback(async () => {
     setError(""); setLoading(true);
     try {
-      const res = await fetch(`/api/commission?consultantId=${consultantId}&year=${year}`, { headers: { Authorization: `Bearer ${token}` } });
-      const body = await res.json();
-      if (!res.ok) { setError(body.error || "Couldn't load commission."); return; }
-      setData(body);
+      const [commissionRes, dealsRes] = await Promise.all([
+        fetch(`/api/commission?consultantId=${consultantId}&year=${year}`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`/api/deals?year=${year}`, { headers: { Authorization: `Bearer ${token}` } }),
+      ]);
+      const commissionBody = await commissionRes.json();
+      if (!commissionRes.ok) { setError(commissionBody.error || "Couldn't load commission."); return; }
+      setData(commissionBody);
+      if (dealsRes.ok) {
+        const dealsBody = await dealsRes.json();
+        setDealsLeaderboard(dealsBody.leaderboard || []);
+      }
     } catch (e) {
       setError("Couldn't reach the server.");
     } finally {
@@ -332,75 +340,197 @@ function CommissionPage({ token }) {
 
   useEffect(() => { load(); }, [load]);
 
+  const doneEntry = dealsLeaderboard.find(l => l.consultantId === consultantId);
+  const doneAmt = doneEntry ? doneEntry.totalUSD : 0;
+
+  // A single deal can split into multiple lines across bracket boundaries —
+  // merge those back into one row for the deals summary, since that's a
+  // deals list, not a bracket ladder, and a deal shouldn't visibly repeat
+  // just because it crossed a band. Matches the incentive site's own logic.
+  const dedupedDeals = (() => {
+    if (!data || !data.lines) return [];
+    const dealMap = new Map();
+    data.lines.forEach((l) => {
+      const key = `${l.feeId}|${l.splitId}`;
+      if (dealMap.has(key)) {
+        const existing = dealMap.get(key);
+        existing.gbpPortion = (existing.gbpPortion || 0) + (l.gbpPortion || 0);
+        existing.usdAmount = (existing.usdAmount || 0) + (l.usdAmount || 0);
+      } else {
+        dealMap.set(key, { ...l });
+      }
+    });
+    return [...dealMap.values()];
+  })();
+
   return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 20 } },
     React.createElement(Panel, null,
       React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 } },
         React.createElement(SectionTitle, { eyebrow: "Directors only", title: "Commission" }),
-        React.createElement("div", { style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" } },
-          React.createElement("select", {
-            value: consultantId, onChange: e => setConsultantId(e.target.value),
-            style: { ...inputStyle, width: "auto", marginBottom: 0, padding: "8px 10px" }
-          }, CONSULTANTS.map(c => React.createElement("option", { key: c.id, value: c.id }, c.name))),
-          React.createElement("div", { style: { display: "flex", gap: 6 } },
-            YEAR_OPTIONS.map(y => React.createElement("button", {
-              key: y, onClick: () => setYear(y),
-              style: { ...chipStyle, background: year === y ? MELON : "rgba(255,176,140,0.14)", fontWeight: year === y ? 700 : 500 }
-            }, y))
-          )
+        React.createElement("div", { style: { display: "flex", gap: 6 } },
+          YEAR_OPTIONS.map(y => React.createElement("button", {
+            key: y, onClick: () => setYear(y),
+            style: { ...chipStyle, background: year === y ? MELON : "rgba(255,176,140,0.14)", fontWeight: year === y ? 700 : 500 }
+          }, y))
         )
+      ),
+      React.createElement("div", { style: { marginTop: 12, display: "flex", flexWrap: "wrap", gap: 6 } },
+        CONSULTANTS.map(c => React.createElement("button", {
+          key: c.id, onClick: () => setConsultantId(c.id),
+          style: {
+            ...chipStyle,
+            background: consultantId === c.id ? INDIGO : "rgba(46,64,91,0.06)",
+            color: consultantId === c.id ? WHITE : INDIGO,
+            fontWeight: consultantId === c.id ? 700 : 500,
+          }
+        }, c.name))
       )
     ),
     error && React.createElement("div", { style: errorStyle }, error),
     loading && React.createElement(Panel, null, React.createElement("div", { style: { padding: 20, textAlign: "center", color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif" } }, "Loading…")),
-    !loading && data && React.createElement(React.Fragment, null,
+
+    !loading && data && data.isCoordinator && React.createElement(React.Fragment, null,
       React.createElement(Panel, null,
-        React.createElement("div", { style: { display: "flex", gap: 40, flexWrap: "wrap" } },
+        React.createElement("div", { style: { display: "flex", gap: 24, marginBottom: 16, flexWrap: "wrap" } },
           React.createElement("div", null,
-            React.createElement("div", { style: labelStyle }, data.isCoordinator ? "Total (flat fee)" : "Total commission (GBP)"),
-            React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 28, color: INDIGO } }, `£${Math.round(data.totalCommission).toLocaleString()}`)
-          ),
-          !data.isCoordinator && React.createElement("div", null,
-            React.createElement("div", { style: labelStyle }, "Total revenue counted (GBP)"),
-            React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 28, color: INDIGO } }, `£${Math.round(data.totalGBP).toLocaleString()}`)
+            React.createElement("div", { style: labelStyle }, "Deals coordinated"),
+            React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 22, color: INDIGO } }, data.dealCount)
           ),
           React.createElement("div", null,
-            React.createElement("div", { style: labelStyle }, "Placements vs onsite fees"),
-            React.createElement("div", { style: { fontFamily: "'Work Sans', sans-serif", fontSize: 14, color: INDIGO } },
-              `${data.placementBreakdown.placements.count} placements · £${Math.round(data.placementBreakdown.placements.totalCommission).toLocaleString()}`
-            ),
-            React.createElement("div", { style: { fontFamily: "'Work Sans', sans-serif", fontSize: 13, color: INDIGO_MUTED } },
-              `${data.placementBreakdown.onsiteFees.count} onsite · £${Math.round(data.placementBreakdown.onsiteFees.totalCommission).toLocaleString()}`
-            )
+            React.createElement("div", { style: labelStyle }, "Flat fee per deal"),
+            React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 22, color: INDIGO } }, `£${Number(data.flatRate).toLocaleString()}`)
           ),
-          data.heldBackCount > 0 && React.createElement("div", null,
-            React.createElement("div", { style: labelStyle }, "Held back"),
-            React.createElement("div", { style: { fontFamily: "'Work Sans', sans-serif", fontSize: 14, color: MELON_LINK } }, `${data.heldBackCount} deal(s) — no exchange rate set yet`)
+          React.createElement("div", null,
+            React.createElement("div", { style: labelStyle }, "Total commission earned"),
+            React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 22, color: VERDIGRIS } }, `£${Math.round(data.totalCommission).toLocaleString()}`)
           )
-        )
-      ),
-      React.createElement(Panel, null,
-        React.createElement("div", { style: labelStyle }, "Deals"),
+        ),
+        React.createElement("div", { style: { marginBottom: 16, paddingBottom: 16, borderBottom: `1px solid ${INDIGO_HAIRLINE}` } },
+          React.createElement("div", { style: labelStyle }, "Placements vs Onsite Fees"),
+          React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 10, fontSize: 13.5, padding: "3px 0", color: INDIGO } },
+            React.createElement("span", { style: { width: 110, flexShrink: 0 } }, "Placements"),
+            React.createElement("span", { style: { fontWeight: 600, width: 90, flexShrink: 0 } }, `£${Math.round(data.placementBreakdown.placements.totalCommission).toLocaleString()}`),
+            React.createElement("span", { style: { fontSize: 11, color: INDIGO_MUTED } }, `${data.placementBreakdown.placements.count} deal(s)`)
+          ),
+          React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 10, fontSize: 13.5, padding: "3px 0", color: INDIGO } },
+            React.createElement("span", { style: { width: 110, flexShrink: 0 } }, "Onsite Fees"),
+            React.createElement("span", { style: { fontWeight: 600, width: 90, flexShrink: 0 } }, `£${Math.round(data.placementBreakdown.onsiteFees.totalCommission).toLocaleString()}`),
+            React.createElement("span", { style: { fontSize: 11, color: INDIGO_MUTED } }, `${data.placementBreakdown.onsiteFees.count} deal(s)`)
+          )
+        ),
         data.lines.length === 0
-          ? React.createElement("div", { style: { color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif", fontSize: 14, padding: "20px 0" } }, "No deals recorded yet for this year.")
+          ? React.createElement("div", { style: { color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif", fontSize: 14 } }, `No deals coordinated yet for ${year}.`)
           : React.createElement(React.Fragment, null,
               React.createElement(TableHeader, { cols: [
-                { label: "Candidate / Client", flex: 1 },
-                { label: "Fee (USD)", width: 110 },
-                { label: "Rate", width: 60 },
-                { label: "Commission (GBP)", width: 140 },
-                { label: "Paid", width: 60 },
+                { label: "Date Signed", width: 100 },
+                { label: "Candidate", flex: 1 },
+                { label: "Start Date", width: 100 },
+                { label: "Fee", width: 90 },
+                { label: "Source", width: 110 },
               ] }),
-              data.lines.map((l, i) => React.createElement(RowLine, { key: `${l.feeId}-${l.splitId}-${i}`, highlighted: !l.hasPlacementName },
+              data.lines.map((l, i) => React.createElement(RowLine, { key: `${l.feeId}-${l.splitId}-${i}` },
+                React.createElement(Cell, { width: 100 }, l.feeDate ? new Date(l.feeDate).toLocaleDateString("en-GB") : "—"),
                 React.createElement(Cell, { flex: 1 },
-                  l.hasPlacementName ? l.candidateName : `${l.candidateName || "Onsite fee"} (onsite)`,
-                  l.clientCompanyName && React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED } }, l.clientCompanyName)
+                  React.createElement("div", { style: { color: l.candidateName ? INDIGO : INDIGO_MUTED } }, l.candidateName || "—"),
+                  l.clientCompanyName && React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED } }, l.clientCompanyName)
                 ),
-                React.createElement(Cell, { width: 110 }, l.usdAmount !== null ? `$${Math.round(l.usdAmount).toLocaleString()}` : "—"),
-                React.createElement(Cell, { width: 60 }, l.rate !== undefined ? `${(l.rate * 100).toFixed(1)}%` : "flat"),
-                React.createElement(Cell, { width: 140, bold: true }, `£${Math.round(l.commission).toLocaleString()}`),
-                React.createElement(Cell, { width: 60, color: l.paid ? VERDIGRIS : INDIGO_MUTED }, l.paid ? "Yes" : "No")
+                React.createElement(Cell, { width: 100, color: l.startDate ? INDIGO : INDIGO_MUTED }, l.startDate ? new Date(l.startDate).toLocaleDateString("en-GB") : "—"),
+                React.createElement(Cell, { width: 90, bold: true }, `£${Math.round(l.commission).toLocaleString()}`),
+                React.createElement(Cell, { width: 110, color: l.source ? INDIGO : INDIGO_MUTED }, l.source || "—")
               ))
             )
+      )
+    ),
+
+    !loading && data && !data.isCoordinator && React.createElement(React.Fragment, null,
+      React.createElement(Panel, null,
+        data.target && React.createElement("div", { style: { display: "flex", gap: 24, marginBottom: 20, flexWrap: "wrap" } },
+          React.createElement("div", null,
+            React.createElement("div", { style: labelStyle }, "Target"),
+            React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 20, color: INDIGO } }, `$${Number(data.target).toLocaleString()}`)
+          ),
+          React.createElement("div", null,
+            React.createElement("div", { style: labelStyle }, "Done"),
+            React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 20, color: VERDIGRIS } }, `$${Math.round(doneAmt).toLocaleString()}`)
+          ),
+          React.createElement("div", null,
+            React.createElement("div", { style: labelStyle }, "Left to do"),
+            React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 20, color: INDIGO_MUTED } }, `$${Math.round(Math.max(0, data.target - doneAmt)).toLocaleString()}`)
+          )
+        ),
+        data.heldBackCount > 0 && React.createElement("div", { style: { fontSize: 12, color: MELON_LINK, marginBottom: 12 } }, `${data.heldBackCount} deal(s) held back — no exchange rate set for their month yet.`),
+        data.lines.length === 0
+          ? React.createElement("div", { style: { color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif", fontSize: 14 } }, `No commission-eligible deals yet for ${year}.`)
+          : React.createElement("div", { style: { overflowX: "auto" } },
+              React.createElement(TableHeader, { cols: [
+                { label: "Date Signed", width: 100 },
+                { label: "Candidate", width: 140 },
+                { label: "Start Date", width: 100 },
+                { label: "Bracket · GBP", width: 190 },
+                { label: "Rate", width: 60 },
+                { label: "Commission", width: 100 },
+                { label: "Source", width: 110 },
+              ] }),
+              data.lines.map((l, i) => React.createElement(RowLine, { key: `${l.feeId}-${l.splitId}-${i}` },
+                React.createElement(Cell, { width: 100 }, l.feeDate ? new Date(l.feeDate).toLocaleDateString("en-GB") : "—"),
+                React.createElement(Cell, { width: 140 },
+                  React.createElement("div", { style: { color: l.candidateName ? INDIGO : INDIGO_MUTED } }, l.candidateName || "—"),
+                  l.clientCompanyName && React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED } }, l.clientCompanyName)
+                ),
+                React.createElement(Cell, { width: 100, color: l.startDate ? INDIGO : INDIGO_MUTED }, l.startDate ? new Date(l.startDate).toLocaleDateString("en-GB") : "—"),
+                React.createElement(Cell, { width: 190, color: INDIGO_MUTED }, `£${l.bandMin.toLocaleString()}${l.bandMax === null ? "+" : `-£${l.bandMax.toLocaleString()}`} · £${Math.round(l.gbpPortion).toLocaleString()}`),
+                React.createElement(Cell, { width: 60 }, `${(l.rate * 100).toFixed(1)}%`),
+                React.createElement(Cell, { width: 100, bold: true }, `£${Math.round(l.commission).toLocaleString()}`),
+                React.createElement(Cell, { width: 110, color: l.source ? INDIGO : INDIGO_MUTED }, l.source || "—")
+              ))
+            ),
+        React.createElement("div", { style: { marginTop: 16, paddingTop: 16, borderTop: `1px solid ${INDIGO_HAIRLINE}`, display: "flex", gap: 30, flexWrap: "wrap" } },
+          React.createElement("div", { style: { flex: 1, minWidth: 280 } },
+            React.createElement("div", { style: labelStyle }, "Deals this year"),
+            React.createElement("div", { style: { display: "flex", flexDirection: "column", marginTop: 6 } },
+              React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 10, padding: "4px 0" } },
+                React.createElement("span", { style: { width: 150, flexShrink: 0, ...labelStyle, marginBottom: 0 } }, "Name"),
+                React.createElement("span", { style: { width: 100, flexShrink: 0, ...labelStyle, marginBottom: 0 } }, "Fee $"),
+                React.createElement("span", { style: { width: 80, ...labelStyle, marginBottom: 0 } }, "Fee £"),
+                React.createElement("span", { style: { width: 80, ...labelStyle, marginBottom: 0 } }, "Start")
+              ),
+              dedupedDeals.map((l, i) => React.createElement("div", {
+                key: `simple-${l.feeId}-${l.splitId}-${i}`,
+                style: { display: "flex", alignItems: "baseline", gap: 10, padding: "4px 0", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, fontSize: 13 }
+              },
+                React.createElement("span", { style: { width: 150, flexShrink: 0, color: l.candidateName ? INDIGO : INDIGO_MUTED } }, l.candidateName || "—"),
+                React.createElement("span", { style: { width: 100, flexShrink: 0, fontWeight: 600 } }, l.usdAmount !== null && l.usdAmount !== undefined ? `$${Math.round(l.usdAmount).toLocaleString()}` : "—"),
+                React.createElement("span", { style: { width: 80, fontWeight: 600 } }, `£${Math.round(l.gbpPortion).toLocaleString()}`),
+                React.createElement("span", { style: { width: 80, color: INDIGO_MUTED, fontSize: 12 } }, l.startDate ? new Date(l.startDate).toLocaleDateString("en-GB") : "—")
+              )),
+              React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 10, padding: "8px 0 0", fontWeight: 700 } },
+                React.createElement("span", { style: { width: 150, flexShrink: 0 } }, "Total"),
+                React.createElement("span", { style: { width: 100, flexShrink: 0 } }, `$${Math.round(dedupedDeals.reduce((s, l) => s + (l.usdAmount || 0), 0)).toLocaleString()}`),
+                React.createElement("span", { style: { width: 80 } }, `£${Math.round(dedupedDeals.reduce((s, l) => s + (l.gbpPortion || 0), 0)).toLocaleString()}`),
+                React.createElement("span", { style: { width: 80 } })
+              )
+            ),
+            React.createElement("div", { style: { marginTop: 16, paddingTop: 16, borderTop: `1px solid ${INDIGO_HAIRLINE}` } },
+              React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 15 } },
+                React.createElement("span", { style: { ...labelStyle, width: 140, flexShrink: 0 } }, "Commission earned"),
+                React.createElement("span", { style: { fontWeight: 700, color: VERDIGRIS } }, `£${Math.round(data.totalCommission).toLocaleString()}`)
+              ),
+              React.createElement("div", { style: { marginTop: 14, paddingTop: 14, borderTop: `1px solid ${INDIGO_HAIRLINE}` } },
+                React.createElement("div", { style: labelStyle }, "Placements vs Onsite Fees"),
+                React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 10, fontSize: 13.5, padding: "3px 0", color: INDIGO } },
+                  React.createElement("span", { style: { width: 110, flexShrink: 0 } }, "Placements"),
+                  React.createElement("span", { style: { fontWeight: 600, width: 90, flexShrink: 0 } }, `£${Math.round(data.placementBreakdown.placements.totalCommission).toLocaleString()}`),
+                  React.createElement("span", { style: { fontSize: 11, color: INDIGO_MUTED } }, `${data.placementBreakdown.placements.count} deal(s)`)
+                ),
+                React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 10, fontSize: 13.5, padding: "3px 0", color: INDIGO } },
+                  React.createElement("span", { style: { width: 110, flexShrink: 0 } }, "Onsite Fees"),
+                  React.createElement("span", { style: { fontWeight: 600, width: 90, flexShrink: 0 } }, `£${Math.round(data.placementBreakdown.onsiteFees.totalCommission).toLocaleString()}`),
+                  React.createElement("span", { style: { fontSize: 11, color: INDIGO_MUTED } }, `${data.placementBreakdown.onsiteFees.count} deal(s)`)
+                )
+              )
+            )
+          )
+        )
       )
     )
   );
