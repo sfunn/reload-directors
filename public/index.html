@@ -128,7 +128,7 @@ function LoginPage({ onLoggedIn }) {
   }
 
   return React.createElement("div", {
-    style: { minHeight: "100vh", background: IVORY, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Work Sans', sans-serif" }
+    style: { minHeight: "100vh", background: IVORY, color: INDIGO, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Work Sans', sans-serif" }
   },
     React.createElement("style", null, fontImport),
     React.createElement(Panel, { style: { width: "100%", maxWidth: 380, margin: "0 20px" } },
@@ -268,7 +268,14 @@ function DealsPage({ token }) {
           React.createElement("span", { style: { width: 140, flexShrink: 0 } }, s.source),
           React.createElement("span", { style: { fontWeight: 600, width: 90, flexShrink: 0 } }, `$${Math.round(s.valueUSD).toLocaleString()}`),
           React.createElement("span", { style: { fontSize: 11, color: INDIGO_MUTED } }, `(${s.deals} deal${s.deals !== 1 ? "s" : ""})`)
-        ))
+        )),
+        React.createElement("div", {
+          style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 13.5, padding: "6px 0 0", marginTop: 4, borderTop: `1px solid ${INDIGO_HAIRLINE}`, fontWeight: 700, color: INDIGO }
+        },
+          React.createElement("span", { style: { width: 140, flexShrink: 0 } }, "Total"),
+          React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `$${Math.round((data.sourceBreakdown || []).reduce((s, r) => s + r.valueUSD, 0)).toLocaleString()}`),
+          React.createElement("span", { style: { fontSize: 11, color: INDIGO_MUTED, fontWeight: 400 } }, `(${(data.sourceBreakdown || []).reduce((s, r) => s + r.deals, 0)} deals)`)
+        )
       ),
       (data.clientBreakdown || []).length > 0 && React.createElement(Panel, { style: { flex: 1, minWidth: 320 } },
         React.createElement(SectionTitle, { eyebrow: "Directors only", title: "Client Breakdown" }),
@@ -278,7 +285,14 @@ function DealsPage({ token }) {
           React.createElement("span", { style: { width: 150, flexShrink: 0 } }, c.firm),
           React.createElement("span", { style: { fontWeight: 600, width: 90, flexShrink: 0 } }, `$${Math.round(c.totalUSD).toLocaleString()}`),
           React.createElement("span", { style: { fontSize: 11, color: INDIGO_MUTED } }, `(${c.percentage.toFixed(0)}%)`)
-        ))
+        )),
+        React.createElement("div", {
+          style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 13.5, padding: "6px 0 0", marginTop: 4, borderTop: `1px solid ${INDIGO_HAIRLINE}`, fontWeight: 700, color: INDIGO }
+        },
+          React.createElement("span", { style: { width: 150, flexShrink: 0 } }, "Total"),
+          React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `$${Math.round((data.clientBreakdown || []).reduce((s, r) => s + r.totalUSD, 0)).toLocaleString()}`),
+          React.createElement("span", { style: { fontSize: 11, color: INDIGO_MUTED, fontWeight: 400 } }, "(100%)")
+        )
       )
     ),
     !loading && data && React.createElement(Panel, null,
@@ -548,7 +562,14 @@ const STATS_CONSULTANTS = Object.entries(STATS_CONSULTANT_NAMES)
   .sort((a, b) => a.name.localeCompare(b.name));
 
 const MONTH_LABELS = { "01": "Jan", "02": "Feb", "03": "Mar", "04": "Apr", "05": "May", "06": "Jun", "07": "Jul", "08": "Aug", "09": "Sep", "10": "Oct", "11": "Nov", "12": "Dec" };
-const MONTH_OPTIONS = Object.keys(MONTH_LABELS);
+// Deliberately an explicit array, not Object.keys(MONTH_LABELS) — JavaScript
+// silently reorders object keys that look like plain integers ("10", "11",
+// "12" have no leading zero, so they're canonical integer keys) to the
+// FRONT of enumeration, ahead of "01"-"09" which have a leading zero and
+// don't qualify, landing in insertion order after them instead. That
+// invisible language quirk was the actual cause of the month chips
+// starting at October.
+const MONTH_OPTIONS = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"];
 function monthLabel(monthKey) {
   const mm = monthKey.slice(5, 7);
   return MONTH_LABELS[mm] || monthKey;
@@ -897,15 +918,15 @@ function CompanyOverviewPage({ token }) {
 }
 
 function MainShell({ token, email, onLogout }) {
-  const [tab, setTab] = useState("deals");
+  const [tab, setTab] = useState("overview");
   const tabs = [
+    { id: "overview", label: "Company Overview" },
     { id: "deals", label: "Yearly Deal Table" },
     { id: "commission", label: "Commission" },
     { id: "stats", label: "Consultant Stats" },
-    { id: "overview", label: "Company Overview" },
   ];
 
-  return React.createElement("div", { style: { minHeight: "100vh", background: IVORY, fontFamily: "'Work Sans', sans-serif" } },
+  return React.createElement("div", { style: { minHeight: "100vh", background: IVORY, color: INDIGO, fontFamily: "'Work Sans', sans-serif" } },
     React.createElement("style", null, fontImport),
     React.createElement("div", { style: { padding: "24px 24px 0", background: WHITE, borderBottom: `1px solid ${INDIGO_HAIRLINE}` } },
       React.createElement("div", { style: { maxWidth: 1300, margin: "0 auto" } },
