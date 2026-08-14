@@ -96,6 +96,25 @@ module.exports = async (req, res) => {
     })
   );
 
+  // Ranked totals per consultant, everyone included — unlike the incentive
+  // site's own leaderboard, this doesn't exclude Scott and Lee, since this
+  // is the directors' complete financial picture, not the consultants'
+  // ranked competition.
+  const totals = {};
+  const bySource = {};
+  for (const r of withUSD) {
+    if (r.usdAmount === null || !r.consultantId) continue;
+    if (!totals[r.consultantId]) totals[r.consultantId] = { consultantId: r.consultantId, consultantName: r.consultantName, totalUSD: 0 };
+    totals[r.consultantId].totalUSD += r.usdAmount;
+    if (r.source) {
+      if (!bySource[r.source]) bySource[r.source] = { source: r.source, deals: 0, valueUSD: 0 };
+      bySource[r.source].deals += 1;
+      bySource[r.source].valueUSD += r.usdAmount;
+    }
+  }
+  const leaderboard = Object.values(totals).sort((a, b) => b.totalUSD - a.totalUSD);
+  const sourceBreakdown = Object.values(bySource).sort((a, b) => b.valueUSD - a.valueUSD);
+
   // Full client breakdown — every consultant's deals count here, including
   // Scott and Lee's own, since this is the directors' complete financial
   // picture, not the consultants' ranked leaderboard.
@@ -112,5 +131,5 @@ module.exports = async (req, res) => {
     .map((c) => ({ ...c, percentage: clientGrandTotal > 0 ? (c.totalUSD / clientGrandTotal) * 100 : 0 }))
     .sort((a, b) => b.totalUSD - a.totalUSD);
 
-  return res.status(200).json({ year, records: withUSD, clientBreakdown, clientGrandTotal });
+  return res.status(200).json({ year, records: withUSD, leaderboard, sourceBreakdown, clientBreakdown, clientGrandTotal });
 };
