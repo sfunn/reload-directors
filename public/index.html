@@ -256,9 +256,124 @@ function DealsPage({ token }) {
   );
 }
 
+const CONSULTANTS = [
+  { id: "alex-silverman", name: "Alex Silverman" },
+  { id: "ash-thiara", name: "Ash Thiara" },
+  { id: "jack-thompson", name: "Jack Thompson" },
+  { id: "max-hart", name: "Max Hart" },
+  { id: "oleg-sokyrka", name: "Oleg Sokyrka" },
+  { id: "alex-aparo", name: "Alex Aparo" },
+  { id: "jack-routledge", name: "Jack Routledge" },
+  { id: "joe-purton", name: "Joe Purton" },
+  { id: "josh-davis", name: "Josh Davis" },
+  { id: "natasha-barnard", name: "Natasha Barnard" },
+  { id: "izzy-coordinator", name: "Izzy (Coordinator)" },
+  { id: "zoe-coordinator", name: "Alexandra (Coordinator)" },
+];
+
+function CommissionPage({ token }) {
+  const [consultantId, setConsultantId] = useState(CONSULTANTS[0].id);
+  const [year, setYear] = useState(new Date().getUTCFullYear());
+  const [data, setData] = useState(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    setError(""); setLoading(true);
+    try {
+      const res = await fetch(`/api/commission?consultantId=${consultantId}&year=${year}`, { headers: { Authorization: `Bearer ${token}` } });
+      const body = await res.json();
+      if (!res.ok) { setError(body.error || "Couldn't load commission."); return; }
+      setData(body);
+    } catch (e) {
+      setError("Couldn't reach the server.");
+    } finally {
+      setLoading(false);
+    }
+  }, [token, consultantId, year]);
+
+  useEffect(() => { load(); }, [load]);
+
+  return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 20 } },
+    React.createElement(Panel, null,
+      React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 } },
+        React.createElement(SectionTitle, { eyebrow: "Directors only", title: "Commission" }),
+        React.createElement("div", { style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" } },
+          React.createElement("select", {
+            value: consultantId, onChange: e => setConsultantId(e.target.value),
+            style: { ...inputStyle, width: "auto", marginBottom: 0, padding: "8px 10px" }
+          }, CONSULTANTS.map(c => React.createElement("option", { key: c.id, value: c.id }, c.name))),
+          React.createElement("div", { style: { display: "flex", gap: 6 } },
+            YEAR_OPTIONS.map(y => React.createElement("button", {
+              key: y, onClick: () => setYear(y),
+              style: { ...chipStyle, background: year === y ? MELON : "rgba(255,176,140,0.14)", fontWeight: year === y ? 700 : 500 }
+            }, y))
+          )
+        )
+      )
+    ),
+    error && React.createElement("div", { style: errorStyle }, error),
+    loading && React.createElement(Panel, null, React.createElement("div", { style: { padding: 20, textAlign: "center", color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif" } }, "Loading…")),
+    !loading && data && React.createElement(React.Fragment, null,
+      React.createElement(Panel, null,
+        React.createElement("div", { style: { display: "flex", gap: 40, flexWrap: "wrap" } },
+          React.createElement("div", null,
+            React.createElement("div", { style: labelStyle }, data.isCoordinator ? "Total (flat fee)" : "Total commission (GBP)"),
+            React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 28, color: INDIGO } }, `£${Math.round(data.totalCommission).toLocaleString()}`)
+          ),
+          !data.isCoordinator && React.createElement("div", null,
+            React.createElement("div", { style: labelStyle }, "Total revenue counted (GBP)"),
+            React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 28, color: INDIGO } }, `£${Math.round(data.totalGBP).toLocaleString()}`)
+          ),
+          React.createElement("div", null,
+            React.createElement("div", { style: labelStyle }, "Placements vs onsite fees"),
+            React.createElement("div", { style: { fontFamily: "'Work Sans', sans-serif", fontSize: 14, color: INDIGO } },
+              `${data.placementBreakdown.placements.count} placements · £${Math.round(data.placementBreakdown.placements.totalCommission).toLocaleString()}`
+            ),
+            React.createElement("div", { style: { fontFamily: "'Work Sans', sans-serif", fontSize: 13, color: INDIGO_MUTED } },
+              `${data.placementBreakdown.onsiteFees.count} onsite · £${Math.round(data.placementBreakdown.onsiteFees.totalCommission).toLocaleString()}`
+            )
+          ),
+          data.heldBackCount > 0 && React.createElement("div", null,
+            React.createElement("div", { style: labelStyle }, "Held back"),
+            React.createElement("div", { style: { fontFamily: "'Work Sans', sans-serif", fontSize: 14, color: MELON_LINK } }, `${data.heldBackCount} deal(s) — no exchange rate set yet`)
+          )
+        )
+      ),
+      React.createElement(Panel, null,
+        React.createElement("div", { style: labelStyle }, "Deals"),
+        data.lines.length === 0
+          ? React.createElement("div", { style: { color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif", fontSize: 14, padding: "20px 0" } }, "No deals recorded yet for this year.")
+          : React.createElement(React.Fragment, null,
+              React.createElement(TableHeader, { cols: [
+                { label: "Candidate / Client", flex: 1 },
+                { label: "Fee (USD)", width: 110 },
+                { label: "Rate", width: 60 },
+                { label: "Commission (GBP)", width: 140 },
+                { label: "Paid", width: 60 },
+              ] }),
+              data.lines.map((l, i) => React.createElement(RowLine, { key: `${l.feeId}-${l.splitId}-${i}`, highlighted: !l.hasPlacementName },
+                React.createElement(Cell, { flex: 1 },
+                  l.hasPlacementName ? l.candidateName : `${l.candidateName || "Onsite fee"} (onsite)`,
+                  l.clientCompanyName && React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED } }, l.clientCompanyName)
+                ),
+                React.createElement(Cell, { width: 110 }, l.usdAmount !== null ? `$${Math.round(l.usdAmount).toLocaleString()}` : "—"),
+                React.createElement(Cell, { width: 60 }, l.rate !== undefined ? `${(l.rate * 100).toFixed(1)}%` : "flat"),
+                React.createElement(Cell, { width: 140, bold: true }, `£${Math.round(l.commission).toLocaleString()}`),
+                React.createElement(Cell, { width: 60, color: l.paid ? VERDIGRIS : INDIGO_MUTED }, l.paid ? "Yes" : "No")
+              ))
+            )
+      )
+    )
+  );
+}
+
 function MainShell({ token, email, onLogout }) {
   const [tab, setTab] = useState("deals");
-  const tabs = [{ id: "deals", label: "Yearly Deal Table" }];
+  const tabs = [
+    { id: "deals", label: "Yearly Deal Table" },
+    { id: "commission", label: "Commission" },
+  ];
 
   return React.createElement("div", { style: { minHeight: "100vh", background: IVORY, fontFamily: "'Work Sans', sans-serif" } },
     React.createElement("style", null, fontImport),
@@ -284,7 +399,8 @@ function MainShell({ token, email, onLogout }) {
       )
     ),
     React.createElement("div", { style: { maxWidth: 1300, margin: "0 auto", padding: "26px 20px 60px" } },
-      tab === "deals" && React.createElement(DealsPage, { token })
+      tab === "deals" && React.createElement(DealsPage, { token }),
+      tab === "commission" && React.createElement(CommissionPage, { token })
     )
   );
 }
