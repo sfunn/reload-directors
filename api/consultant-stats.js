@@ -18,6 +18,16 @@ const CONSULTANT_NAMES = {
   "josh-davis": "Josh Davis", "natasha-barnard": "Natasha Barnard",
 };
 
+// Team leads read from a completely separate field on each finalized
+// week — `leadRows`, not `rows` — matching the incentive site's own
+// enforced separation in league.js. This isn't a display choice, it's
+// reading from the one place their numbers are guaranteed to be genuinely
+// isolated from the League Table / Team Lead Bonus figures.
+const TEAM_LEAD_NAMES = {
+  "james-lancer": "James Lancer",
+  "josh-stark": "Josh Stark",
+};
+
 module.exports = async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
@@ -55,12 +65,34 @@ module.exports = async (req, res) => {
   for (const cid of roster) {
     perConsultant[cid] = { consultantId: cid, consultantName: CONSULTANT_NAMES[cid] || cid, monthly: {}, yearTotal: { cvs: 0, interviews: 0 } };
   }
+  // Team leads get their own entries too, built and populated in an
+  // entirely separate pass below — never sharing a loop with the regular
+  // consultant roster, so there's no code path where a mix-up could occur.
+  for (const cid of Object.keys(TEAM_LEAD_NAMES)) {
+    perConsultant[cid] = { consultantId: cid, consultantName: TEAM_LEAD_NAMES[cid], isTeamLead: true, monthly: {}, yearTotal: { cvs: 0, interviews: 0 } };
+  }
 
   for (const week of weeks) {
     if (!week.date || !week.date.startsWith(String(year))) continue;
     const monthKey = week.date.slice(0, 7); // YYYY-MM
+
     for (const [consultantId, row] of Object.entries(week.rows || {})) {
       if (!perConsultant[consultantId]) continue; // not a currently tracked consultant
+      const cvs = Number(row.cvs) || 0;
+      const interviews = Number(row.interviews) || 0;
+      if (!perConsultant[consultantId].monthly[monthKey]) {
+        perConsultant[consultantId].monthly[monthKey] = { month: monthKey, cvs: 0, interviews: 0 };
+      }
+      perConsultant[consultantId].monthly[monthKey].cvs += cvs;
+      perConsultant[consultantId].monthly[monthKey].interviews += interviews;
+      perConsultant[consultantId].yearTotal.cvs += cvs;
+      perConsultant[consultantId].yearTotal.interviews += interviews;
+    }
+
+    // Separate pass over leadRows — deliberately its own loop, reading a
+    // field that only ever contains James's and Josh's own numbers.
+    for (const [consultantId, row] of Object.entries(week.leadRows || {})) {
+      if (!perConsultant[consultantId]) continue;
       const cvs = Number(row.cvs) || 0;
       const interviews = Number(row.interviews) || 0;
       if (!perConsultant[consultantId].monthly[monthKey]) {
@@ -76,6 +108,7 @@ module.exports = async (req, res) => {
   const consultants = Object.values(perConsultant).map((c) => ({
     consultantId: c.consultantId,
     consultantName: c.consultantName,
+    isTeamLead: !!c.isTeamLead,
     monthly: Object.values(c.monthly).sort((a, b) => a.month.localeCompare(b.month)),
     yearTotal: c.yearTotal,
   }));
