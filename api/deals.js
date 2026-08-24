@@ -1,4 +1,5 @@
 const { getDirectorFromRequest, kv } = require("./_directorAuth");
+const { resolveUplift, getOverrides, setOverride } = require("./_dealRevenueUplift");
 
 const RECORDS_KEY = "atlas-fee-records"; // shared with the incentive site — read only, never written here
 const FX_KEY = "atlas-fx-rates";
@@ -57,22 +58,35 @@ function orderDateOf(record, placements) {
 
 module.exports = async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   if (req.method === "OPTIONS") return res.status(200).end();
-
-  if (req.method !== "GET") {
-    return res.status(405).json({ error: "This endpoint is read-only. Edit deal records on the incentive site." });
-  }
 
   const director = await getDirectorFromRequest(req);
   if (!director) {
     return res.status(401).json({ error: "Director access required." });
   }
 
+  // The ONE deliberate write path on this otherwise read-only page — a
+  // manual revenue override for a specific deal, when the true figure is
+  // known to be higher than even the standard client uplift below would
+  // produce. Stored entirely separately from atlas-fee-records, never
+  // touches the shared, incentive-site-owned deal data itself.
+  if (req.method === "POST" && req.query.action === "set-deal-override") {
+    const { feeId, splitId, amountUSD, notes } = req.body || {};
+    if (!feeId || !splitId) return res.status(400).json({ error: "feeId and splitId are both required." });
+    const result = await setOverride(feeId, splitId, amountUSD, notes);
+    return res.status(200).json({ ok: true, override: result });
+  }
+
+  if (req.method !== "GET") {
+    return res.status(405).json({ error: "This endpoint is read-only. Edit deal records on the incentive site." });
+  }
+
   const records = (await kv.get(RECORDS_KEY)) || [];
   const allRates = (await kv.get(FX_KEY)) || {};
   const placements = (await kv.get(PLACEMENTS_KEY)) || {};
+  const overrides = await getOverrides();
   const year = req.query.year ? parseInt(req.query.year, 10) : new Date().getUTCFullYear();
 
   const yearRecords = records
@@ -82,12 +96,31 @@ module.exports = async (req, res) => {
   const withUSD = await Promise.all(
     yearRecords.map(async (r) => {
       const placement = r.placementId ? placements[r.placementId] : null;
+      const clientCompanyName = (placement && placement.clientCompanyName) || r.projectClientName || null;
+      const rawUsdAmount = await convertToUSD(r, allRates);
+
+      // Revenue-only uplift — never touches commission, never touches the
+      // underlying record, only what gets shown as this deal's revenue
+      // figure here and on Company Overview.
+      const decision = resolveUplift(r, clientCompanyName, year, overrides);
+      let usdAmount = rawUsdAmount;
+      if (decision.type === "override") {
+        usdAmount = decision.amountUSD;
+      } else if (decision.type === "multiplier" && rawUsdAmount !== null) {
+        usdAmount = rawUsdAmount * decision.value;
+      }
+
       return {
         ...r,
-        usdAmount: await convertToUSD(r, allRates),
+        rawUsdAmount,
+        usdAmount,
+        upliftType: decision.type, // "override" | "multiplier" | "none" — lets the frontend show exactly what applied
+        upliftMultiplier: decision.type === "multiplier" ? decision.value : null,
+        upliftOverrideAmount: decision.type === "override" ? decision.amountUSD : null,
+        upliftNotes: decision.type === "override" ? decision.notes : null,
         candidateName: (placement && placement.candidateName) || r.notes || null,
         hasPlacementName: !!(placement && placement.candidateName),
-        clientCompanyName: (placement && placement.clientCompanyName) || r.projectClientName || null,
+        clientCompanyName,
         placementStartDate: (placement && placement.startDate) || r.feeDate || null,
         monthOverrides: r.monthOverrides || {},
         coordinatorId: r.coordinatorId || null,
