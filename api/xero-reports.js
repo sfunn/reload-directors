@@ -73,6 +73,34 @@ function findRowByLabel(rows, candidateLabels) {
   return null;
 }
 
+// Reload's real financial year, hardcoded, not derived from any general
+// rule — because it genuinely isn't a general rule, it's a one-time
+// transition. Confirmed directly with Scott, not guessed:
+//   - Any year before 2026: the old financial year, 1 August (year-1) to
+//     31 July (year) — e.g. "2025" means 1 Aug 2024 to 31 Jul 2025.
+//   - 2026 specifically: a one-off EXTENDED 17-month period, 1 August 2025
+//     to 31 December 2026, bridging the old year-end to the new one. This
+//     is Reload's live change of accounting reference date, not a bug to
+//     "fix" into a normal 12-month span.
+//   - 2027 onward: a clean calendar year, 1 January to 31 December — which
+//     from this point on finally matches the calendar-year convention
+//     Revenue and Average Fee already use everywhere else on this page.
+// If Reload's financial year end ever changes again, this needs updating
+// here on purpose, not by trying to generalize it into a formula.
+const TRANSITION_YEAR = 2026;
+const TRANSITION_START = "2025-08-01";
+const TRANSITION_END = "2026-12-31";
+
+function fiscalYearRange(year) {
+  if (year === TRANSITION_YEAR) {
+    return { fromDate: TRANSITION_START, periodEndDate: TRANSITION_END };
+  }
+  if (year > TRANSITION_YEAR) {
+    return { fromDate: `${year}-01-01`, periodEndDate: `${year}-12-31` };
+  }
+  return { fromDate: `${year - 1}-08-01`, periodEndDate: `${year}-07-31` };
+}
+
 module.exports = async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
@@ -87,7 +115,6 @@ module.exports = async (req, res) => {
   if (!director) return res.status(401).json({ error: "Director access required." });
 
   const year = req.query.year ? parseInt(req.query.year, 10) : new Date().getUTCFullYear();
-  const currentYear = new Date().getUTCFullYear();
   const currentDateStr = new Date().toISOString().slice(0, 10);
 
   const auth = await getFreshAccessToken();
@@ -101,12 +128,18 @@ module.exports = async (req, res) => {
   };
 
   try {
-    // Balance Sheet is a point-in-time snapshot, not a range — for the
-    // current year, "as at today" is the only real answer; for a past
-    // year, "as at 31 December" of that year.
-    const asAtDate = year < currentYear ? `${year}-12-31` : currentDateStr;
-    const fromDate = `${year}-01-01`;
-    const toDate = year < currentYear ? `${year}-12-31` : currentDateStr;
+    const { fromDate, periodEndDate } = fiscalYearRange(year);
+
+    // Three genuinely different cases, not just "cap at today":
+    // the period could be fully in the past, still in progress, or hasn't
+    // started yet at all. Capping toDate at today only makes sense for the
+    // middle case — for a future period, fromDate would end up AFTER
+    // toDate, an inverted range Xero would either reject or misreport.
+    if (currentDateStr < fromDate) {
+      return res.status(400).json({ error: `That financial year hasn't started yet — it begins ${fromDate}.` });
+    }
+    const toDate = currentDateStr < periodEndDate ? currentDateStr : periodEndDate;
+    const asAtDate = toDate; // Balance Sheet is a snapshot as at the end of whatever window we just computed
 
     const [plRes, bsRes] = await Promise.all([
       fetch(`https://api.xero.com/api.xro/2.0/Reports/ProfitAndLoss?fromDate=${fromDate}&toDate=${toDate}`, { headers: xeroHeaders }),
