@@ -13,12 +13,14 @@ const { kv } = require("./_directorAuth");
 //   - Citadel / Citadel Securities: 30% true rate (1.2x), from 2021 onward
 //   - Jane Street: 30% true rate (1.2x), from 2024 onward
 //   - Virtu / Virtu Financial: 30% true rate (1.2x), from 2025 onward
+//   - PDT / PDT Partners: 30% true rate (1.2x), from 2026 onward
 // Applies to every deal for these clients, any consultant, not just genuine
 // placements — Scott said "for all deals," not "for placements only."
 const CLIENT_UPLIFT_RULES = [
   { substring: "citadel", minYear: 2021, multiplier: 1.2 },
   { substring: "jane street", minYear: 2024, multiplier: 1.2 },
   { substring: "virtu", minYear: 2025, multiplier: 1.2 },
+  { substring: "pdt", minYear: 2026, multiplier: 1.2 },
 ];
 
 function defaultMultiplierFor(clientName, year) {
