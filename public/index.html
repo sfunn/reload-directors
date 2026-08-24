@@ -180,7 +180,7 @@ const chipStyle = { background: "rgba(255,176,140,0.14)", border: `1px solid ${M
 
 const YEAR_OPTIONS = [2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026, 2027];
 
-function DealDetailsTable({ records, showSourceAndCoordinator, editingKey, editAmount, editCurrency, editNotes, onStartEdit, onChangeAmount, onChangeCurrency, onChangeNotes, onSave, onCancel, onClear, saving }) {
+function DealDetailsTable({ records, showSourceAndCoordinator, editingKey, editAmount, editCurrency, editCustomRate, editNotes, onStartEdit, onChangeAmount, onChangeCurrency, onChangeCustomRate, onChangeNotes, onSave, onCancel, onClear, saving }) {
   return records.length === 0
     ? React.createElement("div", { style: { color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif", fontSize: 14, padding: "20px 0" } }, "No deals recorded yet for this year.")
     : React.createElement("div", { style: { overflowX: "auto" } },
@@ -189,8 +189,8 @@ function DealDetailsTable({ records, showSourceAndCoordinator, editingKey, editA
           { label: "Candidate", width: 130 },
           { label: "Client", width: 120 },
           { label: "Start Date", width: 100 },
-          { label: "Amount", width: 120 },
-          { label: "Revenue", width: 130 },
+          { label: "USD", width: 110 },
+          { label: "Revenue (GBP)", width: 140 },
           ...(showSourceAndCoordinator ? [{ label: "Source", width: 110 }] : []),
           { label: "Consultant", width: 130 },
           ...(showSourceAndCoordinator ? [{ label: "Coordinator", width: 110 }] : []),
@@ -205,9 +205,9 @@ function DealDetailsTable({ records, showSourceAndCoordinator, editingKey, editA
               React.createElement(Cell, { width: 130, color: r.candidateName ? INDIGO : INDIGO_MUTED }, r.candidateName || "—"),
               React.createElement(Cell, { width: 120, color: r.clientCompanyName ? INDIGO : INDIGO_MUTED }, r.clientCompanyName || "—"),
               React.createElement(Cell, { width: 100, color: r.placementStartDate ? INDIGO : INDIGO_MUTED }, r.placementStartDate ? new Date(r.placementStartDate).toLocaleDateString("en-GB") : "—"),
-              React.createElement(Cell, { width: 120 }, `${r.currency} ${Number(r.totalAmount).toLocaleString()}`),
-              React.createElement(Cell, { width: 130 },
-                r.usdAmount !== null ? `$${Math.round(r.usdAmount).toLocaleString()}` : React.createElement("span", { style: { color: MELON_LINK } }, "no rate"),
+              React.createElement(Cell, { width: 110, color: INDIGO_MUTED }, r.usdAmount !== null ? `$${Math.round(r.usdAmount).toLocaleString()}` : "no rate"),
+              React.createElement(Cell, { width: 140 },
+                r.gbpAmount !== null ? `£${Math.round(r.gbpAmount).toLocaleString()}` : React.createElement("span", { style: { color: MELON_LINK } }, "no rate"),
                 React.createElement("span", {
                   onClick: () => onStartEdit(r),
                   style: { marginLeft: 6, fontSize: 11, color: INDIGO_MUTED, textDecoration: "underline", cursor: "pointer" }
@@ -235,6 +235,10 @@ function DealDetailsTable({ records, showSourceAndCoordinator, editingKey, editA
                   }, c))
                 )
               ),
+              React.createElement("div", null,
+                React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Exchange rate (optional)"),
+                React.createElement("input", { type: "number", step: "0.0001", value: editCustomRate, onChange: e => onChangeCustomRate(e.target.value), placeholder: "1 GBP = $?", style: { ...inputStyle, width: 130, marginBottom: 0 } })
+              ),
               React.createElement("div", { style: { flex: 1, minWidth: 200 } },
                 React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Notes"),
                 React.createElement("input", { type: "text", value: editNotes, onChange: e => onChangeNotes(e.target.value), placeholder: "e.g. Client confirmed real fee", style: { ...inputStyle, width: "100%", marginBottom: 0 } })
@@ -255,7 +259,8 @@ function DealsPage({ token }) {
   const [loading, setLoading] = useState(false);
   const [editingKey, setEditingKey] = useState(null);
   const [editAmount, setEditAmount] = useState("");
-  const [editCurrency, setEditCurrency] = useState("USD");
+  const [editCurrency, setEditCurrency] = useState("GBP");
+  const [editCustomRate, setEditCustomRate] = useState("");
   const [editNotes, setEditNotes] = useState("");
   const [savingOverride, setSavingOverride] = useState(false);
 
@@ -278,22 +283,24 @@ function DealsPage({ token }) {
   function startEdit(record) {
     setEditingKey(`${record.feeId}:${record.splitId}`);
     setEditAmount(record.upliftType === "override" ? String(record.upliftOverrideAmount) : "");
-    setEditCurrency(record.upliftType === "override" ? (record.upliftOverrideCurrency || "USD") : "USD");
+    setEditCurrency(record.upliftType === "override" ? (record.upliftOverrideCurrency || "GBP") : "GBP");
+    setEditCustomRate(record.upliftType === "override" && record.upliftOverrideCustomRate ? String(record.upliftOverrideCustomRate) : "");
     setEditNotes(record.upliftType === "override" ? (record.upliftNotes || "") : "");
   }
   function cancelEdit() {
     setEditingKey(null);
     setEditAmount("");
-    setEditCurrency("USD");
+    setEditCurrency("GBP");
+    setEditCustomRate("");
     setEditNotes("");
   }
-  async function saveOverride(feeId, splitId, amount, currency, notes) {
+  async function saveOverride(feeId, splitId, amount, currency, customRate, notes) {
     setSavingOverride(true);
     try {
       const res = await fetch("/api/deals?action=set-deal-override", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ feeId, splitId, amount, currency, notes }),
+        body: JSON.stringify({ feeId, splitId, amount, currency, customRate, notes }),
       });
       if (!res.ok) { const body = await res.json(); setError(body.error || "Couldn't save the override."); return; }
       cancelEdit();
@@ -306,19 +313,20 @@ function DealsPage({ token }) {
   }
 
   const overrideEditProps = {
-    editingKey, editAmount, editCurrency, editNotes, saving: savingOverride,
+    editingKey, editAmount, editCurrency, editCustomRate, editNotes, saving: savingOverride,
     onStartEdit: startEdit,
     onChangeAmount: setEditAmount,
     onChangeCurrency: setEditCurrency,
+    onChangeCustomRate: setEditCustomRate,
     onChangeNotes: setEditNotes,
     onCancel: cancelEdit,
     onSave: () => {
       const [feeId, splitId] = editingKey.split(":");
-      saveOverride(feeId, splitId, editAmount, editCurrency, editNotes);
+      saveOverride(feeId, splitId, editAmount, editCurrency, editCustomRate, editNotes);
     },
     onClear: () => {
       const [feeId, splitId] = editingKey.split(":");
-      saveOverride(feeId, splitId, "", "USD", null);
+      saveOverride(feeId, splitId, "", "GBP", "", null);
     },
   };
 
