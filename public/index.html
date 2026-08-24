@@ -351,7 +351,8 @@ function DealsPage({ token }) {
         },
           React.createElement("span", { style: { width: 24, flexShrink: 0, color: INDIGO_MUTED } }, i + 1),
           React.createElement("span", { style: { width: 200, flexShrink: 0 } }, r.consultantName || r.consultantId),
-          React.createElement("span", { style: { fontWeight: 700 } }, `$${Math.round(r.totalUSD).toLocaleString()}`)
+          React.createElement("span", { style: { fontWeight: 700 } }, `£${Math.round(r.totalGBP).toLocaleString()}`),
+          React.createElement("span", { style: { fontSize: 12.5, color: INDIGO_MUTED } }, `$${Math.round(r.totalUSD).toLocaleString()}`)
         ))
       ),
       React.createElement("div", { style: { marginTop: 10, fontSize: 12, color: INDIGO_MUTED } }, "Includes every consultant, Scott and Lee included — this is the full company total, not the consultants' own ranked competition.")
@@ -363,31 +364,35 @@ function DealsPage({ token }) {
           key: s.source, style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 13.5, padding: "4px 0", color: INDIGO }
         },
           React.createElement("span", { style: { width: 140, flexShrink: 0 } }, s.source),
-          React.createElement("span", { style: { fontWeight: 600, width: 90, flexShrink: 0 } }, `$${Math.round(s.valueUSD).toLocaleString()}`),
+          React.createElement("span", { style: { fontWeight: 600, width: 90, flexShrink: 0 } }, `£${Math.round(s.valueGBP).toLocaleString()}`),
+          React.createElement("span", { style: { fontSize: 11.5, color: INDIGO_MUTED, width: 90, flexShrink: 0 } }, `$${Math.round(s.valueUSD).toLocaleString()}`),
           React.createElement("span", { style: { fontSize: 11, color: INDIGO_MUTED } }, `(${s.deals} deal${s.deals !== 1 ? "s" : ""})`)
         )),
         React.createElement("div", {
           style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 13.5, padding: "6px 0 0", marginTop: 4, borderTop: `1px solid ${INDIGO_HAIRLINE}`, fontWeight: 700, color: INDIGO }
         },
           React.createElement("span", { style: { width: 140, flexShrink: 0 } }, "Total"),
-          React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `$${Math.round((data.sourceBreakdown || []).reduce((s, r) => s + r.valueUSD, 0)).toLocaleString()}`),
+          React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round((data.sourceBreakdown || []).reduce((s, r) => s + r.valueGBP, 0)).toLocaleString()}`),
+          React.createElement("span", { style: { width: 90, flexShrink: 0, fontSize: 11.5, color: INDIGO_MUTED, fontWeight: 400 } }, `$${Math.round((data.sourceBreakdown || []).reduce((s, r) => s + r.valueUSD, 0)).toLocaleString()}`),
           React.createElement("span", { style: { fontSize: 11, color: INDIGO_MUTED, fontWeight: 400 } }, `(${(data.sourceBreakdown || []).reduce((s, r) => s + r.deals, 0)} deals)`)
         )
       ),
       (data.clientBreakdown || []).length > 0 && React.createElement(Panel, { style: { flex: 1, minWidth: 320 } },
-        React.createElement(SectionTitle, { eyebrow: "Directors only", title: "Client Breakdown" }),
+        React.createElement(SectionTitle, { title: "Client Breakdown" }),
         (data.clientBreakdown || []).map(c => React.createElement("div", {
           key: c.firm, style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 13.5, padding: "4px 0", color: c.firm === "Unknown" ? INDIGO_MUTED : INDIGO }
         },
           React.createElement("span", { style: { width: 150, flexShrink: 0 } }, c.firm),
-          React.createElement("span", { style: { fontWeight: 600, width: 90, flexShrink: 0 } }, `$${Math.round(c.totalUSD).toLocaleString()}`),
+          React.createElement("span", { style: { fontWeight: 600, width: 90, flexShrink: 0 } }, `£${Math.round(c.totalGBP).toLocaleString()}`),
+          React.createElement("span", { style: { fontSize: 11.5, color: INDIGO_MUTED, width: 90, flexShrink: 0 } }, `$${Math.round(c.totalUSD).toLocaleString()}`),
           React.createElement("span", { style: { fontSize: 11, color: INDIGO_MUTED } }, `(${c.percentage.toFixed(0)}%)`)
         )),
         React.createElement("div", {
           style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 13.5, padding: "6px 0 0", marginTop: 4, borderTop: `1px solid ${INDIGO_HAIRLINE}`, fontWeight: 700, color: INDIGO }
         },
           React.createElement("span", { style: { width: 150, flexShrink: 0 } }, "Total"),
-          React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `$${Math.round((data.clientBreakdown || []).reduce((s, r) => s + r.totalUSD, 0)).toLocaleString()}`),
+          React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round((data.clientBreakdown || []).reduce((s, r) => s + r.totalGBP, 0)).toLocaleString()}`),
+          React.createElement("span", { style: { width: 90, flexShrink: 0, fontSize: 11.5, color: INDIGO_MUTED, fontWeight: 400 } }, `$${Math.round((data.clientBreakdown || []).reduce((s, r) => s + r.totalUSD, 0)).toLocaleString()}`),
           React.createElement("span", { style: { fontSize: 11, color: INDIGO_MUTED, fontWeight: 400 } }, "(100%)")
         )
       )
