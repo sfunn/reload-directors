@@ -101,6 +101,30 @@ function fiscalYearRange(year) {
   return { fromDate: `${year - 1}-08-01`, periodEndDate: `${year}-07-31` };
 }
 
+// Xero's Profit and Loss report rejects any single request spanning more
+// than 365 days ("The fromDate and toDate parameters must be within 365
+// days of each other" — confirmed directly from a real failed request,
+// not assumed). Reload's 17-month bridge financial year is always going
+// to exceed that on its own, and even an ordinary 12-month calendar year
+// hits exactly this wall in any leap year (366 days) — so this chunker
+// isn't a one-off special case for the bridge year, it's applied to every
+// period, and normally just produces a single chunk that covers the whole
+// range untouched.
+function splitIntoChunks(fromDate, toDate, maxSpanDays = 364) {
+  const chunks = [];
+  let chunkStart = new Date(`${fromDate}T00:00:00Z`);
+  const end = new Date(`${toDate}T00:00:00Z`);
+  while (chunkStart <= end) {
+    const chunkEnd = new Date(chunkStart);
+    chunkEnd.setUTCDate(chunkEnd.getUTCDate() + maxSpanDays);
+    const actualEnd = chunkEnd > end ? end : chunkEnd;
+    chunks.push({ from: chunkStart.toISOString().slice(0, 10), to: actualEnd.toISOString().slice(0, 10) });
+    chunkStart = new Date(actualEnd);
+    chunkStart.setUTCDate(chunkStart.getUTCDate() + 1);
+  }
+  return chunks;
+}
+
 module.exports = async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
@@ -141,25 +165,45 @@ module.exports = async (req, res) => {
     const toDate = currentDateStr < periodEndDate ? currentDateStr : periodEndDate;
     const asAtDate = toDate; // Balance Sheet is a snapshot as at the end of whatever window we just computed
 
-    const [plRes, bsRes] = await Promise.all([
-      fetch(`https://api.xero.com/api.xro/2.0/Reports/ProfitAndLoss?fromDate=${fromDate}&toDate=${toDate}`, { headers: xeroHeaders }),
+    const plChunks = splitIntoChunks(fromDate, toDate);
+
+    const [plResults, bsRes] = await Promise.all([
+      Promise.all(plChunks.map((c) =>
+        fetch(`https://api.xero.com/api.xro/2.0/Reports/ProfitAndLoss?fromDate=${c.from}&toDate=${c.to}`, { headers: xeroHeaders })
+      )),
       fetch(`https://api.xero.com/api.xro/2.0/Reports/BalanceSheet?date=${asAtDate}`, { headers: xeroHeaders }),
     ]);
 
-    if (!plRes.ok || !bsRes.ok) {
-      const plBody = await plRes.text();
+    const failedChunk = plResults.find((r) => !r.ok);
+    if (failedChunk || !bsRes.ok) {
+      const plBodies = await Promise.all(plResults.map((r) => r.text()));
       const bsBody = await bsRes.text();
-      console.error("[xero-reports] report fetch failed:", { plStatus: plRes.status, plBody, bsStatus: bsRes.status, bsBody });
+      console.error("[xero-reports] report fetch failed:", {
+        plChunks, plStatuses: plResults.map((r) => r.status), plBodies,
+        bsStatus: bsRes.status, bsBody,
+      });
       return res.status(502).json({ error: "Xero rejected the report request. Check the Vercel logs for the exact response." });
     }
 
-    const plData = await plRes.json();
+    const plDataChunks = await Promise.all(plResults.map((r) => r.json()));
     const bsData = await bsRes.json();
 
-    const plReport = plData.Reports && plData.Reports[0];
-    const bsReport = bsData.Reports && bsData.Reports[0];
+    // Gross Profit is a flow over time, not a snapshot — summing it across
+    // consecutive, non-overlapping date chunks gives the exact same answer
+    // a single (disallowed) request for the whole period would have, so
+    // splitting the range doesn't compromise the figure's accuracy.
+    let grossProfitTotal = null;
+    let matchedLabel = null;
+    for (const plData of plDataChunks) {
+      const plReport = plData.Reports && plData.Reports[0];
+      const row = plReport ? findRowByLabel(plReport.Rows, ["Gross Profit"]) : null;
+      if (row) {
+        grossProfitTotal = (grossProfitTotal || 0) + row.value;
+        matchedLabel = row.label;
+      }
+    }
 
-    const grossProfitRow = plReport ? findRowByLabel(plReport.Rows, ["Gross Profit"]) : null;
+    const bsReport = bsData.Reports && bsData.Reports[0];
     // Different Xero report templates label this differently depending on
     // region/setup — checking several plausible real labels rather than
     // assuming one.
@@ -171,8 +215,9 @@ module.exports = async (req, res) => {
       periodStart: fromDate,
       periodEnd: toDate,
       asAtDate,
-      grossProfit: grossProfitRow ? grossProfitRow.value : null,
-      grossProfitMatchedLabel: grossProfitRow ? grossProfitRow.label : null,
+      periodsCombined: plChunks.length,
+      grossProfit: grossProfitTotal,
+      grossProfitMatchedLabel: matchedLabel,
       cash: cashRow ? cashRow.value : null,
       cashMatchedLabel: cashRow ? cashRow.label : null,
       note: "Figures are in your Xero organisation's own reporting currency — not converted to USD.",
