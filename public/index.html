@@ -180,7 +180,7 @@ const chipStyle = { background: "rgba(255,176,140,0.14)", border: `1px solid ${M
 
 const YEAR_OPTIONS = [2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026, 2027];
 
-function DealDetailsTable({ records, showSourceAndCoordinator }) {
+function DealDetailsTable({ records, showSourceAndCoordinator, editingKey, editAmount, editNotes, onStartEdit, onChangeAmount, onChangeNotes, onSave, onCancel, onClear, saving }) {
   return records.length === 0
     ? React.createElement("div", { style: { color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif", fontSize: 14, padding: "20px 0" } }, "No deals recorded yet for this year.")
     : React.createElement("div", { style: { overflowX: "auto" } },
@@ -190,24 +190,54 @@ function DealDetailsTable({ records, showSourceAndCoordinator }) {
           { label: "Client", width: 120 },
           { label: "Start Date", width: 100 },
           { label: "Amount", width: 120 },
-          { label: "USD", width: 100 },
+          { label: "USD", width: 130 },
           ...(showSourceAndCoordinator ? [{ label: "Source", width: 110 }] : []),
           { label: "Consultant", width: 130 },
           ...(showSourceAndCoordinator ? [{ label: "Coordinator", width: 110 }] : []),
           { label: "Paid", width: 90 },
         ] }),
-        records.map(r => React.createElement(RowLine, { key: `${r.feeId}-${r.splitId}` },
-          React.createElement(Cell, { width: 100 }, r.feeDate ? new Date(r.feeDate).toLocaleDateString("en-GB") : "—"),
-          React.createElement(Cell, { width: 130, color: r.candidateName ? INDIGO : INDIGO_MUTED }, r.candidateName || "—"),
-          React.createElement(Cell, { width: 120, color: r.clientCompanyName ? INDIGO : INDIGO_MUTED }, r.clientCompanyName || "—"),
-          React.createElement(Cell, { width: 100, color: r.placementStartDate ? INDIGO : INDIGO_MUTED }, r.placementStartDate ? new Date(r.placementStartDate).toLocaleDateString("en-GB") : "—"),
-          React.createElement(Cell, { width: 120 }, `${r.currency} ${Number(r.totalAmount).toLocaleString()}`),
-          React.createElement(Cell, { width: 100 }, r.usdAmount !== null ? `$${Math.round(r.usdAmount).toLocaleString()}` : React.createElement("span", { style: { color: MELON_LINK } }, "no rate")),
-          showSourceAndCoordinator && React.createElement(Cell, { width: 110, color: r.source ? INDIGO : INDIGO_MUTED }, r.source || "—"),
-          React.createElement(Cell, { width: 130 }, r.consultantName || r.consultantId || "Unmapped"),
-          showSourceAndCoordinator && React.createElement(Cell, { width: 110, color: r.coordinatorId ? INDIGO : INDIGO_MUTED }, r.coordinatorId || "—"),
-          React.createElement(Cell, { width: 90, color: r.paid ? VERDIGRIS : INDIGO_MUTED }, r.paid ? `Paid ${r.paidMarkedAt ? new Date(r.paidMarkedAt).toLocaleDateString("en-GB") : ""}` : "No")
-        ))
+        records.map(r => {
+          const key = `${r.feeId}:${r.splitId}`;
+          const isEditing = editingKey === key;
+          return React.createElement(React.Fragment, { key },
+            React.createElement(RowLine, null,
+              React.createElement(Cell, { width: 100 }, r.feeDate ? new Date(r.feeDate).toLocaleDateString("en-GB") : "—"),
+              React.createElement(Cell, { width: 130, color: r.candidateName ? INDIGO : INDIGO_MUTED }, r.candidateName || "—"),
+              React.createElement(Cell, { width: 120, color: r.clientCompanyName ? INDIGO : INDIGO_MUTED }, r.clientCompanyName || "—"),
+              React.createElement(Cell, { width: 100, color: r.placementStartDate ? INDIGO : INDIGO_MUTED }, r.placementStartDate ? new Date(r.placementStartDate).toLocaleDateString("en-GB") : "—"),
+              React.createElement(Cell, { width: 120 }, `${r.currency} ${Number(r.totalAmount).toLocaleString()}`),
+              React.createElement(Cell, { width: 130 },
+                r.usdAmount !== null ? `$${Math.round(r.usdAmount).toLocaleString()}` : React.createElement("span", { style: { color: MELON_LINK } }, "no rate"),
+                r.upliftType === "multiplier" && React.createElement("span", { style: { marginLeft: 6, fontSize: 10, color: MELON_LINK, fontWeight: 600 } }, `×${r.upliftMultiplier} rate`),
+                r.upliftType === "override" && React.createElement("span", { style: { marginLeft: 6, fontSize: 10, color: VERDIGRIS, fontWeight: 600 } }, "manual"),
+                React.createElement("span", {
+                  onClick: () => onStartEdit(r),
+                  style: { marginLeft: 6, fontSize: 11, color: INDIGO_MUTED, textDecoration: "underline", cursor: "pointer" }
+                }, "edit")
+              ),
+              showSourceAndCoordinator && React.createElement(Cell, { width: 110, color: r.source ? INDIGO : INDIGO_MUTED }, r.source || "—"),
+              React.createElement(Cell, { width: 130 }, r.consultantName || r.consultantId || "Unmapped"),
+              showSourceAndCoordinator && React.createElement(Cell, { width: 110, color: r.coordinatorId ? INDIGO : INDIGO_MUTED }, r.coordinatorId || "—"),
+              React.createElement(Cell, { width: 90, color: r.paid ? VERDIGRIS : INDIGO_MUTED }, r.paid ? `Paid ${r.paidMarkedAt ? new Date(r.paidMarkedAt).toLocaleDateString("en-GB") : ""}` : "No")
+            ),
+            isEditing && React.createElement("div", { style: { display: "flex", gap: 10, alignItems: "flex-end", padding: "10px 0", background: "rgba(255,176,140,0.08)", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, flexWrap: "wrap" } },
+              React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, width: "100%" } },
+                `Recorded at ${r.currency} ${Number(r.totalAmount).toLocaleString()}${r.rawUsdAmount !== null && r.rawUsdAmount !== undefined ? ` ($${Math.round(r.rawUsdAmount).toLocaleString()} at standard rate)` : ""}. Enter the true revenue figure in USD, or leave blank and save to clear an existing override.`
+              ),
+              React.createElement("div", null,
+                React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "True amount (USD)"),
+                React.createElement("input", { type: "number", value: editAmount, onChange: e => onChangeAmount(e.target.value), placeholder: "e.g. 500000", style: { ...inputStyle, width: 160, marginBottom: 0 } })
+              ),
+              React.createElement("div", { style: { flex: 1, minWidth: 200 } },
+                React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Notes"),
+                React.createElement("input", { type: "text", value: editNotes, onChange: e => onChangeNotes(e.target.value), placeholder: "e.g. Client confirmed real fee", style: { ...inputStyle, width: "100%", marginBottom: 0 } })
+              ),
+              React.createElement("button", { onClick: onSave, disabled: saving, style: { ...ghostStyle, padding: "9px 14px" } }, saving ? "Saving…" : "Save"),
+              r.upliftType === "override" && React.createElement("button", { onClick: onClear, disabled: saving, style: { ...ghostStyle, padding: "9px 14px", color: MELON_LINK } }, "Clear override"),
+              React.createElement("button", { onClick: onCancel, style: { ...ghostStyle, padding: "9px 14px", background: "none", border: "none" } }, "Cancel")
+            )
+          );
+        })
       );
 }
 
@@ -216,6 +246,10 @@ function DealsPage({ token }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [editingKey, setEditingKey] = useState(null);
+  const [editAmount, setEditAmount] = useState("");
+  const [editNotes, setEditNotes] = useState("");
+  const [savingOverride, setSavingOverride] = useState(false);
 
   const load = useCallback(async () => {
     setError(""); setLoading(true);
@@ -232,6 +266,50 @@ function DealsPage({ token }) {
   }, [token, year]);
 
   useEffect(() => { load(); }, [load]);
+
+  function startEdit(record) {
+    setEditingKey(`${record.feeId}:${record.splitId}`);
+    setEditAmount(record.upliftType === "override" ? String(record.upliftOverrideAmount) : "");
+    setEditNotes(record.upliftType === "override" ? (record.upliftNotes || "") : "");
+  }
+  function cancelEdit() {
+    setEditingKey(null);
+    setEditAmount("");
+    setEditNotes("");
+  }
+  async function saveOverride(feeId, splitId, amountUSD, notes) {
+    setSavingOverride(true);
+    try {
+      const res = await fetch("/api/deals?action=set-deal-override", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ feeId, splitId, amountUSD, notes }),
+      });
+      if (!res.ok) { const body = await res.json(); setError(body.error || "Couldn't save the override."); return; }
+      cancelEdit();
+      await load();
+    } catch (e) {
+      setError("Couldn't reach the server.");
+    } finally {
+      setSavingOverride(false);
+    }
+  }
+
+  const overrideEditProps = {
+    editingKey, editAmount, editNotes, saving: savingOverride,
+    onStartEdit: startEdit,
+    onChangeAmount: setEditAmount,
+    onChangeNotes: setEditNotes,
+    onCancel: cancelEdit,
+    onSave: () => {
+      const [feeId, splitId] = editingKey.split(":");
+      saveOverride(feeId, splitId, editAmount, editNotes);
+    },
+    onClear: () => {
+      const [feeId, splitId] = editingKey.split(":");
+      saveOverride(feeId, splitId, "", null);
+    },
+  };
 
   return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 20 } },
     React.createElement(Panel, null,
@@ -297,13 +375,13 @@ function DealsPage({ token }) {
     ),
     !loading && data && React.createElement(Panel, null,
       React.createElement(SectionTitle, { eyebrow: "Directors only", title: "Deal details & exchange rates" }),
-      React.createElement("div", { style: { marginBottom: 12, fontSize: 12, color: INDIGO_MUTED } }, "Read-only. Paid status, Source, and Coordinator are set on the incentive site."),
-      React.createElement(DealDetailsTable, { records: (data.records || []).filter(r => r.hasPlacementName), showSourceAndCoordinator: true })
+      React.createElement("div", { style: { marginBottom: 12, fontSize: 12, color: INDIGO_MUTED } }, "Paid status, Source, and Coordinator are set on the incentive site. Revenue figures can be corrected here when the true rate differs from what's recorded — this only ever affects reporting, never any consultant's actual commission."),
+      React.createElement(DealDetailsTable, { records: (data.records || []).filter(r => r.hasPlacementName), showSourceAndCoordinator: true, ...overrideEditProps })
     ),
     !loading && data && React.createElement(Panel, null,
       React.createElement(SectionTitle, { eyebrow: "Directors only", title: "Onsite Fees" }),
       React.createElement("div", { style: { marginTop: 4, marginBottom: 14, fontSize: 12, color: INDIGO_MUTED } }, "Fees with no linked placement — e.g. genuine Onsite fees in Atlas."),
-      React.createElement(DealDetailsTable, { records: (data.records || []).filter(r => !r.hasPlacementName), showSourceAndCoordinator: true })
+      React.createElement(DealDetailsTable, { records: (data.records || []).filter(r => !r.hasPlacementName), showSourceAndCoordinator: true, ...overrideEditProps })
     )
   );
 }
