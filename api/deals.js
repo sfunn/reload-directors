@@ -178,37 +178,44 @@ module.exports = async (req, res) => {
   // Ranked totals per consultant, everyone included — unlike the incentive
   // site's own leaderboard, this doesn't exclude Scott and Lee, since this
   // is the directors' complete financial picture, not the consultants'
-  // ranked competition.
+  // ranked competition. GBP is the primary figure everywhere on this page
+  // now, matching Company Overview — a deal counts once it can convert to
+  // GBP, same rule as there.
   const totals = {};
   const bySource = {};
   for (const r of withUSD) {
-    if (r.usdAmount === null || !r.consultantId) continue;
-    if (!totals[r.consultantId]) totals[r.consultantId] = { consultantId: r.consultantId, consultantName: r.consultantName, totalUSD: 0 };
-    totals[r.consultantId].totalUSD += r.usdAmount;
+    if (r.gbpAmount === null || !r.consultantId) continue;
+    if (!totals[r.consultantId]) totals[r.consultantId] = { consultantId: r.consultantId, consultantName: r.consultantName, totalGBP: 0, totalUSD: 0 };
+    totals[r.consultantId].totalGBP += r.gbpAmount;
+    if (r.usdAmount !== null) totals[r.consultantId].totalUSD += r.usdAmount;
     if (r.source) {
-      if (!bySource[r.source]) bySource[r.source] = { source: r.source, deals: 0, valueUSD: 0 };
+      if (!bySource[r.source]) bySource[r.source] = { source: r.source, deals: 0, valueGBP: 0, valueUSD: 0 };
       bySource[r.source].deals += 1;
-      bySource[r.source].valueUSD += r.usdAmount;
+      bySource[r.source].valueGBP += r.gbpAmount;
+      if (r.usdAmount !== null) bySource[r.source].valueUSD += r.usdAmount;
     }
   }
-  const leaderboard = Object.values(totals).sort((a, b) => b.totalUSD - a.totalUSD);
-  const sourceBreakdown = Object.values(bySource).sort((a, b) => b.valueUSD - a.valueUSD);
+  const leaderboard = Object.values(totals).sort((a, b) => b.totalGBP - a.totalGBP);
+  const sourceBreakdown = Object.values(bySource).sort((a, b) => b.valueGBP - a.valueGBP);
 
   // Full client breakdown — every consultant's deals count here, including
   // Scott and Lee's own, since this is the directors' complete financial
   // picture, not the consultants' ranked leaderboard.
   const byClient = {};
+  let clientGrandTotalGBP = 0;
   let clientGrandTotal = 0;
   for (const r of withUSD) {
-    if (r.usdAmount === null || !r.consultantId) continue;
+    if (r.gbpAmount === null || !r.consultantId) continue;
     const firm = r.clientCompanyName || "Unknown";
-    if (!byClient[firm]) byClient[firm] = { firm, totalUSD: 0 };
-    byClient[firm].totalUSD += r.usdAmount;
-    clientGrandTotal += r.usdAmount;
+    if (!byClient[firm]) byClient[firm] = { firm, totalGBP: 0, totalUSD: 0 };
+    byClient[firm].totalGBP += r.gbpAmount;
+    if (r.usdAmount !== null) byClient[firm].totalUSD += r.usdAmount;
+    clientGrandTotalGBP += r.gbpAmount;
+    if (r.usdAmount !== null) clientGrandTotal += r.usdAmount;
   }
   const clientBreakdown = Object.values(byClient)
-    .map((c) => ({ ...c, percentage: clientGrandTotal > 0 ? (c.totalUSD / clientGrandTotal) * 100 : 0 }))
-    .sort((a, b) => b.totalUSD - a.totalUSD);
+    .map((c) => ({ ...c, percentage: clientGrandTotalGBP > 0 ? (c.totalGBP / clientGrandTotalGBP) * 100 : 0 }))
+    .sort((a, b) => b.totalGBP - a.totalGBP);
 
-  return res.status(200).json({ year, records: withUSD, leaderboard, sourceBreakdown, clientBreakdown, clientGrandTotal });
+  return res.status(200).json({ year, records: withUSD, leaderboard, sourceBreakdown, clientBreakdown, clientGrandTotal, clientGrandTotalGBP });
 };
