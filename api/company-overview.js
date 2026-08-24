@@ -1,4 +1,5 @@
 const { getDirectorFromRequest, kv } = require("./_directorAuth");
+const { resolveUplift, getOverrides } = require("./_dealRevenueUplift");
 
 const RECORDS_KEY = "atlas-fee-records"; // shared with the incentive site — read only, never written here
 const PLACEMENTS_KEY = "atlas-placements";
@@ -82,11 +83,12 @@ module.exports = async (req, res) => {
 
   if (req.method === "GET" && (!action || action === "overview")) {
     const year = parseInt(req.query.year, 10) || new Date().getUTCFullYear();
-    const [records, placements, allRates, manualMetrics] = await Promise.all([
+    const [records, placements, allRates, manualMetrics, overrides] = await Promise.all([
       kv.get(RECORDS_KEY).then((v) => v || []),
       kv.get(PLACEMENTS_KEY).then((v) => v || {}),
       kv.get(FX_KEY).then((v) => v || {}),
       kv.get(MANUAL_METRICS_KEY).then((v) => v || {}),
+      getOverrides(),
     ]);
 
     const yearRecords = records.filter((r) => effectiveYear(r, placements) === year);
@@ -95,8 +97,30 @@ module.exports = async (req, res) => {
     let countedDeals = 0;
     const byClient = {};
     for (const r of yearRecords) {
-      const gbp = convertToGBP(r, allRates);
-      const usd = await convertToUSD(r, allRates);
+      const rawGbp = convertToGBP(r, allRates);
+      const rawUsd = await convertToUSD(r, allRates);
+      const placement = r.placementId ? placements[r.placementId] : null;
+      const client = (placement && placement.clientCompanyName) || r.projectClientName || "Unknown";
+
+      // Same revenue-only uplift as the Yearly Deal Table, applied here so
+      // Company Overview never silently disagrees with it — deliberately
+      // never touches commission anywhere in this codebase.
+      const decision = resolveUplift(r, client, year, overrides);
+      let gbp = rawGbp;
+      let usd = rawUsd;
+      if (decision.type === "override") {
+        usd = decision.amountUSD;
+        // Convert the override's USD figure to GBP using the exact same
+        // rate-lookup rules as any other record — same paid/paidMarkedAt
+        // driven month selection, just fed a USD pseudo-record instead of
+        // re-deriving currency logic.
+        const pseudoRecord = { currency: "USD", shareAmount: decision.amountUSD, paid: r.paid, paidMarkedAt: r.paidMarkedAt };
+        gbp = convertToGBP(pseudoRecord, allRates);
+      } else if (decision.type === "multiplier") {
+        if (rawGbp !== null) gbp = rawGbp * decision.value;
+        if (rawUsd !== null) usd = rawUsd * decision.value;
+      }
+
       // GBP is now the primary, deal-counting figure — a deal only counts
       // toward the headline totals once it can actually convert to GBP.
       // The USD figure is tracked alongside from the exact same set of
@@ -106,8 +130,6 @@ module.exports = async (req, res) => {
       totalRevenueGBP += gbp;
       if (usd !== null) totalRevenueUSD += usd;
       countedDeals += 1;
-      const placement = r.placementId ? placements[r.placementId] : null;
-      const client = (placement && placement.clientCompanyName) || r.projectClientName || "Unknown";
       if (!byClient[client]) byClient[client] = { gbp: 0, usd: 0 };
       byClient[client].gbp += gbp;
       if (usd !== null) byClient[client].usd += usd;
