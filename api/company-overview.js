@@ -109,13 +109,15 @@ module.exports = async (req, res) => {
       let gbp = rawGbp;
       let usd = rawUsd;
       if (decision.type === "override") {
-        usd = decision.amountUSD;
-        // Convert the override's USD figure to GBP using the exact same
-        // rate-lookup rules as any other record — same paid/paidMarkedAt
-        // driven month selection, just fed a USD pseudo-record instead of
-        // re-deriving currency logic.
-        const pseudoRecord = { currency: "USD", shareAmount: decision.amountUSD, paid: r.paid, paidMarkedAt: r.paidMarkedAt };
+        // The override might genuinely be in GBP, not USD — e.g. a deal
+        // recorded in Atlas as USD but actually paid in pounds. Build one
+        // pseudo-record carrying whichever currency was actually entered,
+        // and run it through BOTH existing conversion functions — each
+        // already handles GBP and USD correctly on its own, so there's no
+        // new conversion logic here, just reuse in both directions.
+        const pseudoRecord = { currency: decision.currency, shareAmount: decision.amount, paid: r.paid, paidMarkedAt: r.paidMarkedAt };
         gbp = convertToGBP(pseudoRecord, allRates);
+        usd = await convertToUSD(pseudoRecord, allRates);
       } else if (decision.type === "multiplier") {
         if (rawGbp !== null) gbp = rawGbp * decision.value;
         if (rawUsd !== null) usd = rawUsd * decision.value;
