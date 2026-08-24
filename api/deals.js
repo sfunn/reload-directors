@@ -73,9 +73,9 @@ module.exports = async (req, res) => {
   // produce. Stored entirely separately from atlas-fee-records, never
   // touches the shared, incentive-site-owned deal data itself.
   if (req.method === "POST" && req.query.action === "set-deal-override") {
-    const { feeId, splitId, amountUSD, notes } = req.body || {};
+    const { feeId, splitId, amount, currency, notes } = req.body || {};
     if (!feeId || !splitId) return res.status(400).json({ error: "feeId and splitId are both required." });
-    const result = await setOverride(feeId, splitId, amountUSD, notes);
+    const result = await setOverride(feeId, splitId, amount, currency, notes);
     return res.status(200).json({ ok: true, override: result });
   }
 
@@ -105,7 +105,11 @@ module.exports = async (req, res) => {
       const decision = resolveUplift(r, clientCompanyName, year, overrides);
       let usdAmount = rawUsdAmount;
       if (decision.type === "override") {
-        usdAmount = decision.amountUSD;
+        // The override might genuinely be in GBP, not USD — e.g. a deal
+        // recorded in Atlas as USD but actually paid in pounds. Reuse the
+        // same generic conversion function every other record already
+        // goes through, just fed the override's own amount and currency.
+        usdAmount = await convertToUSD({ currency: decision.currency, shareAmount: decision.amount, paid: r.paid, paidMarkedAt: r.paidMarkedAt }, allRates);
       } else if (decision.type === "multiplier" && rawUsdAmount !== null) {
         usdAmount = rawUsdAmount * decision.value;
       }
@@ -116,7 +120,8 @@ module.exports = async (req, res) => {
         usdAmount,
         upliftType: decision.type, // "override" | "multiplier" | "none" — lets the frontend show exactly what applied
         upliftMultiplier: decision.type === "multiplier" ? decision.value : null,
-        upliftOverrideAmount: decision.type === "override" ? decision.amountUSD : null,
+        upliftOverrideAmount: decision.type === "override" ? decision.amount : null,
+        upliftOverrideCurrency: decision.type === "override" ? decision.currency : null,
         upliftNotes: decision.type === "override" ? decision.notes : null,
         candidateName: (placement && placement.candidateName) || r.notes || null,
         hasPlacementName: !!(placement && placement.candidateName),
