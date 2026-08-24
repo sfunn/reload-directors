@@ -32,7 +32,7 @@ function defaultMultiplierFor(clientName, year) {
   return 1;
 }
 
-const OVERRIDES_KEY = "deal-revenue-overrides"; // { "feeId:splitId": { amount, currency, notes, setAt } } — owned entirely by this site
+const OVERRIDES_KEY = "deal-revenue-overrides"; // { "feeId:splitId": { amount, currency, customRate, notes, setAt } } — owned entirely by this site
 
 function overrideKeyFor(record) {
   return `${record.feeId}:${record.splitId}`;
@@ -44,7 +44,12 @@ function overrideKeyFor(record) {
 //     Scott telling us the real number directly, more reliable than any rule.
 //     Kept in whatever currency it was actually entered in — sometimes a
 //     deal is recorded in Atlas in USD but genuinely paid in GBP, so forcing
-//     everything through USD would be wrong.
+//     everything through USD would be wrong. Optionally carries its own
+//     exchange rate too, for the rare case where the real rate that applied
+//     to this specific deal genuinely differed from whatever the standard
+//     monthly rate table says — expressed the same way every rate in this
+//     system already is, "1 GBP = X USD", regardless of which currency the
+//     override amount itself is in.
 //   - otherwise the default client-based multiplier applies if this deal
 //     matches one of the rules above
 //   - otherwise the deal's recorded figure is used completely unchanged
@@ -55,7 +60,13 @@ function resolveUplift(record, clientName, year, overrides) {
   const key = overrideKeyFor(record);
   const override = overrides[key];
   if (override && override.amount !== null && override.amount !== undefined) {
-    return { type: "override", amount: override.amount, currency: override.currency || "USD", notes: override.notes || null };
+    return {
+      type: "override",
+      amount: override.amount,
+      currency: override.currency || "USD",
+      customRate: override.customRate ?? null,
+      notes: override.notes || null,
+    };
   }
   const multiplier = defaultMultiplierFor(clientName, year);
   if (multiplier !== 1) {
@@ -68,14 +79,15 @@ async function getOverrides() {
   return (await kv.get(OVERRIDES_KEY)) || {};
 }
 
-async function setOverride(feeId, splitId, amount, currency, notes) {
+async function setOverride(feeId, splitId, amount, currency, customRate, notes) {
   const all = await getOverrides();
   const key = `${feeId}:${splitId}`;
   if (amount === null || amount === undefined || amount === "") {
     delete all[key];
   } else {
     const normalizedCurrency = currency === "GBP" ? "GBP" : "USD"; // anything unrecognized defaults to USD, never silently guessed as something else
-    all[key] = { amount: Number(amount), currency: normalizedCurrency, notes: notes || null, setAt: new Date().toISOString() };
+    const normalizedRate = customRate !== null && customRate !== undefined && customRate !== "" ? Number(customRate) : null;
+    all[key] = { amount: Number(amount), currency: normalizedCurrency, customRate: normalizedRate, notes: notes || null, setAt: new Date().toISOString() };
   }
   await kv.set(OVERRIDES_KEY, all);
   return all[key] || null;
