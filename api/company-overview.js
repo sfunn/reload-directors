@@ -109,15 +109,28 @@ module.exports = async (req, res) => {
       let gbp = rawGbp;
       let usd = rawUsd;
       if (decision.type === "override") {
-        // The override might genuinely be in GBP, not USD — e.g. a deal
-        // recorded in Atlas as USD but actually paid in pounds. Build one
-        // pseudo-record carrying whichever currency was actually entered,
-        // and run it through BOTH existing conversion functions — each
-        // already handles GBP and USD correctly on its own, so there's no
-        // new conversion logic here, just reuse in both directions.
-        const pseudoRecord = { currency: decision.currency, shareAmount: decision.amount, paid: r.paid, paidMarkedAt: r.paidMarkedAt };
-        gbp = convertToGBP(pseudoRecord, allRates);
-        usd = await convertToUSD(pseudoRecord, allRates);
+        if (decision.customRate) {
+          // A specific real rate was recorded for this deal, overriding the
+          // standard monthly rate table entirely — expressed as 1 GBP = X
+          // USD, same convention as everywhere else in this system.
+          if (decision.currency === "GBP") {
+            gbp = decision.amount;
+            usd = decision.amount * decision.customRate;
+          } else {
+            usd = decision.amount;
+            gbp = decision.amount / decision.customRate;
+          }
+        } else {
+          // The override might genuinely be in GBP, not USD — e.g. a deal
+          // recorded in Atlas as USD but actually paid in pounds. Build one
+          // pseudo-record carrying whichever currency was actually entered,
+          // and run it through BOTH existing conversion functions — each
+          // already handles GBP and USD correctly on its own, so there's no
+          // new conversion logic here, just reuse in both directions.
+          const pseudoRecord = { currency: decision.currency, shareAmount: decision.amount, paid: r.paid, paidMarkedAt: r.paidMarkedAt };
+          gbp = convertToGBP(pseudoRecord, allRates);
+          usd = await convertToUSD(pseudoRecord, allRates);
+        }
       } else if (decision.type === "multiplier") {
         if (rawGbp !== null) gbp = rawGbp * decision.value;
         if (rawUsd !== null) usd = rawUsd * decision.value;
