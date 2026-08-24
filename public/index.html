@@ -208,8 +208,6 @@ function DealDetailsTable({ records, showSourceAndCoordinator, editingKey, editA
               React.createElement(Cell, { width: 120 }, `${r.currency} ${Number(r.totalAmount).toLocaleString()}`),
               React.createElement(Cell, { width: 130 },
                 r.usdAmount !== null ? `$${Math.round(r.usdAmount).toLocaleString()}` : React.createElement("span", { style: { color: MELON_LINK } }, "no rate"),
-                r.upliftType === "multiplier" && React.createElement("span", { style: { marginLeft: 6, fontSize: 10, color: MELON_LINK, fontWeight: 600 } }, `×${r.upliftMultiplier} rate`),
-                r.upliftType === "override" && React.createElement("span", { style: { marginLeft: 6, fontSize: 10, color: VERDIGRIS, fontWeight: 600 } }, "manual"),
                 React.createElement("span", {
                   onClick: () => onStartEdit(r),
                   style: { marginLeft: 6, fontSize: 11, color: INDIGO_MUTED, textDecoration: "underline", cursor: "pointer" }
