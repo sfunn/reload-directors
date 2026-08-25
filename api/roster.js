@@ -108,6 +108,30 @@ module.exports = async (req, res) => {
     return res.status(200).json({ ok: true, entry: newEntry, history: employment[consultantId].salaryHistory });
   }
 
+  // Genuine mistakes happen — a wrong figure or wrong date typed in by
+  // accident isn't a fact worth preserving the way a real pay rise is, so
+  // unlike adding an entry, this one actually removes it. Identified by
+  // its position in the same chronologically-sorted order the GET response
+  // already returns, so what the director sees on screen is exactly what
+  // gets removed, no separate ID scheme to keep in sync.
+  if (req.method === "POST" && req.query.action === "delete-salary-entry") {
+    const { consultantId, index } = req.body || {};
+    if (!consultantId || !ROSTER[consultantId]) {
+      return res.status(400).json({ error: "A valid consultantId is required." });
+    }
+    const idx = parseInt(index, 10);
+    const employment = (await kv.get(EMPLOYMENT_KEY)) || {};
+    const existing = employment[consultantId] || {};
+    const history = [...(existing.salaryHistory || [])].sort((a, b) => a.effectiveDate.localeCompare(b.effectiveDate));
+    if (isNaN(idx) || idx < 0 || idx >= history.length) {
+      return res.status(400).json({ error: "A valid entry index is required." });
+    }
+    history.splice(idx, 1);
+    employment[consultantId] = { ...existing, salaryHistory: history };
+    await kv.set(EMPLOYMENT_KEY, employment);
+    return res.status(200).json({ ok: true, history: employment[consultantId].salaryHistory });
+  }
+
   return res.status(400).json({ error: "Unknown action." });
 };
 
