@@ -350,6 +350,7 @@ function DealsPage({ token }) {
         React.createElement("span", { style: { width: 100, flexShrink: 0 } }, "USD"),
         React.createElement("span", { style: { width: 100, flexShrink: 0 } }, "Revenue (GBP)"),
         React.createElement("span", { style: { width: 60, flexShrink: 0 } }, "Deals"),
+        React.createElement("span", { style: { width: 60, flexShrink: 0 } }, "Onsites"),
         React.createElement("span", { style: { width: 60, flexShrink: 0 } }, "%")
       ),
       loading ? React.createElement("div", { style: { padding: 20, textAlign: "center", color: INDIGO_MUTED } }, "Loading…") :
@@ -364,6 +365,7 @@ function DealsPage({ token }) {
           React.createElement("span", { style: { width: 100, flexShrink: 0 } }, `$${Math.round(r.totalUSD).toLocaleString()}`),
           React.createElement("span", { style: { width: 100, flexShrink: 0 } }, `£${Math.round(r.totalGBP).toLocaleString()}`),
           React.createElement("span", { style: { width: 60, flexShrink: 0, color: INDIGO_MUTED } }, r.deals),
+          React.createElement("span", { style: { width: 60, flexShrink: 0, color: INDIGO_MUTED } }, r.onsites),
           React.createElement("span", { style: { width: 60, flexShrink: 0, color: INDIGO_MUTED } }, `${r.percentage.toFixed(1)}%`)
         )),
         React.createElement("div", {
@@ -374,6 +376,7 @@ function DealsPage({ token }) {
           React.createElement("span", { style: { width: 100, flexShrink: 0 } }, `$${Math.round((data.leaderboard || []).reduce((s, r) => s + r.totalUSD, 0)).toLocaleString()}`),
           React.createElement("span", { style: { width: 100, flexShrink: 0 } }, `£${Math.round((data.leaderboard || []).reduce((s, r) => s + r.totalGBP, 0)).toLocaleString()}`),
           React.createElement("span", { style: { width: 60, flexShrink: 0 } }, (data.leaderboard || []).reduce((s, r) => s + r.deals, 0)),
+          React.createElement("span", { style: { width: 60, flexShrink: 0 } }, (data.leaderboard || []).reduce((s, r) => s + r.onsites, 0)),
           React.createElement("span", { style: { width: 60, flexShrink: 0 } }, "100.0%")
         )
       ),
@@ -415,6 +418,7 @@ function DealsPage({ token }) {
           React.createElement("span", { style: { width: 90, flexShrink: 0 } }, "USD"),
           React.createElement("span", { style: { width: 90, flexShrink: 0 } }, "Revenue (GBP)"),
           React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Deals"),
+          React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Onsites"),
           React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "%")
         ),
         (data.clientBreakdown || []).map(c => React.createElement("div", {
@@ -424,6 +428,7 @@ function DealsPage({ token }) {
           React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `$${Math.round(c.totalUSD).toLocaleString()}`),
           React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(c.totalGBP).toLocaleString()}`),
           React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, c.deals),
+          React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, c.onsites),
           React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, `${c.percentage.toFixed(0)}%`)
         )),
         React.createElement("div", {
@@ -433,6 +438,7 @@ function DealsPage({ token }) {
           React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `$${Math.round((data.clientBreakdown || []).reduce((s, r) => s + r.totalUSD, 0)).toLocaleString()}`),
           React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round((data.clientBreakdown || []).reduce((s, r) => s + r.totalGBP, 0)).toLocaleString()}`),
           React.createElement("span", { style: { width: 50, flexShrink: 0 } }, (data.clientBreakdown || []).reduce((s, r) => s + r.deals, 0)),
+          React.createElement("span", { style: { width: 50, flexShrink: 0 } }, (data.clientBreakdown || []).reduce((s, r) => s + r.onsites, 0)),
           React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "100%")
         )
       )
@@ -863,27 +869,26 @@ function HeadcountRetentionPanel({ token }) {
 
   useEffect(() => { load(); }, [load]);
 
-  function statBlock(label, count, history, historyKey, retentionCat) {
-    return React.createElement("div", null,
-      React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.08em" } }, label),
-      React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO } }, count),
-      React.createElement("span", { onClick: () => setShowHistory(showHistory === historyKey ? null : historyKey), style: { fontSize: 11, color: INDIGO_MUTED, textDecoration: "underline", cursor: "pointer" } }, showHistory === historyKey ? "hide history" : "show history"),
-      showHistory === historyKey && React.createElement("div", { style: { marginTop: 8, fontSize: 12 } },
+  function row(label, count, history, historyKey, cat) {
+    const isHistoryOpen = showHistory === historyKey;
+    return React.createElement(React.Fragment, { key: historyKey },
+      React.createElement(RowLine, null,
+        React.createElement(Cell, { width: 150 }, label),
+        React.createElement(Cell, { width: 80, color: INDIGO }, count),
+        React.createElement(Cell, { width: 110, color: cat.averageTenureYearsCurrent !== null ? INDIGO : INDIGO_MUTED }, cat.averageTenureYearsCurrent !== null ? `${cat.averageTenureYearsCurrent.toFixed(1)} yrs` : "No data yet"),
+        React.createElement(Cell, { width: 110, color: cat.turnoverRateLast12MonthsPercent !== null ? INDIGO : INDIGO_MUTED }, cat.turnoverRateLast12MonthsPercent !== null ? `${cat.turnoverRateLast12MonthsPercent.toFixed(1)}%` : "—"),
+        React.createElement(Cell, { width: 90 }, cat.departuresLast12Months),
+        React.createElement(Cell, { width: 200, color: INDIGO_MUTED },
+          cat.departedCount > 0 ? `${cat.departedCount} departed overall, avg ${cat.averageTenureYearsDeparted.toFixed(1)} yrs` : "—"
+        ),
+        React.createElement(Cell, { flex: 1 },
+          React.createElement("span", { onClick: () => setShowHistory(isHistoryOpen ? null : historyKey), style: { fontSize: 11, color: INDIGO_MUTED, textDecoration: "underline", cursor: "pointer" } }, isHistoryOpen ? "hide history" : "show history")
+        )
+      ),
+      isHistoryOpen && React.createElement("div", { style: { padding: "8px 0", fontSize: 12, borderBottom: `1px solid ${INDIGO_HAIRLINE}` } },
         history.length === 0
           ? React.createElement("div", { style: { color: INDIGO_MUTED } }, "No dates recorded yet.")
           : history.map((e, i) => React.createElement("div", { key: i, style: { color: INDIGO_MUTED, padding: "2px 0" } }, `${formatDateUK(e.date)} — ${e.count}`))
-      ),
-      retentionCat && React.createElement(React.Fragment, null,
-        React.createElement("div", { style: { fontSize: 13, color: INDIGO, marginTop: 10 } },
-          retentionCat.averageTenureYearsCurrent !== null ? `${retentionCat.averageTenureYearsCurrent.toFixed(1)} yrs average tenure` : "No tenure data yet"
-        ),
-        React.createElement("div", { style: { fontSize: 12, color: INDIGO, marginTop: 4 } },
-          retentionCat.turnoverRateLast12MonthsPercent !== null ? `${retentionCat.turnoverRateLast12MonthsPercent.toFixed(1)}% turnover` : "No basis for a turnover rate yet"
-        ),
-        React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED } }, `${retentionCat.departuresLast12Months} left in the last 12 months`),
-        retentionCat.departedCount > 0 && React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 2 } },
-          `${retentionCat.departedCount} departed overall, averaging ${retentionCat.averageTenureYearsDeparted.toFixed(1)} yrs before leaving`
-        )
       )
     );
   }
@@ -893,9 +898,18 @@ function HeadcountRetentionPanel({ token }) {
     React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Derived directly from the roster below — nothing to update here, edit dates there instead. Only as accurate as the dates entered."),
     error && React.createElement("div", { style: errorStyle }, error),
     loading && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Loading…"),
-    !loading && headcount && retention && React.createElement("div", { style: { display: "flex", gap: 40, flexWrap: "wrap" } },
-      statBlock("Fee-earning staff", headcount.currentFeeEarning, headcount.feeEarningHistory, "feeEarning", retention.feeEarning),
-      statBlock("Coordinators", headcount.currentCoordinators, headcount.coordinatorHistory, "coordinators", retention.coordinators)
+    !loading && headcount && retention && React.createElement(React.Fragment, null,
+      React.createElement(TableHeader, { cols: [
+        { label: "Category", width: 150 },
+        { label: "Current", width: 80 },
+        { label: "Avg Tenure", width: 110 },
+        { label: "Turnover (12mo)", width: 110 },
+        { label: "Left (12mo)", width: 90 },
+        { label: "Departed Overall", width: 200 },
+        { label: "", flex: 1 },
+      ] }),
+      row("Fee-earning staff", headcount.currentFeeEarning, headcount.feeEarningHistory, "feeEarning", retention.feeEarning),
+      row("Coordinators", headcount.currentCoordinators, headcount.coordinatorHistory, "coordinators", retention.coordinators)
     )
   );
 }
@@ -903,6 +917,7 @@ function HeadcountRetentionPanel({ token }) {
 function RosterPanel({ token }) {
   const [roster, setRoster] = useState(null);
   const [ttpById, setTtpById] = useState({});
+  const [ttpSummary, setTtpSummary] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -932,6 +947,7 @@ function RosterPanel({ token }) {
         const byId = {};
         for (const p of ttpBody.people || []) byId[p.consultantId] = p;
         setTtpById(byId);
+        setTtpSummary({ measuredCount: ttpBody.measuredCount, averageDaysToFirstPlacement: ttpBody.averageDaysToFirstPlacement });
       }
     } catch (e) {
       setError("Couldn't reach the server.");
@@ -1030,21 +1046,24 @@ function RosterPanel({ token }) {
   }
 
   return React.createElement(Panel, null,
-    React.createElement(SectionTitle, { title: "Roster — start & termination dates" }),
+    React.createElement(SectionTitle, { title: "Staff Details and Productivity" }),
     React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Feeds Time to Productivity once dates are set — approximate is fine, this doesn't affect anyone's pay or commission. Salary is separate personal information, visible only to directors, and kept as a real history since it changes with raises and promotions — each entry is a new fact, not a correction to the last one."),
     error && React.createElement("div", { style: errorStyle }, error),
     loading && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Loading…"),
-    !loading && roster && React.createElement(React.Fragment, null,
-      React.createElement(TableHeader, { cols: [
-        { label: "Name", width: 160 },
-        { label: "Start Date", width: 100 },
-        { label: "Termination Date", width: 130 },
-        { label: "Current Salary (p/a)", width: 140 },
-        { label: "First Placement", width: 110 },
-        { label: "Time to Productivity", width: 130 },
-        { label: "", flex: 1 },
-      ] }),
-      roster.map((p) => {
+    !loading && roster && ttpSummary && React.createElement("div", { style: { marginBottom: 14, fontSize: 14 } },
+      ttpSummary.averageDaysToFirstPlacement !== null
+        ? React.createElement(React.Fragment, null,
+            React.createElement("span", { style: { color: INDIGO_MUTED } }, "Average time to productivity: "),
+            React.createElement("strong", null, `${Math.round(ttpSummary.averageDaysToFirstPlacement)} days`),
+            React.createElement("span", { style: { color: INDIGO_MUTED } }, ` across ${ttpSummary.measuredCount} ${ttpSummary.measuredCount === 1 ? "person" : "people"}`)
+          )
+        : React.createElement("span", { style: { color: INDIGO_MUTED } }, "Average time to productivity: not enough real data yet.")
+    ),
+    !loading && roster && (() => {
+      const consultants = roster.filter((p) => p.category !== "coordinator");
+      const coordinators = roster.filter((p) => p.category === "coordinator");
+
+      function renderPersonRow(p) {
         const isEditing = editingId === p.consultantId;
         const isSalaryFormOpen = salaryFormId === p.consultantId;
         const isHistoryOpen = showSalaryHistory === p.consultantId;
@@ -1060,10 +1079,7 @@ function RosterPanel({ token }) {
           : INDIGO_MUTED;
         return React.createElement(React.Fragment, { key: p.consultantId },
           React.createElement(RowLine, null,
-            React.createElement(Cell, { width: 160 },
-              p.consultantName,
-              p.category === "coordinator" && React.createElement("span", { style: { marginLeft: 6, fontSize: 10, color: HEATHER, fontWeight: 600, letterSpacing: "0.04em", textTransform: "uppercase" } }, "Coordinator")
-            ),
+            React.createElement(Cell, { width: 160 }, p.consultantName),
             React.createElement(Cell, { width: 100, color: p.startDate ? INDIGO : INDIGO_MUTED },
               formatDateUK(p.startDate) || "Not set",
               !p.startDate && p.earliestDealDate && React.createElement("div", { style: { fontSize: 10, color: INDIGO_MUTED, marginTop: 2 } },
@@ -1129,8 +1145,23 @@ function RosterPanel({ token }) {
             React.createElement("button", { onClick: cancelSalaryForm, style: { ...ghostStyle, padding: "9px 14px", background: "none", border: "none" } }, "Cancel")
           )
         );
-      })
-    )
+      }
+
+      return React.createElement(React.Fragment, null,
+        React.createElement(TableHeader, { cols: [
+          { label: "Name", width: 160 },
+          { label: "Start Date", width: 100 },
+          { label: "Termination Date", width: 130 },
+          { label: "Current Salary (p/a)", width: 140 },
+          { label: "First Placement", width: 110 },
+          { label: "Time to Productivity", width: 130 },
+          { label: "", flex: 1 },
+        ] }),
+        consultants.map(renderPersonRow),
+        coordinators.length > 0 && React.createElement("div", { style: { padding: "10px 0 4px", fontSize: 12, fontWeight: 700, color: HEATHER, textTransform: "uppercase", letterSpacing: "0.05em" } }, "Coordinators"),
+        coordinators.map(renderPersonRow)
+      );
+    })()
   );
 }
 
@@ -1312,6 +1343,7 @@ function CompanyOverviewPage({ token }) {
             React.createElement("span", { style: { width: 80, flexShrink: 0 } }, "USD"),
             React.createElement("span", { style: { width: 90, flexShrink: 0 } }, "GBP"),
             React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Deals"),
+            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Onsites"),
             React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "%")
           ),
           data.clientConcentration.length === 0
@@ -1324,6 +1356,7 @@ function CompanyOverviewPage({ token }) {
                   React.createElement("span", { style: { width: 80, flexShrink: 0 } }, `$${Math.round(c.totalUSD).toLocaleString()}`),
                   React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(c.totalGBP).toLocaleString()}`),
                   React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, c.deals),
+                  React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, c.onsites),
                   React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, `${c.percentage.toFixed(1)}%`)
                 )),
                 React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, padding: "6px 0 0", marginTop: 4, borderTop: `1px solid ${INDIGO_HAIRLINE}`, fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, fontWeight: 700, color: INDIGO } },
@@ -1331,6 +1364,7 @@ function CompanyOverviewPage({ token }) {
                   React.createElement("span", { style: { width: 80, flexShrink: 0 } }, `$${Math.round(data.clientConcentration.reduce((s, c) => s + c.totalUSD, 0)).toLocaleString()}`),
                   React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(data.clientConcentration.reduce((s, c) => s + c.totalGBP, 0)).toLocaleString()}`),
                   React.createElement("span", { style: { width: 50, flexShrink: 0 } }, data.clientConcentration.reduce((s, c) => s + c.deals, 0)),
+                  React.createElement("span", { style: { width: 50, flexShrink: 0 } }, data.clientConcentration.reduce((s, c) => s + c.onsites, 0)),
                   React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "100%")
                 )
               )
@@ -1346,6 +1380,7 @@ function CompanyOverviewPage({ token }) {
             React.createElement("span", { style: { width: 80, flexShrink: 0 } }, "USD"),
             React.createElement("span", { style: { width: 90, flexShrink: 0 } }, "GBP"),
             React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Deals"),
+            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Onsites"),
             React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "%")
           ),
           data.consultantConcentration.length === 0
@@ -1358,6 +1393,7 @@ function CompanyOverviewPage({ token }) {
                   React.createElement("span", { style: { width: 80, flexShrink: 0 } }, `$${Math.round(c.totalUSD).toLocaleString()}`),
                   React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(c.totalGBP).toLocaleString()}`),
                   React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, c.deals),
+                  React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, c.onsites),
                   React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, `${c.percentage.toFixed(1)}%`)
                 )),
                 React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, padding: "6px 0 0", marginTop: 4, borderTop: `1px solid ${INDIGO_HAIRLINE}`, fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, fontWeight: 700, color: INDIGO } },
@@ -1365,6 +1401,7 @@ function CompanyOverviewPage({ token }) {
                   React.createElement("span", { style: { width: 80, flexShrink: 0 } }, `$${Math.round(data.consultantConcentration.reduce((s, c) => s + c.totalUSD, 0)).toLocaleString()}`),
                   React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(data.consultantConcentration.reduce((s, c) => s + c.totalGBP, 0)).toLocaleString()}`),
                   React.createElement("span", { style: { width: 50, flexShrink: 0 } }, data.consultantConcentration.reduce((s, c) => s + c.deals, 0)),
+                  React.createElement("span", { style: { width: 50, flexShrink: 0 } }, data.consultantConcentration.reduce((s, c) => s + c.onsites, 0)),
                   React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "100%")
                 )
               )
