@@ -114,6 +114,7 @@ module.exports = async (req, res) => {
     yearRecords.map(async (r) => {
       const placement = r.placementId ? placements[r.placementId] : null;
       const clientCompanyName = (placement && placement.clientCompanyName) || r.projectClientName || null;
+      const hasPlacementName = !!(placement && placement.candidateName);
       const rawUsdAmount = await convertToUSD(r, allRates);
       const rawGbpAmount = convertToGBP(r, allRates);
 
@@ -122,7 +123,7 @@ module.exports = async (req, res) => {
       // figure here and on Company Overview. GBP is the primary, editable
       // figure on this page now, matching Company Overview's own
       // convention; USD is derived alongside purely as a reference.
-      const decision = resolveUplift(r, clientCompanyName, year, overrides);
+      const decision = resolveUplift(r, clientCompanyName, year, overrides, hasPlacementName);
       let usdAmount = rawUsdAmount;
       let gbpAmount = rawGbpAmount;
       if (decision.type === "override") {
@@ -165,7 +166,7 @@ module.exports = async (req, res) => {
         upliftOverrideCustomRate: decision.type === "override" ? decision.customRate : null,
         upliftNotes: decision.type === "override" ? decision.notes : null,
         candidateName: (placement && placement.candidateName) || r.notes || null,
-        hasPlacementName: !!(placement && placement.candidateName),
+        hasPlacementName,
         clientCompanyName,
         placementStartDate: (placement && placement.startDate) || r.feeDate || null,
         monthOverrides: r.monthOverrides || {},
