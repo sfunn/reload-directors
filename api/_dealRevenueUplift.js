@@ -14,8 +14,12 @@ const { kv } = require("./_directorAuth");
 //   - Jane Street: 30% true rate (1.2x), from 2024 onward
 //   - Virtu / Virtu Financial: 30% true rate (1.2x), from 2025 onward
 //   - PDT / PDT Partners: 30% true rate (1.2x), from 2026 onward
-// Applies to every deal for these clients, any consultant, not just genuine
-// placements — Scott said "for all deals," not "for placements only."
+// Applies to genuine placements only, same restriction the original
+// Natasha/Citadel commission uplift always used — a notes-derived Onsite
+// fee never gets the automatic uplift, since it isn't a real placement fee
+// at the true rate, it's a different kind of payment entirely. A manual
+// override can still be set on an Onsite fee if the real figure is known,
+// that's a deliberate correction, not an automatic assumption.
 const CLIENT_UPLIFT_RULES = [
   { substring: "citadel", minYear: 2021, multiplier: 1.2 },
   { substring: "jane street", minYear: 2024, multiplier: 1.2 },
@@ -38,10 +42,13 @@ function overrideKeyFor(record) {
   return `${record.feeId}:${record.splitId}`;
 }
 
-// Given a raw record, its resolved client name, and its effective year,
+// Given a raw record, its resolved client name, effective year, and whether
+// it's a genuine placement (as opposed to a notes-derived Onsite fee),
 // decide what should actually happen to its revenue figure:
 //   - a manual per-deal override always wins if one's been set, since that's
-//     Scott telling us the real number directly, more reliable than any rule.
+//     Scott telling us the real number directly, more reliable than any rule
+//     — this applies regardless of placement type, since it's a deliberate
+//     correction, not an automatic guess.
 //     Kept in whatever currency it was actually entered in — sometimes a
 //     deal is recorded in Atlas in USD but genuinely paid in GBP, so forcing
 //     everything through USD would be wrong. Optionally carries its own
@@ -50,13 +57,13 @@ function overrideKeyFor(record) {
 //     monthly rate table says — expressed the same way every rate in this
 //     system already is, "1 GBP = X USD", regardless of which currency the
 //     override amount itself is in.
-//   - otherwise the default client-based multiplier applies if this deal
-//     matches one of the rules above
+//   - otherwise the default client-based multiplier applies ONLY to genuine
+//     placements, matching one of the rules above
 //   - otherwise the deal's recorded figure is used completely unchanged
 // Returns a decision object; callers apply it to their OWN already-tested
 // currency conversion functions, so conversion math itself is never
 // duplicated here, only the "which adjustment applies" decision is shared.
-function resolveUplift(record, clientName, year, overrides) {
+function resolveUplift(record, clientName, year, overrides, hasPlacementName) {
   const key = overrideKeyFor(record);
   const override = overrides[key];
   if (override && override.amount !== null && override.amount !== undefined) {
@@ -67,6 +74,9 @@ function resolveUplift(record, clientName, year, overrides) {
       customRate: override.customRate ?? null,
       notes: override.notes || null,
     };
+  }
+  if (!hasPlacementName) {
+    return { type: "none" };
   }
   const multiplier = defaultMultiplierFor(clientName, year);
   if (multiplier !== 1) {
