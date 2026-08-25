@@ -1,5 +1,7 @@
 const { getDirectorFromRequest, kv } = require("./_directorAuth");
 const { resolveUplift, getOverrides } = require("./_dealRevenueUplift");
+const { EMPLOYMENT_KEY } = require("./roster");
+const { buildTimeline, countAsOf } = require("./headcount");
 
 const RECORDS_KEY = "atlas-fee-records"; // shared with the incentive site — read only, never written here
 const PLACEMENTS_KEY = "atlas-placements";
@@ -182,11 +184,26 @@ module.exports = async (req, res) => {
     const cashAmount = manual.cashAmount ?? null;
     const cashCurrency = manual.cashCurrency || null;
 
+    // Revenue per head — genuinely derived from the roster's real dates,
+    // never faked. For any year that ends before the very first tracked
+    // start date, there's honestly nothing to divide by, so this returns
+    // null rather than silently using today's headcount for a period it
+    // never applied to.
+    const employment = (await kv.get(EMPLOYMENT_KEY)) || {};
+    const feeEarningTimeline = buildTimeline(employment, "feeEarning");
+    const yearEndDate = `${year}-12-31`;
+    const headcountForYear = countAsOf(feeEarningTimeline, yearEndDate);
+    const revenuePerHeadGBP = headcountForYear > 0 ? totalRevenueGBP / headcountForYear : null;
+    const revenuePerHeadUSD = headcountForYear > 0 ? totalRevenueUSD / headcountForYear : null;
+
     return res.status(200).json({
       year,
       totalRevenueGBP, totalRevenueUSD, countedDeals,
       averageFeeGBP, averageFeeUSD,
       clientConcentration, top3Percentage, top5Percentage,
+      revenuePerHeadGBP,
+      revenuePerHeadUSD,
+      headcountUsedForPerHead: headcountForYear > 0 ? headcountForYear : null,
       // grossProfitAmount/grossProfitCurrency replace the old grossProfitUSD
       // field, which wrongly assumed this figure was always in USD — it
       // isn't, since it now often comes straight from Xero in Reload's own
