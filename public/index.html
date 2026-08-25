@@ -732,12 +732,13 @@ function CommissionPage({ token }) {
                 React.createElement(Cell, { width: 100, bold: true }, `£${Math.round(l.commission).toLocaleString()}`),
                 React.createElement(Cell, { width: 110, color: l.source ? INDIGO : INDIGO_MUTED }, l.source || "—")
               ))
-            ),
-        React.createElement("div", { style: { marginTop: 16, paddingTop: 16, borderTop: `1px solid ${INDIGO_HAIRLINE}`, display: "flex", gap: 30, flexWrap: "wrap" } },
-          React.createElement("div", { style: { flex: "1 1 380px", maxWidth: 420 } },
-            React.createElement("div", { style: labelStyle }, "Deals this year"),
-            React.createElement("div", { style: { display: "flex", flexDirection: "column", marginTop: 6 } },
-              React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 10, padding: "4px 0" } },
+            )
+      ),
+      React.createElement("div", { style: { display: "flex", gap: 20, flexWrap: "wrap" } },
+        React.createElement(Panel, { style: { flex: "1 1 380px", maxWidth: 420 } },
+          React.createElement(SectionTitle, { title: "Deals this year" }),
+          React.createElement("div", { style: { display: "flex", flexDirection: "column" } },
+            React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 10, padding: "4px 0" } },
                 React.createElement("span", { style: { width: 150, flexShrink: 0, ...labelStyle, marginBottom: 0 } }, "Name"),
                 React.createElement("span", { style: { width: 100, flexShrink: 0, ...labelStyle, marginBottom: 0 } }, "Fee $"),
                 React.createElement("span", { style: { width: 80, ...labelStyle, marginBottom: 0 } }, "Fee £"),
@@ -779,9 +780,8 @@ function CommissionPage({ token }) {
               )
             )
           ),
-          breakdowns.total > 0 && React.createElement("div", { style: { flex: "1 1 320px", display: "flex", flexDirection: "column", gap: 20 } }, clientPanel, sourcePanel)
-        )
-      ),
+        breakdowns.total > 0 && React.createElement("div", { style: { flex: "1 1 320px", display: "flex", flexDirection: "column", gap: 20 } }, clientPanel, sourcePanel)
+      )
     )
   );
 }
