@@ -149,14 +149,16 @@ module.exports = async (req, res) => {
       totalRevenueGBP += gbp;
       if (usd !== null) totalRevenueUSD += usd;
       countedDeals += 1;
-      if (!byClient[client]) byClient[client] = { gbp: 0, usd: 0 };
+      if (!byClient[client]) byClient[client] = { gbp: 0, usd: 0, deals: 0 };
       byClient[client].gbp += gbp;
       if (usd !== null) byClient[client].usd += usd;
+      byClient[client].deals += 1;
       const consultantKey = r.consultantId || "unmapped";
       const consultantName = r.consultantName || r.consultantId || "Unmapped";
-      if (!byConsultant[consultantKey]) byConsultant[consultantKey] = { consultantName, gbp: 0, usd: 0 };
+      if (!byConsultant[consultantKey]) byConsultant[consultantKey] = { consultantName, gbp: 0, usd: 0, deals: 0 };
       byConsultant[consultantKey].gbp += gbp;
       if (usd !== null) byConsultant[consultantKey].usd += usd;
+      byConsultant[consultantKey].deals += 1;
     }
 
     const averageFeeGBP = countedDeals > 0 ? totalRevenueGBP / countedDeals : 0;
@@ -167,6 +169,7 @@ module.exports = async (req, res) => {
         client,
         totalGBP: v.gbp,
         totalUSD: v.usd,
+        deals: v.deals,
         percentage: totalRevenueGBP > 0 ? (v.gbp / totalRevenueGBP) * 100 : 0,
       }))
       .sort((a, b) => b.totalGBP - a.totalGBP);
@@ -183,6 +186,7 @@ module.exports = async (req, res) => {
         consultantName: v.consultantName,
         totalGBP: v.gbp,
         totalUSD: v.usd,
+        deals: v.deals,
         percentage: totalRevenueGBP > 0 ? (v.gbp / totalRevenueGBP) * 100 : 0,
       }))
       .sort((a, b) => b.totalGBP - a.totalGBP);
