@@ -1047,6 +1047,56 @@ function RosterPanel({ token }) {
   );
 }
 
+function RetentionPanel({ token }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    setError(""); setLoading(true);
+    try {
+      const res = await fetch("/api/retention", { headers: { Authorization: `Bearer ${token}` } });
+      const body = await res.json();
+      if (!res.ok) { setError(body.error || "Couldn't load retention."); return; }
+      setData(body);
+    } catch (e) {
+      setError("Couldn't reach the server.");
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => { load(); }, [load]);
+
+  function statBlock(label, cat) {
+    return React.createElement("div", null,
+      React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.08em" } }, label),
+      React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 22, color: INDIGO } },
+        cat.averageTenureYearsCurrent !== null ? `${cat.averageTenureYearsCurrent.toFixed(1)} yrs` : "—"
+      ),
+      React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 2 } }, `Average tenure, ${cat.currentStaffCount} current`),
+      React.createElement("div", { style: { fontSize: 12, color: INDIGO, marginTop: 8 } },
+        cat.turnoverRateLast12MonthsPercent !== null ? `${cat.turnoverRateLast12MonthsPercent.toFixed(1)}% turnover` : "No basis for a turnover rate yet"
+      ),
+      React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED } }, `${cat.departuresLast12Months} left in the last 12 months`),
+      cat.departedCount > 0 && React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 4 } },
+        `${cat.departedCount} departed overall, averaging ${cat.averageTenureYearsDeparted.toFixed(1)} yrs before leaving`
+      )
+    );
+  }
+
+  return React.createElement(Panel, null,
+    React.createElement("div", { style: labelStyle }, "Staff Retention"),
+    React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Derived entirely from the roster above — only as accurate as the dates entered there, and only meaningful once there's real history to draw on."),
+    error && React.createElement("div", { style: errorStyle }, error),
+    loading && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Loading…"),
+    !loading && data && React.createElement("div", { style: { display: "flex", gap: 40, flexWrap: "wrap" } },
+      statBlock("Fee-earning staff", data.feeEarning),
+      statBlock("Coordinators", data.coordinators)
+    )
+  );
+}
+
 function CompanyOverviewPage({ token }) {
   const [year, setYear] = useState(new Date().getUTCFullYear());
   const [data, setData] = useState(null);
@@ -1224,6 +1274,25 @@ function CompanyOverviewPage({ token }) {
               )
             ))
       ),
+      React.createElement(Panel, null,
+        React.createElement("div", { style: labelStyle }, "Consultant Concentration"),
+        React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Key-person risk — how much of the year's revenue rests on any one person."),
+        React.createElement("div", { style: { display: "flex", gap: 30, marginBottom: 14, fontSize: 13.5 } },
+          React.createElement("div", null, React.createElement("span", { style: labelStyle }, "Top 3 people: "), React.createElement("strong", null, `${data.consultantTop3Percentage.toFixed(1)}%`), " of revenue"),
+          React.createElement("div", null, React.createElement("span", { style: labelStyle }, "Top 5 people: "), React.createElement("strong", null, `${data.consultantTop5Percentage.toFixed(1)}%`), " of revenue")
+        ),
+        data.consultantConcentration.length === 0
+          ? React.createElement("div", { style: { color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif", fontSize: 14 } }, "No deals recorded yet for this year.")
+          : data.consultantConcentration.slice(0, 10).map(c => React.createElement("div", {
+              key: c.consultantId, style: { display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "6px 0", fontFamily: "'Work Sans', sans-serif", fontSize: 14, borderBottom: `1px solid ${INDIGO_HAIRLINE}` }
+            },
+              React.createElement("span", null, c.consultantName),
+              React.createElement("span", { style: { display: "flex", alignItems: "baseline", gap: 8 } },
+                React.createElement("span", { style: { color: INDIGO } }, `£${Math.round(c.totalGBP).toLocaleString()}`),
+                React.createElement("span", { style: { color: INDIGO_MUTED, fontSize: 12.5 } }, `$${Math.round(c.totalUSD).toLocaleString()} · ${c.percentage.toFixed(1)}%`)
+              )
+            ))
+      ),
       xeroStatus && xeroStatus.connected && React.createElement(Panel, null,
         React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 12 } },
           React.createElement("div", { style: labelStyle }, "Pull from Xero"),
@@ -1292,7 +1361,8 @@ function CompanyOverviewPage({ token }) {
         )
       ),
       React.createElement(HeadcountPanel, { token }),
-      React.createElement(RosterPanel, { token })
+      React.createElement(RosterPanel, { token }),
+      React.createElement(RetentionPanel, { token })
     )
   );
 }
