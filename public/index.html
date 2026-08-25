@@ -1094,7 +1094,12 @@ function RosterPanel({ token }) {
             React.createElement(Cell, { width: 140, color: p.currentSalaryGBP !== null ? INDIGO : INDIGO_MUTED },
               p.currentSalaryGBP !== null ? `£${Math.round(p.currentSalaryGBP).toLocaleString()}` : "Not set"
             ),
-            React.createElement(Cell, { width: 110, color: ttp && ttp.firstPlacementDate ? INDIGO : INDIGO_MUTED }, ttp && ttp.firstPlacementDate ? formatDateUK(ttp.firstPlacementDate) : "—"),
+            React.createElement(Cell, { width: 110, color: ttp && ttp.firstPlacementDate ? INDIGO : INDIGO_MUTED },
+              ttp && ttp.firstPlacementDate ? formatDateUK(ttp.firstPlacementDate) : "—",
+              ttp && ttp.firstPlacementDate && React.createElement("div", { style: { fontSize: 10, color: INDIGO_MUTED, marginTop: 2 } },
+                ttp.firstPlacementCandidateName, ttp.firstPlacementClientName ? ` · ${ttp.firstPlacementClientName}` : ""
+              )
+            ),
             React.createElement(Cell, { width: 130, color: ttpColor }, ttpLabel),
             React.createElement(Cell, { flex: 1 },
               React.createElement("span", { onClick: () => startEdit(p), style: { fontSize: 11, color: INDIGO_MUTED, textDecoration: "underline", cursor: "pointer" } }, "edit dates"),
