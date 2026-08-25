@@ -805,11 +805,6 @@ function HeadcountPanel({ token }) {
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [showForm, setShowForm] = useState(null); // "feeEarning" | "coordinators" | null
-  const [formDate, setFormDate] = useState(new Date().toISOString().slice(0, 10));
-  const [formCount, setFormCount] = useState("");
-  const [formNote, setFormNote] = useState("");
-  const [saving, setSaving] = useState(false);
   const [showHistory, setShowHistory] = useState(null); // "feeEarning" | "coordinators" | null
 
   const load = useCallback(async () => {
@@ -828,23 +823,82 @@ function HeadcountPanel({ token }) {
 
   useEffect(() => { load(); }, [load]);
 
-  function openForm(category, currentCount) {
-    setShowForm(category);
-    setFormDate(new Date().toISOString().slice(0, 10));
-    setFormCount(currentCount !== null && currentCount !== undefined ? String(currentCount) : "");
-    setFormNote("");
-  }
+  return React.createElement(Panel, null,
+    React.createElement("div", { style: labelStyle }, "Headcount"),
+    React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Derived directly from the roster below — nothing to update here, edit start and termination dates there instead."),
+    error && React.createElement("div", { style: errorStyle }, error),
+    loading && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Loading…"),
+    !loading && data && React.createElement("div", { style: { display: "flex", gap: 40, flexWrap: "wrap" } },
+      React.createElement("div", null,
+        React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.08em" } }, "Fee-earning staff"),
+        React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO } }, data.currentFeeEarning),
+        React.createElement("span", { onClick: () => setShowHistory(showHistory === "feeEarning" ? null : "feeEarning"), style: { fontSize: 11, color: INDIGO_MUTED, textDecoration: "underline", cursor: "pointer" } }, showHistory === "feeEarning" ? "hide history" : "show history"),
+        showHistory === "feeEarning" && React.createElement("div", { style: { marginTop: 8, fontSize: 12 } },
+          data.feeEarningHistory.length === 0
+            ? React.createElement("div", { style: { color: INDIGO_MUTED } }, "No dates recorded yet.")
+            : data.feeEarningHistory.map((e, i) => React.createElement("div", { key: i, style: { color: INDIGO_MUTED, padding: "2px 0" } }, `${e.date} — ${e.count}`))
+        )
+      ),
+      React.createElement("div", null,
+        React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.08em" } }, "Coordinators"),
+        React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO } }, data.currentCoordinators),
+        React.createElement("span", { onClick: () => setShowHistory(showHistory === "coordinators" ? null : "coordinators"), style: { fontSize: 11, color: INDIGO_MUTED, textDecoration: "underline", cursor: "pointer" } }, showHistory === "coordinators" ? "hide history" : "show history"),
+        showHistory === "coordinators" && React.createElement("div", { style: { marginTop: 8, fontSize: 12 } },
+          data.coordinatorHistory.length === 0
+            ? React.createElement("div", { style: { color: INDIGO_MUTED } }, "No dates recorded yet.")
+            : data.coordinatorHistory.map((e, i) => React.createElement("div", { key: i, style: { color: INDIGO_MUTED, padding: "2px 0" } }, `${e.date} — ${e.count}`))
+        )
+      )
+    )
+  );
+}
 
-  async function saveEntry() {
+function RosterPanel({ token }) {
+  const [roster, setRoster] = useState(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+  const [editStart, setEditStart] = useState("");
+  const [editEnd, setEditEnd] = useState("");
+  const [editNotes, setEditNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(async () => {
+    setError(""); setLoading(true);
+    try {
+      const res = await fetch("/api/roster", { headers: { Authorization: `Bearer ${token}` } });
+      const body = await res.json();
+      if (!res.ok) { setError(body.error || "Couldn't load roster."); return; }
+      setRoster(body.roster);
+    } catch (e) {
+      setError("Couldn't reach the server.");
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => { load(); }, [load]);
+
+  function startEdit(person) {
+    setEditingId(person.consultantId);
+    setEditStart(person.startDate || "");
+    setEditEnd(person.terminationDate || "");
+    setEditNotes(person.notes || "");
+  }
+  function cancelEdit() {
+    setEditingId(null);
+    setEditStart(""); setEditEnd(""); setEditNotes("");
+  }
+  async function saveEmployment() {
     setSaving(true);
     try {
-      const res = await fetch("/api/headcount?action=add-entry", {
+      const res = await fetch("/api/roster?action=set-employment", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ category: showForm, date: formDate, count: formCount, note: formNote }),
+        body: JSON.stringify({ consultantId: editingId, startDate: editStart, terminationDate: editEnd, notes: editNotes }),
       });
       if (!res.ok) { const body = await res.json(); setError(body.error || "Couldn't save."); return; }
-      setShowForm(null);
+      cancelEdit();
       await load();
     } catch (e) {
       setError("Couldn't reach the server.");
@@ -854,49 +908,49 @@ function HeadcountPanel({ token }) {
   }
 
   return React.createElement(Panel, null,
-    React.createElement("div", { style: labelStyle }, "Headcount"),
+    React.createElement("div", { style: labelStyle }, "Roster — start & termination dates"),
+    React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Feeds Time to Productivity once dates are set — approximate is fine, this doesn't affect anyone's pay or commission."),
     error && React.createElement("div", { style: errorStyle }, error),
     loading && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Loading…"),
-    !loading && data && React.createElement("div", { style: { display: "flex", gap: 40, flexWrap: "wrap" } },
-      React.createElement("div", null,
-        React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.08em" } }, "Fee-earning staff"),
-        React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO } }, data.currentFeeEarning),
-        React.createElement("div", { style: { display: "flex", gap: 10, marginTop: 4 } },
-          React.createElement("span", { onClick: () => openForm("feeEarning", data.currentFeeEarning), style: { fontSize: 11, color: INDIGO_MUTED, textDecoration: "underline", cursor: "pointer" } }, "record a change"),
-          React.createElement("span", { onClick: () => setShowHistory(showHistory === "feeEarning" ? null : "feeEarning"), style: { fontSize: 11, color: INDIGO_MUTED, textDecoration: "underline", cursor: "pointer" } }, showHistory === "feeEarning" ? "hide history" : "show history")
-        ),
-        showHistory === "feeEarning" && React.createElement("div", { style: { marginTop: 8, fontSize: 12 } },
-          data.feeEarningHistory.map((e, i) => React.createElement("div", { key: i, style: { color: INDIGO_MUTED, padding: "2px 0" } }, `${e.date} — ${e.count}${e.note ? ` (${e.note})` : ""}`))
-        )
-      ),
-      React.createElement("div", null,
-        React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.08em" } }, "Coordinators"),
-        React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO } }, data.currentCoordinators),
-        React.createElement("div", { style: { display: "flex", gap: 10, marginTop: 4 } },
-          React.createElement("span", { onClick: () => openForm("coordinators", data.currentCoordinators), style: { fontSize: 11, color: INDIGO_MUTED, textDecoration: "underline", cursor: "pointer" } }, "record a change"),
-          React.createElement("span", { onClick: () => setShowHistory(showHistory === "coordinators" ? null : "coordinators"), style: { fontSize: 11, color: INDIGO_MUTED, textDecoration: "underline", cursor: "pointer" } }, showHistory === "coordinators" ? "hide history" : "show history")
-        ),
-        showHistory === "coordinators" && React.createElement("div", { style: { marginTop: 8, fontSize: 12 } },
-          data.coordinatorHistory.map((e, i) => React.createElement("div", { key: i, style: { color: INDIGO_MUTED, padding: "2px 0" } }, `${e.date} — ${e.count}${e.note ? ` (${e.note})` : ""}`))
-        )
-      )
-    ),
-    showForm && React.createElement("div", { style: { marginTop: 16, paddingTop: 16, borderTop: `1px solid ${INDIGO_HAIRLINE}`, display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" } },
-      React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, width: "100%" } }, `Recording a change to ${showForm === "feeEarning" ? "fee-earning staff" : "coordinators"} — only add this when the team has genuinely changed.`),
-      React.createElement("div", null,
-        React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Date"),
-        React.createElement("input", { type: "date", value: formDate, onChange: e => setFormDate(e.target.value), style: { ...inputStyle, width: 150, marginBottom: 0 } })
-      ),
-      React.createElement("div", null,
-        React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "New count"),
-        React.createElement("input", { type: "number", value: formCount, onChange: e => setFormCount(e.target.value), style: { ...inputStyle, width: 100, marginBottom: 0 } })
-      ),
-      React.createElement("div", { style: { flex: 1, minWidth: 200 } },
-        React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Note"),
-        React.createElement("input", { type: "text", value: formNote, onChange: e => setFormNote(e.target.value), placeholder: "e.g. Jack Thompson left", style: { ...inputStyle, width: "100%", marginBottom: 0 } })
-      ),
-      React.createElement("button", { onClick: saveEntry, disabled: saving, style: { ...ghostStyle, padding: "9px 14px" } }, saving ? "Saving…" : "Save"),
-      React.createElement("button", { onClick: () => setShowForm(null), style: { ...ghostStyle, padding: "9px 14px", background: "none", border: "none" } }, "Cancel")
+    !loading && roster && React.createElement(React.Fragment, null,
+      React.createElement(TableHeader, { cols: [
+        { label: "Name", width: 160 },
+        { label: "Start Date", width: 110 },
+        { label: "Termination Date", width: 130 },
+        { label: "", flex: 1 },
+      ] }),
+      roster.map((p) => {
+        const isEditing = editingId === p.consultantId;
+        return React.createElement(React.Fragment, { key: p.consultantId },
+          React.createElement(RowLine, null,
+            React.createElement(Cell, { width: 160 },
+              p.consultantName,
+              p.category === "coordinator" && React.createElement("span", { style: { marginLeft: 6, fontSize: 10, color: HEATHER, fontWeight: 600, letterSpacing: "0.04em", textTransform: "uppercase" } }, "Coordinator")
+            ),
+            React.createElement(Cell, { width: 110, color: p.startDate ? INDIGO : INDIGO_MUTED }, p.startDate || "Not set"),
+            React.createElement(Cell, { width: 130, color: p.terminationDate ? MELON_LINK : INDIGO_MUTED }, p.terminationDate || "—"),
+            React.createElement(Cell, { flex: 1 },
+              React.createElement("span", { onClick: () => startEdit(p), style: { fontSize: 11, color: INDIGO_MUTED, textDecoration: "underline", cursor: "pointer" } }, "edit")
+            )
+          ),
+          isEditing && React.createElement("div", { style: { display: "flex", gap: 10, alignItems: "flex-end", padding: "10px 0", background: "rgba(255,176,140,0.08)", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, flexWrap: "wrap" } },
+            React.createElement("div", null,
+              React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Start date"),
+              React.createElement("input", { type: "date", value: editStart, onChange: e => setEditStart(e.target.value), style: { ...inputStyle, width: 150, marginBottom: 0 } })
+            ),
+            React.createElement("div", null,
+              React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Termination date (if applicable)"),
+              React.createElement("input", { type: "date", value: editEnd, onChange: e => setEditEnd(e.target.value), style: { ...inputStyle, width: 150, marginBottom: 0 } })
+            ),
+            React.createElement("div", { style: { flex: 1, minWidth: 180 } },
+              React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Notes"),
+              React.createElement("input", { type: "text", value: editNotes, onChange: e => setEditNotes(e.target.value), placeholder: "e.g. Approximate", style: { ...inputStyle, width: "100%", marginBottom: 0 } })
+            ),
+            React.createElement("button", { onClick: saveEmployment, disabled: saving, style: { ...ghostStyle, padding: "9px 14px" } }, saving ? "Saving…" : "Save"),
+            React.createElement("button", { onClick: cancelEdit, style: { ...ghostStyle, padding: "9px 14px", background: "none", border: "none" } }, "Cancel")
+          )
+        );
+      })
     )
   );
 }
@@ -1029,6 +1083,18 @@ function CompanyOverviewPage({ token }) {
             )
           ),
           React.createElement("div", { style: { flex: 1, minWidth: 160 } },
+            React.createElement("div", { style: labelStyle }, "Revenue per Head"),
+            data.revenuePerHeadGBP !== null
+              ? React.createElement(React.Fragment, null,
+                  React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" } },
+                    React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO } }, `£${Math.round(data.revenuePerHeadGBP).toLocaleString()}`),
+                    React.createElement("div", { style: { fontSize: 13, color: INDIGO_MUTED } }, `$${Math.round(data.revenuePerHeadUSD).toLocaleString()}`)
+                  ),
+                  React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 2 } }, `Based on ${data.headcountUsedForPerHead} fee-earning staff`)
+                )
+              : React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO_MUTED } }, "Not available")
+          ),
+          React.createElement("div", { style: { flex: 1, minWidth: 160 } },
             React.createElement("div", { style: labelStyle }, "Gross Profit"),
             data.grossProfitAmount !== null
               ? React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" } },
@@ -1133,7 +1199,8 @@ function CompanyOverviewPage({ token }) {
           React.createElement("button", { onClick: saveGrossProfit, disabled: saving, style: { ...ghostStyle, padding: "9px 16px" } }, saving ? "Saving…" : "Save")
         )
       ),
-      React.createElement(HeadcountPanel, { token })
+      React.createElement(HeadcountPanel, { token }),
+      React.createElement(RosterPanel, { token })
     )
   );
 }
