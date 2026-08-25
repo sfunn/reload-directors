@@ -923,6 +923,24 @@ function RosterPanel({ token }) {
       setSaving(false);
     }
   }
+  async function useEarliestDealAsStart(person) {
+    try {
+      const res = await fetch("/api/roster?action=set-employment", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          consultantId: person.consultantId,
+          startDate: person.earliestDealDate,
+          terminationDate: person.terminationDate,
+          notes: `Suggested from their earliest deal on record (${person.earliestDealDate}) — real start date may be earlier.`,
+        }),
+      });
+      if (!res.ok) { const body = await res.json(); setError(body.error || "Couldn't save."); return; }
+      await load();
+    } catch (e) {
+      setError("Couldn't reach the server.");
+    }
+  }
 
   function openSalaryForm(personId) {
     setSalaryFormId(personId);
@@ -988,7 +1006,16 @@ function RosterPanel({ token }) {
               p.consultantName,
               p.category === "coordinator" && React.createElement("span", { style: { marginLeft: 6, fontSize: 10, color: HEATHER, fontWeight: 600, letterSpacing: "0.04em", textTransform: "uppercase" } }, "Coordinator")
             ),
-            React.createElement(Cell, { width: 100, color: p.startDate ? INDIGO : INDIGO_MUTED }, formatDateUK(p.startDate) || "Not set"),
+            React.createElement(Cell, { width: 100, color: p.startDate ? INDIGO : INDIGO_MUTED },
+              formatDateUK(p.startDate) || "Not set",
+              !p.startDate && p.earliestDealDate && React.createElement("div", { style: { fontSize: 10, color: INDIGO_MUTED, marginTop: 2 } },
+                React.createElement("span", null, `First deal: ${formatDateUK(p.earliestDealDate)}`),
+                React.createElement("span", {
+                  onClick: () => useEarliestDealAsStart(p),
+                  style: { display: "block", color: VERDIGRIS, textDecoration: "underline", cursor: "pointer" }
+                }, "use as start")
+              )
+            ),
             React.createElement(Cell, { width: 130, color: p.terminationDate ? MELON_LINK : INDIGO_MUTED }, formatDateUK(p.terminationDate) || "—"),
             React.createElement(Cell, { width: 140, color: p.currentSalaryGBP !== null ? INDIGO : INDIGO_MUTED },
               p.currentSalaryGBP !== null ? `£${Math.round(p.currentSalaryGBP).toLocaleString()}` : "Not set"
