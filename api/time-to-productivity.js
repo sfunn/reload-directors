@@ -9,16 +9,25 @@ const PLACEMENTS_KEY = "atlas-placements";
 // the original Natasha rule, Team Lead Bonus's Pillar 4. A notes-derived
 // Onsite fee isn't the thing this metric is actually asking about: how
 // long until someone closed their first real placement.
-function firstGenuinePlacementDateFor(consultantId, records, placements) {
-  let earliest = null;
+//
+// Returns the full record behind the date, not just the date itself — a
+// bare date with no way to trace it back to an actual deal is nearly
+// impossible to verify against Atlas when something looks wrong.
+function firstGenuinePlacementRecordFor(consultantId, records, placements) {
+  let best = null;
   for (const r of records) {
     if (r.consultantId !== consultantId || !r.feeDate) continue;
     const placement = r.placementId ? placements[r.placementId] : null;
-    const hasPlacementName = !!(placement && placement.candidateName);
-    if (!hasPlacementName) continue;
-    if (earliest === null || r.feeDate < earliest) earliest = r.feeDate;
+    // A candidateName that's just whitespace or empty isn't a real name —
+    // trim before checking, so a placeholder value on what's actually an
+    // Onsite fee can't slip through as a genuine placement.
+    const candidateName = placement && placement.candidateName ? String(placement.candidateName).trim() : "";
+    if (!candidateName) continue;
+    if (best === null || r.feeDate < best.feeDate) {
+      best = { feeDate: r.feeDate, feeId: r.feeId, candidateName, clientCompanyName: placement.clientCompanyName || null };
+    }
   }
-  return earliest;
+  return best;
 }
 
 module.exports = async (req, res) => {
@@ -45,7 +54,8 @@ module.exports = async (req, res) => {
     .map(([id, info]) => {
       const emp = employment[id] || {};
       const startDate = emp.startDate || null;
-      const firstPlacementDate = firstGenuinePlacementDateFor(id, records, placements);
+      const firstPlacement = firstGenuinePlacementRecordFor(id, records, placements);
+      const firstPlacementDate = firstPlacement ? firstPlacement.feeDate : null;
 
       let daysToFirstPlacement = null;
       let status = "no-start-date"; // no-start-date | no-placement-yet | inconsistent | measured
@@ -71,6 +81,9 @@ module.exports = async (req, res) => {
         consultantName: info.name,
         startDate,
         firstPlacementDate,
+        firstPlacementCandidateName: firstPlacement ? firstPlacement.candidateName : null,
+        firstPlacementClientName: firstPlacement ? firstPlacement.clientCompanyName : null,
+        firstPlacementFeeId: firstPlacement ? firstPlacement.feeId : null,
         daysToFirstPlacement,
         status,
       };
