@@ -1124,6 +1124,70 @@ function RetentionPanel({ token }) {
   );
 }
 
+function TimeToProductivityPanel({ token }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const load = useCallback(async () => {
+    setError(""); setLoading(true);
+    try {
+      const res = await fetch("/api/time-to-productivity", { headers: { Authorization: `Bearer ${token}` } });
+      const body = await res.json();
+      if (!res.ok) { setError(body.error || "Couldn't load."); return; }
+      setData(body);
+    } catch (e) {
+      setError("Couldn't reach the server.");
+    } finally {
+      setLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => { load(); }, [load]);
+
+  function statusLabel(p) {
+    if (p.status === "measured") return `${Math.round(p.daysToFirstPlacement)} days`;
+    if (p.status === "no-placement-yet") return "No placement yet";
+    if (p.status === "inconsistent") return "Dates don't line up";
+    return "No start date set";
+  }
+  function statusColor(p) {
+    if (p.status === "measured") return INDIGO;
+    if (p.status === "inconsistent") return MELON_LINK;
+    return INDIGO_MUTED;
+  }
+
+  return React.createElement(Panel, null,
+    React.createElement("div", { style: labelStyle }, "Time to Productivity"),
+    React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Days from a real start date to a genuine first placement — never an Onsite fee. Only counts people with a start date actually entered on the roster."),
+    error && React.createElement("div", { style: errorStyle }, error),
+    loading && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Loading…"),
+    !loading && data && React.createElement(React.Fragment, null,
+      React.createElement("div", { style: { marginBottom: 14, fontSize: 14 } },
+        data.averageDaysToFirstPlacement !== null
+          ? React.createElement(React.Fragment, null,
+              React.createElement("span", { style: labelStyle }, "Average: "),
+              React.createElement("strong", null, `${Math.round(data.averageDaysToFirstPlacement)} days`),
+              React.createElement("span", { style: { color: INDIGO_MUTED } }, ` across ${data.measuredCount} ${data.measuredCount === 1 ? "person" : "people"}`)
+            )
+          : React.createElement("span", { style: { color: INDIGO_MUTED } }, "Not enough real data yet to average.")
+      ),
+      React.createElement(TableHeader, { cols: [
+        { label: "Name", width: 160 },
+        { label: "Start Date", width: 110 },
+        { label: "First Placement", width: 130 },
+        { label: "Time to Productivity", flex: 1 },
+      ] }),
+      data.people.map((p) => React.createElement(RowLine, { key: p.consultantId },
+        React.createElement(Cell, { width: 160 }, p.consultantName),
+        React.createElement(Cell, { width: 110, color: p.startDate ? INDIGO : INDIGO_MUTED }, formatDateUK(p.startDate) || "Not set"),
+        React.createElement(Cell, { width: 130, color: p.firstPlacementDate ? INDIGO : INDIGO_MUTED }, formatDateUK(p.firstPlacementDate) || "—"),
+        React.createElement(Cell, { flex: 1, color: statusColor(p) }, statusLabel(p))
+      ))
+    )
+  );
+}
+
 function CompanyOverviewPage({ token }) {
   const [year, setYear] = useState(new Date().getUTCFullYear());
   const [data, setData] = useState(null);
@@ -1389,7 +1453,8 @@ function CompanyOverviewPage({ token }) {
       ),
       React.createElement(HeadcountPanel, { token }),
       React.createElement(RosterPanel, { token }),
-      React.createElement(RetentionPanel, { token })
+      React.createElement(RetentionPanel, { token }),
+      React.createElement(TimeToProductivityPanel, { token })
     )
   );
 }
