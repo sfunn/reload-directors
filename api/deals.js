@@ -188,10 +188,10 @@ module.exports = async (req, res) => {
   for (const r of withUSD) {
     if (r.gbpAmount === null || !r.consultantId) continue;
     grandTotalGBP += r.gbpAmount;
-    if (!totals[r.consultantId]) totals[r.consultantId] = { consultantId: r.consultantId, consultantName: r.consultantName, totalGBP: 0, totalUSD: 0, deals: 0 };
+    if (!totals[r.consultantId]) totals[r.consultantId] = { consultantId: r.consultantId, consultantName: r.consultantName, totalGBP: 0, totalUSD: 0, deals: 0, onsites: 0 };
     totals[r.consultantId].totalGBP += r.gbpAmount;
     if (r.usdAmount !== null) totals[r.consultantId].totalUSD += r.usdAmount;
-    totals[r.consultantId].deals += 1;
+    if (r.hasPlacementName) totals[r.consultantId].deals += 1; else totals[r.consultantId].onsites += 1;
     if (r.source) {
       if (!bySource[r.source]) bySource[r.source] = { source: r.source, deals: 0, valueGBP: 0, valueUSD: 0 };
       bySource[r.source].deals += 1;
@@ -215,10 +215,10 @@ module.exports = async (req, res) => {
   for (const r of withUSD) {
     if (r.gbpAmount === null || !r.consultantId) continue;
     const firm = r.clientCompanyName || "Unknown";
-    if (!byClient[firm]) byClient[firm] = { firm, totalGBP: 0, totalUSD: 0, deals: 0 };
+    if (!byClient[firm]) byClient[firm] = { firm, totalGBP: 0, totalUSD: 0, deals: 0, onsites: 0 };
     byClient[firm].totalGBP += r.gbpAmount;
     if (r.usdAmount !== null) byClient[firm].totalUSD += r.usdAmount;
-    byClient[firm].deals += 1;
+    if (r.hasPlacementName) byClient[firm].deals += 1; else byClient[firm].onsites += 1;
     clientGrandTotalGBP += r.gbpAmount;
     if (r.usdAmount !== null) clientGrandTotal += r.usdAmount;
   }
