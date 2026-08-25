@@ -520,11 +520,41 @@ function CommissionPage({ token }) {
         const existing = dealMap.get(key);
         existing.gbpPortion = (existing.gbpPortion || 0) + (l.gbpPortion || 0);
         existing.usdAmount = (existing.usdAmount || 0) + (l.usdAmount || 0);
+        existing.commission = (existing.commission || 0) + (l.commission || 0);
       } else {
         dealMap.set(key, { ...l });
       }
     });
     return [...dealMap.values()];
+  })();
+
+  // Client Concentration and Deal Source Breakdown, scoped to this one
+  // person — same shape as Company Overview's versions, but using
+  // commission earned rather than raw revenue, since that's the figure
+  // that's actually available and meaningful for both consultants and
+  // coordinators alike (coordinators are paid a flat fee per deal, they
+  // never have a GBP revenue portion of their own to show here).
+  const breakdowns = (() => {
+    const source = (data && data.isCoordinator ? data.lines : dedupedDeals) || [];
+    const byClient = {};
+    const bySource = {};
+    let total = 0;
+    for (const l of source) {
+      const commission = l.commission || 0;
+      total += commission;
+      const client = l.clientCompanyName || "Unknown";
+      if (!byClient[client]) byClient[client] = { name: client, commission: 0, deals: 0, onsites: 0 };
+      byClient[client].commission += commission;
+      if (l.hasPlacementName) byClient[client].deals += 1; else byClient[client].onsites += 1;
+      const src = l.source || "Unknown";
+      if (!bySource[src]) bySource[src] = { name: src, commission: 0, deals: 0, onsites: 0 };
+      bySource[src].commission += commission;
+      if (l.hasPlacementName) bySource[src].deals += 1; else bySource[src].onsites += 1;
+    }
+    const finish = (obj) => Object.values(obj)
+      .map((v) => ({ ...v, percentage: total > 0 ? (v.commission / total) * 100 : 0 }))
+      .sort((a, b) => b.commission - a.commission);
+    return { clientBreakdown: finish(byClient), sourceBreakdown: finish(bySource), total };
   })();
 
   return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 20 } },
@@ -693,6 +723,60 @@ function CommissionPage({ token }) {
                 )
               )
             )
+          )
+        )
+      ),
+      !loading && data && breakdowns.total > 0 && React.createElement("div", { style: { display: "flex", gap: 20, flexWrap: "wrap" } },
+        React.createElement(Panel, { style: { flex: 1, minWidth: 340 } },
+          React.createElement(SectionTitle, { title: "Client Concentration" }),
+          React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
+            React.createElement("span", { style: { flex: 1 } }, "Client"),
+            React.createElement("span", { style: { width: 90, flexShrink: 0 } }, "Commission"),
+            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Deals"),
+            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Onsites"),
+            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "%")
+          ),
+          breakdowns.clientBreakdown.map(c => React.createElement("div", {
+            key: c.name, style: { display: "flex", alignItems: "baseline", gap: 4, padding: "5px 0", fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, color: INDIGO, borderBottom: `1px solid ${INDIGO_HAIRLINE}` }
+          },
+            React.createElement("span", { style: { flex: 1 } }, c.name),
+            React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(c.commission).toLocaleString()}`),
+            React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, c.deals),
+            React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, c.onsites),
+            React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, `${c.percentage.toFixed(1)}%`)
+          )),
+          React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, padding: "6px 0 0", marginTop: 4, borderTop: `1px solid ${INDIGO_HAIRLINE}`, fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, fontWeight: 700, color: INDIGO } },
+            React.createElement("span", { style: { flex: 1 } }, "Total"),
+            React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(breakdowns.total).toLocaleString()}`),
+            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, breakdowns.clientBreakdown.reduce((s, c) => s + c.deals, 0)),
+            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, breakdowns.clientBreakdown.reduce((s, c) => s + c.onsites, 0)),
+            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "100%")
+          )
+        ),
+        React.createElement(Panel, { style: { flex: 1, minWidth: 340 } },
+          React.createElement(SectionTitle, { title: "Deal Source Breakdown" }),
+          React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
+            React.createElement("span", { style: { flex: 1 } }, "Source"),
+            React.createElement("span", { style: { width: 90, flexShrink: 0 } }, "Commission"),
+            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Deals"),
+            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Onsites"),
+            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "%")
+          ),
+          breakdowns.sourceBreakdown.map(s => React.createElement("div", {
+            key: s.name, style: { display: "flex", alignItems: "baseline", gap: 4, padding: "5px 0", fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, color: INDIGO, borderBottom: `1px solid ${INDIGO_HAIRLINE}` }
+          },
+            React.createElement("span", { style: { flex: 1 } }, s.name),
+            React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(s.commission).toLocaleString()}`),
+            React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, s.deals),
+            React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, s.onsites),
+            React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, `${s.percentage.toFixed(1)}%`)
+          )),
+          React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, padding: "6px 0 0", marginTop: 4, borderTop: `1px solid ${INDIGO_HAIRLINE}`, fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, fontWeight: 700, color: INDIGO } },
+            React.createElement("span", { style: { flex: 1 } }, "Total"),
+            React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(breakdowns.total).toLocaleString()}`),
+            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, breakdowns.sourceBreakdown.reduce((s, r) => s + r.deals, 0)),
+            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, breakdowns.sourceBreakdown.reduce((s, r) => s + r.onsites, 0)),
+            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "100%")
           )
         )
       )
