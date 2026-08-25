@@ -869,9 +869,14 @@ function RosterPanel({ token }) {
   const [editingId, setEditingId] = useState(null);
   const [editStart, setEditStart] = useState("");
   const [editEnd, setEditEnd] = useState("");
-  const [editSalary, setEditSalary] = useState("");
   const [editNotes, setEditNotes] = useState("");
   const [saving, setSaving] = useState(false);
+  const [salaryFormId, setSalaryFormId] = useState(null);
+  const [salaryDate, setSalaryDate] = useState(new Date().toISOString().slice(0, 10));
+  const [salaryAmount, setSalaryAmount] = useState("");
+  const [salaryNotes, setSalaryNotes] = useState("");
+  const [savingSalary, setSavingSalary] = useState(false);
+  const [showSalaryHistory, setShowSalaryHistory] = useState(null);
 
   const load = useCallback(async () => {
     setError(""); setLoading(true);
@@ -893,12 +898,11 @@ function RosterPanel({ token }) {
     setEditingId(person.consultantId);
     setEditStart(person.startDate || "");
     setEditEnd(person.terminationDate || "");
-    setEditSalary(person.salaryGBP !== null && person.salaryGBP !== undefined ? String(person.salaryGBP) : "");
     setEditNotes(person.notes || "");
   }
   function cancelEdit() {
     setEditingId(null);
-    setEditStart(""); setEditEnd(""); setEditSalary(""); setEditNotes("");
+    setEditStart(""); setEditEnd(""); setEditNotes("");
   }
   async function saveEmployment() {
     setSaving(true);
@@ -906,7 +910,7 @@ function RosterPanel({ token }) {
       const res = await fetch("/api/roster?action=set-employment", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ consultantId: editingId, startDate: editStart, terminationDate: editEnd, salaryGBP: editSalary, notes: editNotes }),
+        body: JSON.stringify({ consultantId: editingId, startDate: editStart, terminationDate: editEnd, notes: editNotes }),
       });
       if (!res.ok) { const body = await res.json(); setError(body.error || "Couldn't save."); return; }
       cancelEdit();
@@ -918,9 +922,37 @@ function RosterPanel({ token }) {
     }
   }
 
+  function openSalaryForm(personId) {
+    setSalaryFormId(personId);
+    setSalaryDate(new Date().toISOString().slice(0, 10));
+    setSalaryAmount("");
+    setSalaryNotes("");
+  }
+  function cancelSalaryForm() {
+    setSalaryFormId(null);
+    setSalaryAmount(""); setSalaryNotes("");
+  }
+  async function saveSalaryEntry() {
+    setSavingSalary(true);
+    try {
+      const res = await fetch("/api/roster?action=add-salary-entry", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ consultantId: salaryFormId, effectiveDate: salaryDate, salaryGBP: salaryAmount, notes: salaryNotes }),
+      });
+      if (!res.ok) { const body = await res.json(); setError(body.error || "Couldn't save."); return; }
+      cancelSalaryForm();
+      await load();
+    } catch (e) {
+      setError("Couldn't reach the server.");
+    } finally {
+      setSavingSalary(false);
+    }
+  }
+
   return React.createElement(Panel, null,
     React.createElement("div", { style: labelStyle }, "Roster — start & termination dates"),
-    React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Feeds Time to Productivity once dates are set — approximate is fine, this doesn't affect anyone's pay or commission. Salary is separate personal information, visible only to directors."),
+    React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Feeds Time to Productivity once dates are set — approximate is fine, this doesn't affect anyone's pay or commission. Salary is separate personal information, visible only to directors, and kept as a real history since it changes with raises and promotions — each entry is a new fact, not a correction to the last one."),
     error && React.createElement("div", { style: errorStyle }, error),
     loading && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Loading…"),
     !loading && roster && React.createElement(React.Fragment, null,
@@ -928,11 +960,13 @@ function RosterPanel({ token }) {
         { label: "Name", width: 160 },
         { label: "Start Date", width: 100 },
         { label: "Termination Date", width: 130 },
-        { label: "Salary (p/a)", width: 110 },
+        { label: "Current Salary (p/a)", width: 140 },
         { label: "", flex: 1 },
       ] }),
       roster.map((p) => {
         const isEditing = editingId === p.consultantId;
+        const isSalaryFormOpen = salaryFormId === p.consultantId;
+        const isHistoryOpen = showSalaryHistory === p.consultantId;
         return React.createElement(React.Fragment, { key: p.consultantId },
           React.createElement(RowLine, null,
             React.createElement(Cell, { width: 160 },
@@ -941,10 +975,19 @@ function RosterPanel({ token }) {
             ),
             React.createElement(Cell, { width: 100, color: p.startDate ? INDIGO : INDIGO_MUTED }, formatDateUK(p.startDate) || "Not set"),
             React.createElement(Cell, { width: 130, color: p.terminationDate ? MELON_LINK : INDIGO_MUTED }, formatDateUK(p.terminationDate) || "—"),
-            React.createElement(Cell, { width: 110, color: p.salaryGBP !== null ? INDIGO : INDIGO_MUTED }, p.salaryGBP !== null ? `£${Math.round(p.salaryGBP).toLocaleString()}` : "Not set"),
+            React.createElement(Cell, { width: 140, color: p.currentSalaryGBP !== null ? INDIGO : INDIGO_MUTED },
+              p.currentSalaryGBP !== null ? `£${Math.round(p.currentSalaryGBP).toLocaleString()}` : "Not set"
+            ),
             React.createElement(Cell, { flex: 1 },
-              React.createElement("span", { onClick: () => startEdit(p), style: { fontSize: 11, color: INDIGO_MUTED, textDecoration: "underline", cursor: "pointer" } }, "edit")
+              React.createElement("span", { onClick: () => startEdit(p), style: { fontSize: 11, color: INDIGO_MUTED, textDecoration: "underline", cursor: "pointer" } }, "edit dates"),
+              React.createElement("span", { onClick: () => openSalaryForm(p.consultantId), style: { marginLeft: 10, fontSize: 11, color: INDIGO_MUTED, textDecoration: "underline", cursor: "pointer" } }, "add salary"),
+              (p.salaryHistory || []).length > 0 && React.createElement("span", { onClick: () => setShowSalaryHistory(isHistoryOpen ? null : p.consultantId), style: { marginLeft: 10, fontSize: 11, color: INDIGO_MUTED, textDecoration: "underline", cursor: "pointer" } }, isHistoryOpen ? "hide history" : "show history")
             )
+          ),
+          isHistoryOpen && React.createElement("div", { style: { padding: "8px 0", fontSize: 12, borderBottom: `1px solid ${INDIGO_HAIRLINE}` } },
+            (p.salaryHistory || []).map((e, i) => React.createElement("div", { key: i, style: { color: INDIGO_MUTED, padding: "2px 0" } },
+              `${formatDateUK(e.effectiveDate)} — £${Math.round(e.salaryGBP).toLocaleString()}${e.notes ? ` (${e.notes})` : ""}`
+            ))
           ),
           isEditing && React.createElement("div", { style: { display: "flex", gap: 10, alignItems: "flex-end", padding: "10px 0", background: "rgba(255,176,140,0.08)", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, flexWrap: "wrap" } },
             React.createElement("div", null,
@@ -955,16 +998,29 @@ function RosterPanel({ token }) {
               React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Termination date (if applicable)"),
               React.createElement("input", { type: "date", value: editEnd, onChange: e => setEditEnd(e.target.value), style: { ...inputStyle, width: 150, marginBottom: 0 } })
             ),
-            React.createElement("div", null,
-              React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Salary, GBP (p/a)"),
-              React.createElement("input", { type: "number", value: editSalary, onChange: e => setEditSalary(e.target.value), placeholder: "e.g. 45000", style: { ...inputStyle, width: 130, marginBottom: 0 } })
-            ),
             React.createElement("div", { style: { flex: 1, minWidth: 180 } },
               React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Notes"),
               React.createElement("input", { type: "text", value: editNotes, onChange: e => setEditNotes(e.target.value), placeholder: "e.g. Approximate", style: { ...inputStyle, width: "100%", marginBottom: 0 } })
             ),
             React.createElement("button", { onClick: saveEmployment, disabled: saving, style: { ...ghostStyle, padding: "9px 14px" } }, saving ? "Saving…" : "Save"),
             React.createElement("button", { onClick: cancelEdit, style: { ...ghostStyle, padding: "9px 14px", background: "none", border: "none" } }, "Cancel")
+          ),
+          isSalaryFormOpen && React.createElement("div", { style: { display: "flex", gap: 10, alignItems: "flex-end", padding: "10px 0", background: "rgba(142,185,176,0.10)", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, flexWrap: "wrap" } },
+            React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, width: "100%" } }, "Adding a new salary entry — this is a new fact (e.g. a pay rise), not an edit to a previous one. Past entries stay exactly as they were."),
+            React.createElement("div", null,
+              React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Effective from"),
+              React.createElement("input", { type: "date", value: salaryDate, onChange: e => setSalaryDate(e.target.value), style: { ...inputStyle, width: 150, marginBottom: 0 } })
+            ),
+            React.createElement("div", null,
+              React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Salary, GBP (p/a)"),
+              React.createElement("input", { type: "number", value: salaryAmount, onChange: e => setSalaryAmount(e.target.value), placeholder: "e.g. 45000", style: { ...inputStyle, width: 130, marginBottom: 0 } })
+            ),
+            React.createElement("div", { style: { flex: 1, minWidth: 180 } },
+              React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Notes"),
+              React.createElement("input", { type: "text", value: salaryNotes, onChange: e => setSalaryNotes(e.target.value), placeholder: "e.g. Annual review, Promotion", style: { ...inputStyle, width: "100%", marginBottom: 0 } })
+            ),
+            React.createElement("button", { onClick: saveSalaryEntry, disabled: savingSalary, style: { ...ghostStyle, padding: "9px 14px" } }, savingSalary ? "Saving…" : "Save"),
+            React.createElement("button", { onClick: cancelSalaryForm, style: { ...ghostStyle, padding: "9px 14px", background: "none", border: "none" } }, "Cancel")
           )
         );
       })
