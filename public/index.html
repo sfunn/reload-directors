@@ -348,7 +348,9 @@ function DealsPage({ token }) {
         React.createElement("span", { style: { width: 24, flexShrink: 0 } }),
         React.createElement("span", { style: { width: 200, flexShrink: 0 } }, "Consultant"),
         React.createElement("span", { style: { width: 100, flexShrink: 0 } }, "USD"),
-        React.createElement("span", { style: { width: 100, flexShrink: 0 } }, "Revenue (GBP)")
+        React.createElement("span", { style: { width: 100, flexShrink: 0 } }, "Revenue (GBP)"),
+        React.createElement("span", { style: { width: 60, flexShrink: 0 } }, "Deals"),
+        React.createElement("span", { style: { width: 60, flexShrink: 0 } }, "%")
       ),
       loading ? React.createElement("div", { style: { padding: 20, textAlign: "center", color: INDIGO_MUTED } }, "Loading…") :
       !data || !data.leaderboard || data.leaderboard.length === 0 ? React.createElement("div", { style: { color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif", fontSize: 14, padding: "10px 0" } }, `No deals recorded yet for ${year}.`) :
@@ -360,8 +362,20 @@ function DealsPage({ token }) {
           React.createElement("span", { style: { width: 24, flexShrink: 0, color: INDIGO_MUTED } }, i + 1),
           React.createElement("span", { style: { width: 200, flexShrink: 0 } }, r.consultantName || r.consultantId),
           React.createElement("span", { style: { width: 100, flexShrink: 0 } }, `$${Math.round(r.totalUSD).toLocaleString()}`),
-          React.createElement("span", { style: { width: 100, flexShrink: 0 } }, `£${Math.round(r.totalGBP).toLocaleString()}`)
-        ))
+          React.createElement("span", { style: { width: 100, flexShrink: 0 } }, `£${Math.round(r.totalGBP).toLocaleString()}`),
+          React.createElement("span", { style: { width: 60, flexShrink: 0, color: INDIGO_MUTED } }, r.deals),
+          React.createElement("span", { style: { width: 60, flexShrink: 0, color: INDIGO_MUTED } }, `${r.percentage.toFixed(1)}%`)
+        )),
+        React.createElement("div", {
+          style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 14, padding: "9px 0 0", marginTop: 4, borderTop: `1px solid ${INDIGO_HAIRLINE}`, fontWeight: 700 }
+        },
+          React.createElement("span", { style: { width: 24, flexShrink: 0 } }),
+          React.createElement("span", { style: { width: 200, flexShrink: 0 } }, "Total"),
+          React.createElement("span", { style: { width: 100, flexShrink: 0 } }, `$${Math.round((data.leaderboard || []).reduce((s, r) => s + r.totalUSD, 0)).toLocaleString()}`),
+          React.createElement("span", { style: { width: 100, flexShrink: 0 } }, `£${Math.round((data.leaderboard || []).reduce((s, r) => s + r.totalGBP, 0)).toLocaleString()}`),
+          React.createElement("span", { style: { width: 60, flexShrink: 0 } }, (data.leaderboard || []).reduce((s, r) => s + r.deals, 0)),
+          React.createElement("span", { style: { width: 60, flexShrink: 0 } }, "100.0%")
+        )
       ),
       React.createElement("div", { style: { marginTop: 10, fontSize: 12, color: INDIGO_MUTED } }, "Includes every consultant, Scott and Lee included — this is the full company total, not the consultants' own ranked competition.")
     ),
@@ -371,7 +385,9 @@ function DealsPage({ token }) {
         React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
           React.createElement("span", { style: { width: 140, flexShrink: 0 } }, "Source"),
           React.createElement("span", { style: { width: 90, flexShrink: 0 } }, "USD"),
-          React.createElement("span", { style: { width: 90, flexShrink: 0 } }, "Revenue (GBP)")
+          React.createElement("span", { style: { width: 90, flexShrink: 0 } }, "Revenue (GBP)"),
+          React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Deals"),
+          React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "%")
         ),
         (data.sourceBreakdown || []).map(s => React.createElement("div", {
           key: s.source, style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 13.5, padding: "4px 0", color: INDIGO }
@@ -379,7 +395,8 @@ function DealsPage({ token }) {
           React.createElement("span", { style: { width: 140, flexShrink: 0 } }, s.source),
           React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `$${Math.round(s.valueUSD).toLocaleString()}`),
           React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(s.valueGBP).toLocaleString()}`),
-          React.createElement("span", { style: { fontSize: 11, color: INDIGO_MUTED } }, `(${s.deals} deal${s.deals !== 1 ? "s" : ""})`)
+          React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, s.deals),
+          React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, `${s.percentage.toFixed(0)}%`)
         )),
         React.createElement("div", {
           style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 13.5, padding: "6px 0 0", marginTop: 4, borderTop: `1px solid ${INDIGO_HAIRLINE}`, fontWeight: 700, color: INDIGO }
@@ -387,7 +404,8 @@ function DealsPage({ token }) {
           React.createElement("span", { style: { width: 140, flexShrink: 0 } }, "Total"),
           React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `$${Math.round((data.sourceBreakdown || []).reduce((s, r) => s + r.valueUSD, 0)).toLocaleString()}`),
           React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round((data.sourceBreakdown || []).reduce((s, r) => s + r.valueGBP, 0)).toLocaleString()}`),
-          React.createElement("span", { style: { fontSize: 11, color: INDIGO_MUTED, fontWeight: 400 } }, `(${(data.sourceBreakdown || []).reduce((s, r) => s + r.deals, 0)} deals)`)
+          React.createElement("span", { style: { width: 50, flexShrink: 0 } }, (data.sourceBreakdown || []).reduce((s, r) => s + r.deals, 0)),
+          React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "100%")
         )
       ),
       (data.clientBreakdown || []).length > 0 && React.createElement(Panel, { style: { flex: 1, minWidth: 320 } },
@@ -395,7 +413,9 @@ function DealsPage({ token }) {
         React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
           React.createElement("span", { style: { width: 150, flexShrink: 0 } }, "Client"),
           React.createElement("span", { style: { width: 90, flexShrink: 0 } }, "USD"),
-          React.createElement("span", { style: { width: 90, flexShrink: 0 } }, "Revenue (GBP)")
+          React.createElement("span", { style: { width: 90, flexShrink: 0 } }, "Revenue (GBP)"),
+          React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Deals"),
+          React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "%")
         ),
         (data.clientBreakdown || []).map(c => React.createElement("div", {
           key: c.firm, style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 13.5, padding: "4px 0", color: c.firm === "Unknown" ? INDIGO_MUTED : INDIGO }
@@ -403,7 +423,8 @@ function DealsPage({ token }) {
           React.createElement("span", { style: { width: 150, flexShrink: 0 } }, c.firm),
           React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `$${Math.round(c.totalUSD).toLocaleString()}`),
           React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(c.totalGBP).toLocaleString()}`),
-          React.createElement("span", { style: { fontSize: 11, color: INDIGO_MUTED } }, `(${c.percentage.toFixed(0)}%)`)
+          React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, c.deals),
+          React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, `${c.percentage.toFixed(0)}%`)
         )),
         React.createElement("div", {
           style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 13.5, padding: "6px 0 0", marginTop: 4, borderTop: `1px solid ${INDIGO_HAIRLINE}`, fontWeight: 700, color: INDIGO }
@@ -411,7 +432,8 @@ function DealsPage({ token }) {
           React.createElement("span", { style: { width: 150, flexShrink: 0 } }, "Total"),
           React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `$${Math.round((data.clientBreakdown || []).reduce((s, r) => s + r.totalUSD, 0)).toLocaleString()}`),
           React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round((data.clientBreakdown || []).reduce((s, r) => s + r.totalGBP, 0)).toLocaleString()}`),
-          React.createElement("span", { style: { fontSize: 11, color: INDIGO_MUTED, fontWeight: 400 } }, "(100%)")
+          React.createElement("span", { style: { width: 50, flexShrink: 0 } }, (data.clientBreakdown || []).reduce((s, r) => s + r.deals, 0)),
+          React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "100%")
         )
       )
     ),
@@ -812,8 +834,9 @@ function ConsultantStatsPage({ token }) {
   );
 }
 
-function HeadcountPanel({ token }) {
-  const [data, setData] = useState(null);
+function HeadcountRetentionPanel({ token }) {
+  const [headcount, setHeadcount] = useState(null);
+  const [retention, setRetention] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [showHistory, setShowHistory] = useState(null); // "feeEarning" | "coordinators" | null
@@ -821,10 +844,16 @@ function HeadcountPanel({ token }) {
   const load = useCallback(async () => {
     setError(""); setLoading(true);
     try {
-      const res = await fetch("/api/headcount", { headers: { Authorization: `Bearer ${token}` } });
-      const body = await res.json();
-      if (!res.ok) { setError(body.error || "Couldn't load headcount."); return; }
-      setData(body);
+      const [hcRes, retRes] = await Promise.all([
+        fetch("/api/headcount", { headers: { Authorization: `Bearer ${token}` } }),
+        fetch("/api/retention", { headers: { Authorization: `Bearer ${token}` } }),
+      ]);
+      const hcBody = await hcRes.json();
+      const retBody = await retRes.json();
+      if (!hcRes.ok) { setError(hcBody.error || "Couldn't load headcount."); return; }
+      if (!retRes.ok) { setError(retBody.error || "Couldn't load retention."); return; }
+      setHeadcount(hcBody);
+      setRetention(retBody);
     } catch (e) {
       setError("Couldn't reach the server.");
     } finally {
@@ -834,38 +863,46 @@ function HeadcountPanel({ token }) {
 
   useEffect(() => { load(); }, [load]);
 
-  return React.createElement(Panel, null,
-    React.createElement(SectionTitle, { title: "Headcount" }),
-    React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Derived directly from the roster below — nothing to update here, edit start and termination dates there instead."),
-    error && React.createElement("div", { style: errorStyle }, error),
-    loading && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Loading…"),
-    !loading && data && React.createElement("div", { style: { display: "flex", gap: 40, flexWrap: "wrap" } },
-      React.createElement("div", null,
-        React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.08em" } }, "Fee-earning staff"),
-        React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO } }, data.currentFeeEarning),
-        React.createElement("span", { onClick: () => setShowHistory(showHistory === "feeEarning" ? null : "feeEarning"), style: { fontSize: 11, color: INDIGO_MUTED, textDecoration: "underline", cursor: "pointer" } }, showHistory === "feeEarning" ? "hide history" : "show history"),
-        showHistory === "feeEarning" && React.createElement("div", { style: { marginTop: 8, fontSize: 12 } },
-          data.feeEarningHistory.length === 0
-            ? React.createElement("div", { style: { color: INDIGO_MUTED } }, "No dates recorded yet.")
-            : data.feeEarningHistory.map((e, i) => React.createElement("div", { key: i, style: { color: INDIGO_MUTED, padding: "2px 0" } }, `${formatDateUK(e.date)} — ${e.count}`))
-        )
+  function statBlock(label, count, history, historyKey, retentionCat) {
+    return React.createElement("div", null,
+      React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.08em" } }, label),
+      React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO } }, count),
+      React.createElement("span", { onClick: () => setShowHistory(showHistory === historyKey ? null : historyKey), style: { fontSize: 11, color: INDIGO_MUTED, textDecoration: "underline", cursor: "pointer" } }, showHistory === historyKey ? "hide history" : "show history"),
+      showHistory === historyKey && React.createElement("div", { style: { marginTop: 8, fontSize: 12 } },
+        history.length === 0
+          ? React.createElement("div", { style: { color: INDIGO_MUTED } }, "No dates recorded yet.")
+          : history.map((e, i) => React.createElement("div", { key: i, style: { color: INDIGO_MUTED, padding: "2px 0" } }, `${formatDateUK(e.date)} — ${e.count}`))
       ),
-      React.createElement("div", null,
-        React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.08em" } }, "Coordinators"),
-        React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO } }, data.currentCoordinators),
-        React.createElement("span", { onClick: () => setShowHistory(showHistory === "coordinators" ? null : "coordinators"), style: { fontSize: 11, color: INDIGO_MUTED, textDecoration: "underline", cursor: "pointer" } }, showHistory === "coordinators" ? "hide history" : "show history"),
-        showHistory === "coordinators" && React.createElement("div", { style: { marginTop: 8, fontSize: 12 } },
-          data.coordinatorHistory.length === 0
-            ? React.createElement("div", { style: { color: INDIGO_MUTED } }, "No dates recorded yet.")
-            : data.coordinatorHistory.map((e, i) => React.createElement("div", { key: i, style: { color: INDIGO_MUTED, padding: "2px 0" } }, `${formatDateUK(e.date)} — ${e.count}`))
+      retentionCat && React.createElement(React.Fragment, null,
+        React.createElement("div", { style: { fontSize: 13, color: INDIGO, marginTop: 10 } },
+          retentionCat.averageTenureYearsCurrent !== null ? `${retentionCat.averageTenureYearsCurrent.toFixed(1)} yrs average tenure` : "No tenure data yet"
+        ),
+        React.createElement("div", { style: { fontSize: 12, color: INDIGO, marginTop: 4 } },
+          retentionCat.turnoverRateLast12MonthsPercent !== null ? `${retentionCat.turnoverRateLast12MonthsPercent.toFixed(1)}% turnover` : "No basis for a turnover rate yet"
+        ),
+        React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED } }, `${retentionCat.departuresLast12Months} left in the last 12 months`),
+        retentionCat.departedCount > 0 && React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 2 } },
+          `${retentionCat.departedCount} departed overall, averaging ${retentionCat.averageTenureYearsDeparted.toFixed(1)} yrs before leaving`
         )
       )
+    );
+  }
+
+  return React.createElement(Panel, null,
+    React.createElement(SectionTitle, { title: "Headcount & Retention" }),
+    React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Derived directly from the roster below — nothing to update here, edit dates there instead. Only as accurate as the dates entered."),
+    error && React.createElement("div", { style: errorStyle }, error),
+    loading && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Loading…"),
+    !loading && headcount && retention && React.createElement("div", { style: { display: "flex", gap: 40, flexWrap: "wrap" } },
+      statBlock("Fee-earning staff", headcount.currentFeeEarning, headcount.feeEarningHistory, "feeEarning", retention.feeEarning),
+      statBlock("Coordinators", headcount.currentCoordinators, headcount.coordinatorHistory, "coordinators", retention.coordinators)
     )
   );
 }
 
 function RosterPanel({ token }) {
   const [roster, setRoster] = useState(null);
+  const [ttpById, setTtpById] = useState({});
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -883,10 +920,19 @@ function RosterPanel({ token }) {
   const load = useCallback(async () => {
     setError(""); setLoading(true);
     try {
-      const res = await fetch("/api/roster", { headers: { Authorization: `Bearer ${token}` } });
-      const body = await res.json();
-      if (!res.ok) { setError(body.error || "Couldn't load roster."); return; }
+      const [rosterRes, ttpRes] = await Promise.all([
+        fetch("/api/roster", { headers: { Authorization: `Bearer ${token}` } }),
+        fetch("/api/time-to-productivity", { headers: { Authorization: `Bearer ${token}` } }),
+      ]);
+      const body = await rosterRes.json();
+      if (!rosterRes.ok) { setError(body.error || "Couldn't load roster."); return; }
       setRoster(body.roster);
+      if (ttpRes.ok) {
+        const ttpBody = await ttpRes.json();
+        const byId = {};
+        for (const p of ttpBody.people || []) byId[p.consultantId] = p;
+        setTtpById(byId);
+      }
     } catch (e) {
       setError("Couldn't reach the server.");
     } finally {
@@ -994,12 +1040,24 @@ function RosterPanel({ token }) {
         { label: "Start Date", width: 100 },
         { label: "Termination Date", width: 130 },
         { label: "Current Salary (p/a)", width: 140 },
+        { label: "First Placement", width: 110 },
+        { label: "Time to Productivity", width: 130 },
         { label: "", flex: 1 },
       ] }),
       roster.map((p) => {
         const isEditing = editingId === p.consultantId;
         const isSalaryFormOpen = salaryFormId === p.consultantId;
         const isHistoryOpen = showSalaryHistory === p.consultantId;
+        const ttp = ttpById[p.consultantId];
+        const ttpLabel = !ttp ? "—"
+          : ttp.status === "measured" ? `${Math.round(ttp.daysToFirstPlacement)} days`
+          : ttp.status === "no-placement-yet" ? "No placement yet"
+          : ttp.status === "inconsistent" ? "Dates don't line up"
+          : "—";
+        const ttpColor = !ttp ? INDIGO_MUTED
+          : ttp.status === "measured" ? INDIGO
+          : ttp.status === "inconsistent" ? MELON_LINK
+          : INDIGO_MUTED;
         return React.createElement(React.Fragment, { key: p.consultantId },
           React.createElement(RowLine, null,
             React.createElement(Cell, { width: 160 },
@@ -1020,6 +1078,8 @@ function RosterPanel({ token }) {
             React.createElement(Cell, { width: 140, color: p.currentSalaryGBP !== null ? INDIGO : INDIGO_MUTED },
               p.currentSalaryGBP !== null ? `£${Math.round(p.currentSalaryGBP).toLocaleString()}` : "Not set"
             ),
+            React.createElement(Cell, { width: 110, color: ttp && ttp.firstPlacementDate ? INDIGO : INDIGO_MUTED }, ttp && ttp.firstPlacementDate ? formatDateUK(ttp.firstPlacementDate) : "—"),
+            React.createElement(Cell, { width: 130, color: ttpColor }, ttpLabel),
             React.createElement(Cell, { flex: 1 },
               React.createElement("span", { onClick: () => startEdit(p), style: { fontSize: 11, color: INDIGO_MUTED, textDecoration: "underline", cursor: "pointer" } }, "edit dates"),
               React.createElement("span", { onClick: () => openSalaryForm(p.consultantId), style: { marginLeft: 10, fontSize: 11, color: INDIGO_MUTED, textDecoration: "underline", cursor: "pointer" } }, "add salary"),
@@ -1074,129 +1134,10 @@ function RosterPanel({ token }) {
   );
 }
 
-function RetentionPanel({ token }) {
-  const [data, setData] = useState(null);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  const load = useCallback(async () => {
-    setError(""); setLoading(true);
-    try {
-      const res = await fetch("/api/retention", { headers: { Authorization: `Bearer ${token}` } });
-      const body = await res.json();
-      if (!res.ok) { setError(body.error || "Couldn't load retention."); return; }
-      setData(body);
-    } catch (e) {
-      setError("Couldn't reach the server.");
-    } finally {
-      setLoading(false);
-    }
-  }, [token]);
-
-  useEffect(() => { load(); }, [load]);
-
-  function statBlock(label, cat) {
-    return React.createElement("div", null,
-      React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.08em" } }, label),
-      React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 22, color: INDIGO } },
-        cat.averageTenureYearsCurrent !== null ? `${cat.averageTenureYearsCurrent.toFixed(1)} yrs` : "—"
-      ),
-      React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 2 } }, `Average tenure, ${cat.currentStaffCount} current`),
-      React.createElement("div", { style: { fontSize: 12, color: INDIGO, marginTop: 8 } },
-        cat.turnoverRateLast12MonthsPercent !== null ? `${cat.turnoverRateLast12MonthsPercent.toFixed(1)}% turnover` : "No basis for a turnover rate yet"
-      ),
-      React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED } }, `${cat.departuresLast12Months} left in the last 12 months`),
-      cat.departedCount > 0 && React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 4 } },
-        `${cat.departedCount} departed overall, averaging ${cat.averageTenureYearsDeparted.toFixed(1)} yrs before leaving`
-      )
-    );
-  }
-
-  return React.createElement(Panel, null,
-    React.createElement(SectionTitle, { title: "Staff Retention" }),
-    React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Derived entirely from the roster above — only as accurate as the dates entered there, and only meaningful once there's real history to draw on."),
-    error && React.createElement("div", { style: errorStyle }, error),
-    loading && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Loading…"),
-    !loading && data && React.createElement("div", { style: { display: "flex", gap: 40, flexWrap: "wrap" } },
-      statBlock("Fee-earning staff", data.feeEarning),
-      statBlock("Coordinators", data.coordinators)
-    )
-  );
-}
-
-function TimeToProductivityPanel({ token }) {
-  const [data, setData] = useState(null);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  const load = useCallback(async () => {
-    setError(""); setLoading(true);
-    try {
-      const res = await fetch("/api/time-to-productivity", { headers: { Authorization: `Bearer ${token}` } });
-      const body = await res.json();
-      if (!res.ok) { setError(body.error || "Couldn't load."); return; }
-      setData(body);
-    } catch (e) {
-      setError("Couldn't reach the server.");
-    } finally {
-      setLoading(false);
-    }
-  }, [token]);
-
-  useEffect(() => { load(); }, [load]);
-
-  function statusLabel(p) {
-    if (p.status === "measured") return `${Math.round(p.daysToFirstPlacement)} days`;
-    if (p.status === "no-placement-yet") return "No placement yet";
-    if (p.status === "inconsistent") return "Dates don't line up";
-    return "No start date set";
-  }
-  function statusColor(p) {
-    if (p.status === "measured") return INDIGO;
-    if (p.status === "inconsistent") return MELON_LINK;
-    return INDIGO_MUTED;
-  }
-
-  return React.createElement(Panel, null,
-    React.createElement(SectionTitle, { title: "Time to Productivity" }),
-    React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Days from a real start date to a genuine first placement — never an Onsite fee. Only counts people with a start date actually entered on the roster."),
-    error && React.createElement("div", { style: errorStyle }, error),
-    loading && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Loading…"),
-    !loading && data && React.createElement(React.Fragment, null,
-      React.createElement("div", { style: { marginBottom: 14, fontSize: 14 } },
-        data.averageDaysToFirstPlacement !== null
-          ? React.createElement(React.Fragment, null,
-              React.createElement("span", { style: labelStyle }, "Average: "),
-              React.createElement("strong", null, `${Math.round(data.averageDaysToFirstPlacement)} days`),
-              React.createElement("span", { style: { color: INDIGO_MUTED } }, ` across ${data.measuredCount} ${data.measuredCount === 1 ? "person" : "people"}`)
-            )
-          : React.createElement("span", { style: { color: INDIGO_MUTED } }, "Not enough real data yet to average.")
-      ),
-      React.createElement(TableHeader, { cols: [
-        { label: "Name", width: 160 },
-        { label: "Start Date", width: 110 },
-        { label: "First Placement", width: 130 },
-        { label: "Time to Productivity", flex: 1 },
-      ] }),
-      data.people.map((p) => React.createElement(RowLine, { key: p.consultantId },
-        React.createElement(Cell, { width: 160 }, p.consultantName),
-        React.createElement(Cell, { width: 110, color: p.startDate ? INDIGO : INDIGO_MUTED }, formatDateUK(p.startDate) || "Not set"),
-        React.createElement(Cell, { width: 130, color: p.firstPlacementDate ? INDIGO : INDIGO_MUTED }, formatDateUK(p.firstPlacementDate) || "—"),
-        React.createElement(Cell, { flex: 1, color: statusColor(p) }, statusLabel(p))
-      ))
-    )
-  );
-}
-
 function StaffInfoPage({ token }) {
   return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 20 } },
-    React.createElement(Panel, null,
-      React.createElement(SectionTitle, { title: "Staff Info" })
-    ),
-    React.createElement(HeadcountPanel, { token }),
-    React.createElement(RosterPanel, { token }),
-    React.createElement(RetentionPanel, { token }),
-    React.createElement(TimeToProductivityPanel, { token })
+    React.createElement(HeadcountRetentionPanel, { token }),
+    React.createElement(RosterPanel, { token })
   );
 }
 
@@ -1360,41 +1301,73 @@ function CompanyOverviewPage({ token }) {
         )
       ),
       React.createElement("div", { style: { display: "flex", gap: 20, flexWrap: "wrap" } },
-        React.createElement(Panel, { style: { flex: 1, minWidth: 340 } },
+        React.createElement(Panel, { style: { flex: 1, minWidth: 380 } },
           React.createElement(SectionTitle, { title: "Client Concentration" }),
           React.createElement("div", { style: { display: "flex", gap: 20, marginBottom: 12, fontSize: 13 } },
             React.createElement("div", null, React.createElement("span", { style: { color: INDIGO_MUTED } }, "Top 3: "), React.createElement("strong", null, `${data.top3Percentage.toFixed(1)}%`)),
             React.createElement("div", null, React.createElement("span", { style: { color: INDIGO_MUTED } }, "Top 5: "), React.createElement("strong", null, `${data.top5Percentage.toFixed(1)}%`))
           ),
+          React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
+            React.createElement("span", { style: { flex: 1 } }, "Client"),
+            React.createElement("span", { style: { width: 80, flexShrink: 0 } }, "USD"),
+            React.createElement("span", { style: { width: 90, flexShrink: 0 } }, "GBP"),
+            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Deals"),
+            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "%")
+          ),
           data.clientConcentration.length === 0
-            ? React.createElement("div", { style: { color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif", fontSize: 14 } }, "No deals recorded yet for this year.")
-            : data.clientConcentration.slice(0, 10).map(c => React.createElement("div", {
-                key: c.client, style: { display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, padding: "5px 0", fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, borderBottom: `1px solid ${INDIGO_HAIRLINE}` }
-              },
-                React.createElement("span", null, c.client),
-                React.createElement("span", { style: { display: "flex", alignItems: "baseline", gap: 6, flexShrink: 0 } },
-                  React.createElement("span", { style: { color: INDIGO } }, `£${Math.round(c.totalGBP).toLocaleString()}`),
-                  React.createElement("span", { style: { color: INDIGO_MUTED, fontSize: 12 } }, `${c.percentage.toFixed(1)}%`)
+            ? React.createElement("div", { style: { color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif", fontSize: 14, padding: "6px 0" } }, "No deals recorded yet for this year.")
+            : React.createElement(React.Fragment, null,
+                data.clientConcentration.slice(0, 10).map(c => React.createElement("div", {
+                  key: c.client, style: { display: "flex", alignItems: "baseline", gap: 4, padding: "5px 0", fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, color: INDIGO, borderBottom: `1px solid ${INDIGO_HAIRLINE}` }
+                },
+                  React.createElement("span", { style: { flex: 1 } }, c.client),
+                  React.createElement("span", { style: { width: 80, flexShrink: 0 } }, `$${Math.round(c.totalUSD).toLocaleString()}`),
+                  React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(c.totalGBP).toLocaleString()}`),
+                  React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, c.deals),
+                  React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, `${c.percentage.toFixed(1)}%`)
+                )),
+                React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, padding: "6px 0 0", marginTop: 4, borderTop: `1px solid ${INDIGO_HAIRLINE}`, fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, fontWeight: 700, color: INDIGO } },
+                  React.createElement("span", { style: { flex: 1 } }, "Total"),
+                  React.createElement("span", { style: { width: 80, flexShrink: 0 } }, `$${Math.round(data.clientConcentration.reduce((s, c) => s + c.totalUSD, 0)).toLocaleString()}`),
+                  React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(data.clientConcentration.reduce((s, c) => s + c.totalGBP, 0)).toLocaleString()}`),
+                  React.createElement("span", { style: { width: 50, flexShrink: 0 } }, data.clientConcentration.reduce((s, c) => s + c.deals, 0)),
+                  React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "100%")
                 )
-              ))
+              )
         ),
-        React.createElement(Panel, { style: { flex: 1, minWidth: 340 } },
+        React.createElement(Panel, { style: { flex: 1, minWidth: 380 } },
           React.createElement(SectionTitle, { title: "Consultant Concentration" }),
           React.createElement("div", { style: { display: "flex", gap: 20, marginBottom: 12, fontSize: 13 } },
             React.createElement("div", null, React.createElement("span", { style: { color: INDIGO_MUTED } }, "Top 3: "), React.createElement("strong", null, `${data.consultantTop3Percentage.toFixed(1)}%`)),
             React.createElement("div", null, React.createElement("span", { style: { color: INDIGO_MUTED } }, "Top 5: "), React.createElement("strong", null, `${data.consultantTop5Percentage.toFixed(1)}%`))
           ),
+          React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
+            React.createElement("span", { style: { flex: 1 } }, "Consultant"),
+            React.createElement("span", { style: { width: 80, flexShrink: 0 } }, "USD"),
+            React.createElement("span", { style: { width: 90, flexShrink: 0 } }, "GBP"),
+            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Deals"),
+            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "%")
+          ),
           data.consultantConcentration.length === 0
-            ? React.createElement("div", { style: { color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif", fontSize: 14 } }, "No deals recorded yet for this year.")
-            : data.consultantConcentration.slice(0, 10).map(c => React.createElement("div", {
-                key: c.consultantId, style: { display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, padding: "5px 0", fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, borderBottom: `1px solid ${INDIGO_HAIRLINE}` }
-              },
-                React.createElement("span", null, c.consultantName),
-                React.createElement("span", { style: { display: "flex", alignItems: "baseline", gap: 6, flexShrink: 0 } },
-                  React.createElement("span", { style: { color: INDIGO } }, `£${Math.round(c.totalGBP).toLocaleString()}`),
-                  React.createElement("span", { style: { color: INDIGO_MUTED, fontSize: 12 } }, `${c.percentage.toFixed(1)}%`)
+            ? React.createElement("div", { style: { color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif", fontSize: 14, padding: "6px 0" } }, "No deals recorded yet for this year.")
+            : React.createElement(React.Fragment, null,
+                data.consultantConcentration.slice(0, 10).map(c => React.createElement("div", {
+                  key: c.consultantId, style: { display: "flex", alignItems: "baseline", gap: 4, padding: "5px 0", fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, color: INDIGO, borderBottom: `1px solid ${INDIGO_HAIRLINE}` }
+                },
+                  React.createElement("span", { style: { flex: 1 } }, c.consultantName),
+                  React.createElement("span", { style: { width: 80, flexShrink: 0 } }, `$${Math.round(c.totalUSD).toLocaleString()}`),
+                  React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(c.totalGBP).toLocaleString()}`),
+                  React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, c.deals),
+                  React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, `${c.percentage.toFixed(1)}%`)
+                )),
+                React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, padding: "6px 0 0", marginTop: 4, borderTop: `1px solid ${INDIGO_HAIRLINE}`, fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, fontWeight: 700, color: INDIGO } },
+                  React.createElement("span", { style: { flex: 1 } }, "Total"),
+                  React.createElement("span", { style: { width: 80, flexShrink: 0 } }, `$${Math.round(data.consultantConcentration.reduce((s, c) => s + c.totalUSD, 0)).toLocaleString()}`),
+                  React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(data.consultantConcentration.reduce((s, c) => s + c.totalGBP, 0)).toLocaleString()}`),
+                  React.createElement("span", { style: { width: 50, flexShrink: 0 } }, data.consultantConcentration.reduce((s, c) => s + c.deals, 0)),
+                  React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "100%")
                 )
-              ))
+              )
         )
       ),
       React.createElement(Panel, null,
