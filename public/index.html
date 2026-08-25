@@ -560,7 +560,7 @@ function CommissionPage({ token }) {
   const clientPanel = React.createElement(Panel, { key: "client-concentration" },
     React.createElement(SectionTitle, { title: "Client Concentration" }),
     React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
-      React.createElement("span", { style: { flex: 1 } }, "Client"),
+      React.createElement("span", { style: { width: 180, flexShrink: 0 } }, "Client"),
       React.createElement("span", { style: { width: 90, flexShrink: 0 } }, "Commission"),
       React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Deals"),
       React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Onsites"),
@@ -569,14 +569,14 @@ function CommissionPage({ token }) {
     breakdowns.clientBreakdown.map(c => React.createElement("div", {
       key: c.name, style: { display: "flex", alignItems: "baseline", gap: 4, padding: "5px 0", fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, color: INDIGO, borderBottom: `1px solid ${INDIGO_HAIRLINE}` }
     },
-      React.createElement("span", { style: { flex: 1 } }, c.name),
+      React.createElement("span", { style: { width: 180, flexShrink: 0 } }, c.name),
       React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(c.commission).toLocaleString()}`),
       React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, c.deals),
       React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, c.onsites),
       React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, `${c.percentage.toFixed(1)}%`)
     )),
     React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, padding: "6px 0 0", marginTop: 4, borderTop: `1px solid ${INDIGO_HAIRLINE}`, fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, fontWeight: 700, color: INDIGO } },
-      React.createElement("span", { style: { flex: 1 } }, "Total"),
+      React.createElement("span", { style: { width: 180, flexShrink: 0 } }, "Total"),
       React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(breakdowns.total).toLocaleString()}`),
       React.createElement("span", { style: { width: 50, flexShrink: 0 } }, breakdowns.clientBreakdown.reduce((s, c) => s + c.deals, 0)),
       React.createElement("span", { style: { width: 50, flexShrink: 0 } }, breakdowns.clientBreakdown.reduce((s, c) => s + c.onsites, 0)),
@@ -587,7 +587,7 @@ function CommissionPage({ token }) {
   const sourcePanel = React.createElement(Panel, { key: "source-breakdown" },
     React.createElement(SectionTitle, { title: "Deal Source Breakdown" }),
     React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
-      React.createElement("span", { style: { flex: 1 } }, "Source"),
+      React.createElement("span", { style: { width: 180, flexShrink: 0 } }, "Source"),
       React.createElement("span", { style: { width: 90, flexShrink: 0 } }, "Commission"),
       React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Deals"),
       React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Onsites"),
@@ -596,14 +596,14 @@ function CommissionPage({ token }) {
     breakdowns.sourceBreakdown.map(s => React.createElement("div", {
       key: s.name, style: { display: "flex", alignItems: "baseline", gap: 4, padding: "5px 0", fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, color: INDIGO, borderBottom: `1px solid ${INDIGO_HAIRLINE}` }
     },
-      React.createElement("span", { style: { flex: 1 } }, s.name),
+      React.createElement("span", { style: { width: 180, flexShrink: 0 } }, s.name),
       React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(s.commission).toLocaleString()}`),
       React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, s.deals),
       React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, s.onsites),
       React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, `${s.percentage.toFixed(1)}%`)
     )),
     React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, padding: "6px 0 0", marginTop: 4, borderTop: `1px solid ${INDIGO_HAIRLINE}`, fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, fontWeight: 700, color: INDIGO } },
-      React.createElement("span", { style: { flex: 1 } }, "Total"),
+      React.createElement("span", { style: { width: 180, flexShrink: 0 } }, "Total"),
       React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(breakdowns.total).toLocaleString()}`),
       React.createElement("span", { style: { width: 50, flexShrink: 0 } }, breakdowns.sourceBreakdown.reduce((s, r) => s + r.deals, 0)),
       React.createElement("span", { style: { width: 50, flexShrink: 0 } }, breakdowns.sourceBreakdown.reduce((s, r) => s + r.onsites, 0)),
@@ -735,29 +735,29 @@ function CommissionPage({ token }) {
             )
       ),
       React.createElement("div", { style: { display: "flex", gap: 20, flexWrap: "wrap" } },
-        React.createElement(Panel, { style: { flex: "1 1 380px", maxWidth: 420 } },
+        React.createElement(Panel, { style: { flex: 1, minWidth: 380 } },
           React.createElement(SectionTitle, { title: "Deals this year" }),
           React.createElement("div", { style: { display: "flex", flexDirection: "column" } },
             React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 10, padding: "4px 0" } },
-                React.createElement("span", { style: { width: 150, flexShrink: 0, ...labelStyle, marginBottom: 0 } }, "Name"),
-                React.createElement("span", { style: { width: 100, flexShrink: 0, ...labelStyle, marginBottom: 0 } }, "Fee $"),
-                React.createElement("span", { style: { width: 80, ...labelStyle, marginBottom: 0 } }, "Fee £"),
-                React.createElement("span", { style: { width: 80, ...labelStyle, marginBottom: 0 } }, "Start")
+                React.createElement("span", { style: { width: 140, flexShrink: 0, ...labelStyle, marginBottom: 0 } }, "Name"),
+                React.createElement("span", { style: { width: 90, flexShrink: 0, ...labelStyle, marginBottom: 0 } }, "Fee $"),
+                React.createElement("span", { style: { width: 90, flexShrink: 0, ...labelStyle, marginBottom: 0 } }, "Fee £"),
+                React.createElement("span", { style: { width: 90, flexShrink: 0, ...labelStyle, marginBottom: 0 } }, "Start")
               ),
               dedupedDeals.map((l, i) => React.createElement("div", {
                 key: `simple-${l.feeId}-${l.splitId}-${i}`,
                 style: { display: "flex", alignItems: "baseline", gap: 10, padding: "4px 0", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, fontSize: 13 }
               },
-                React.createElement("span", { style: { width: 150, flexShrink: 0, color: l.candidateName ? INDIGO : INDIGO_MUTED } }, l.candidateName || "—"),
-                React.createElement("span", { style: { width: 100, flexShrink: 0, fontWeight: 600 } }, l.usdAmount !== null && l.usdAmount !== undefined ? `$${Math.round(l.usdAmount).toLocaleString()}` : "—"),
-                React.createElement("span", { style: { width: 80, fontWeight: 600 } }, `£${Math.round(l.gbpPortion).toLocaleString()}`),
-                React.createElement("span", { style: { width: 80, color: INDIGO_MUTED, fontSize: 12 } }, l.startDate ? new Date(l.startDate).toLocaleDateString("en-GB") : "—")
+                React.createElement("span", { style: { width: 140, flexShrink: 0, color: l.candidateName ? INDIGO : INDIGO_MUTED } }, l.candidateName || "—"),
+                React.createElement("span", { style: { width: 90, flexShrink: 0, fontWeight: 600 } }, l.usdAmount !== null && l.usdAmount !== undefined ? `$${Math.round(l.usdAmount).toLocaleString()}` : "—"),
+                React.createElement("span", { style: { width: 90, flexShrink: 0, fontWeight: 600 } }, `£${Math.round(l.gbpPortion).toLocaleString()}`),
+                React.createElement("span", { style: { width: 90, flexShrink: 0, color: INDIGO_MUTED, fontSize: 12 } }, l.startDate ? new Date(l.startDate).toLocaleDateString("en-GB") : "—")
               )),
               React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 10, padding: "8px 0 0", fontWeight: 700 } },
-                React.createElement("span", { style: { width: 150, flexShrink: 0 } }, "Total"),
-                React.createElement("span", { style: { width: 100, flexShrink: 0 } }, `$${Math.round(dedupedDeals.reduce((s, l) => s + (l.usdAmount || 0), 0)).toLocaleString()}`),
-                React.createElement("span", { style: { width: 80 } }, `£${Math.round(dedupedDeals.reduce((s, l) => s + (l.gbpPortion || 0), 0)).toLocaleString()}`),
-                React.createElement("span", { style: { width: 80 } })
+                React.createElement("span", { style: { width: 140, flexShrink: 0 } }, "Total"),
+                React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `$${Math.round(dedupedDeals.reduce((s, l) => s + (l.usdAmount || 0), 0)).toLocaleString()}`),
+                React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(dedupedDeals.reduce((s, l) => s + (l.gbpPortion || 0), 0)).toLocaleString()}`),
+                React.createElement("span", { style: { width: 90, flexShrink: 0 } })
               )
             ),
             React.createElement("div", { style: { marginTop: 16, paddingTop: 16, borderTop: `1px solid ${INDIGO_HAIRLINE}` } },
@@ -780,7 +780,7 @@ function CommissionPage({ token }) {
               )
             )
           ),
-        breakdowns.total > 0 && React.createElement("div", { style: { flex: "1 1 320px", display: "flex", flexDirection: "column", gap: 20 } }, clientPanel, sourcePanel)
+        breakdowns.total > 0 && React.createElement("div", { style: { flex: 1, minWidth: 380, display: "flex", flexDirection: "column", gap: 20 } }, clientPanel, sourcePanel)
       )
     )
   );
@@ -1430,7 +1430,7 @@ function CompanyOverviewPage({ token }) {
             React.createElement("div", null, React.createElement("span", { style: { color: INDIGO_MUTED } }, "Top 5: "), React.createElement("strong", null, `${data.top5Percentage.toFixed(1)}%`))
           ),
           React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
-            React.createElement("span", { style: { flex: 1 } }, "Client"),
+            React.createElement("span", { style: { width: 180, flexShrink: 0 } }, "Client"),
             React.createElement("span", { style: { width: 80, flexShrink: 0 } }, "USD"),
             React.createElement("span", { style: { width: 90, flexShrink: 0 } }, "GBP"),
             React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Deals"),
@@ -1443,7 +1443,7 @@ function CompanyOverviewPage({ token }) {
                 data.clientConcentration.slice(0, 10).map(c => React.createElement("div", {
                   key: c.client, style: { display: "flex", alignItems: "baseline", gap: 4, padding: "5px 0", fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, color: INDIGO, borderBottom: `1px solid ${INDIGO_HAIRLINE}` }
                 },
-                  React.createElement("span", { style: { flex: 1 } }, c.client),
+                  React.createElement("span", { style: { width: 180, flexShrink: 0 } }, c.client),
                   React.createElement("span", { style: { width: 80, flexShrink: 0 } }, `$${Math.round(c.totalUSD).toLocaleString()}`),
                   React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(c.totalGBP).toLocaleString()}`),
                   React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, c.deals),
@@ -1451,7 +1451,7 @@ function CompanyOverviewPage({ token }) {
                   React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, `${c.percentage.toFixed(1)}%`)
                 )),
                 React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, padding: "6px 0 0", marginTop: 4, borderTop: `1px solid ${INDIGO_HAIRLINE}`, fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, fontWeight: 700, color: INDIGO } },
-                  React.createElement("span", { style: { flex: 1 } }, "Total"),
+                  React.createElement("span", { style: { width: 180, flexShrink: 0 } }, "Total"),
                   React.createElement("span", { style: { width: 80, flexShrink: 0 } }, `$${Math.round(data.clientConcentration.reduce((s, c) => s + c.totalUSD, 0)).toLocaleString()}`),
                   React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(data.clientConcentration.reduce((s, c) => s + c.totalGBP, 0)).toLocaleString()}`),
                   React.createElement("span", { style: { width: 50, flexShrink: 0 } }, data.clientConcentration.reduce((s, c) => s + c.deals, 0)),
@@ -1467,7 +1467,7 @@ function CompanyOverviewPage({ token }) {
             React.createElement("div", null, React.createElement("span", { style: { color: INDIGO_MUTED } }, "Top 5: "), React.createElement("strong", null, `${data.consultantTop5Percentage.toFixed(1)}%`))
           ),
           React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
-            React.createElement("span", { style: { flex: 1 } }, "Consultant"),
+            React.createElement("span", { style: { width: 180, flexShrink: 0 } }, "Consultant"),
             React.createElement("span", { style: { width: 80, flexShrink: 0 } }, "USD"),
             React.createElement("span", { style: { width: 90, flexShrink: 0 } }, "GBP"),
             React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Deals"),
@@ -1480,7 +1480,7 @@ function CompanyOverviewPage({ token }) {
                 data.consultantConcentration.slice(0, 10).map(c => React.createElement("div", {
                   key: c.consultantId, style: { display: "flex", alignItems: "baseline", gap: 4, padding: "5px 0", fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, color: INDIGO, borderBottom: `1px solid ${INDIGO_HAIRLINE}` }
                 },
-                  React.createElement("span", { style: { flex: 1 } }, c.consultantName),
+                  React.createElement("span", { style: { width: 180, flexShrink: 0 } }, c.consultantName),
                   React.createElement("span", { style: { width: 80, flexShrink: 0 } }, `$${Math.round(c.totalUSD).toLocaleString()}`),
                   React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(c.totalGBP).toLocaleString()}`),
                   React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, c.deals),
@@ -1488,7 +1488,7 @@ function CompanyOverviewPage({ token }) {
                   React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, `${c.percentage.toFixed(1)}%`)
                 )),
                 React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, padding: "6px 0 0", marginTop: 4, borderTop: `1px solid ${INDIGO_HAIRLINE}`, fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, fontWeight: 700, color: INDIGO } },
-                  React.createElement("span", { style: { flex: 1 } }, "Total"),
+                  React.createElement("span", { style: { width: 180, flexShrink: 0 } }, "Total"),
                   React.createElement("span", { style: { width: 80, flexShrink: 0 } }, `$${Math.round(data.consultantConcentration.reduce((s, c) => s + c.totalUSD, 0)).toLocaleString()}`),
                   React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(data.consultantConcentration.reduce((s, c) => s + c.totalGBP, 0)).toLocaleString()}`),
                   React.createElement("span", { style: { width: 50, flexShrink: 0 } }, data.consultantConcentration.reduce((s, c) => s + c.deals, 0)),
