@@ -1,6 +1,6 @@
 const { getDirectorFromRequest, kv } = require("./_directorAuth");
 
-const EMPLOYMENT_KEY = "consultant-employment"; // { [id]: { startDate, terminationDate, notes } } — owned entirely by this site, single source of truth for everyone's dates
+const EMPLOYMENT_KEY = "consultant-employment"; // { [id]: { startDate, terminationDate, salaryGBP, notes } } — owned entirely by this site, single source of truth for everyone's dates and pay
 
 // The full roster this site tracks dates for — the 12 fee-earning people
 // (same list Consultant Stats already uses, reused directly rather than
@@ -42,6 +42,7 @@ module.exports = async (req, res) => {
         category: info.category,
         startDate: (employment[id] && employment[id].startDate) || null,
         terminationDate: (employment[id] && employment[id].terminationDate) || null,
+        salaryGBP: (employment[id] && employment[id].salaryGBP) ?? null,
         notes: (employment[id] && employment[id].notes) || null,
       }))
       .sort((a, b) => a.consultantName.localeCompare(b.consultantName));
@@ -49,7 +50,7 @@ module.exports = async (req, res) => {
   }
 
   if (req.method === "POST" && req.query.action === "set-employment") {
-    const { consultantId, startDate, terminationDate, notes } = req.body || {};
+    const { consultantId, startDate, terminationDate, salaryGBP, notes } = req.body || {};
     if (!consultantId || !ROSTER[consultantId]) {
       return res.status(400).json({ error: "A valid consultantId is required." });
     }
@@ -57,6 +58,7 @@ module.exports = async (req, res) => {
     employment[consultantId] = {
       startDate: startDate || null,
       terminationDate: terminationDate || null,
+      salaryGBP: salaryGBP === "" || salaryGBP === undefined || salaryGBP === null ? null : Number(salaryGBP),
       notes: notes || null,
     };
     await kv.set(EMPLOYMENT_KEY, employment);
