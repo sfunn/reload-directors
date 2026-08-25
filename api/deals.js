@@ -184,11 +184,14 @@ module.exports = async (req, res) => {
   // GBP, same rule as there.
   const totals = {};
   const bySource = {};
+  let grandTotalGBP = 0;
   for (const r of withUSD) {
     if (r.gbpAmount === null || !r.consultantId) continue;
-    if (!totals[r.consultantId]) totals[r.consultantId] = { consultantId: r.consultantId, consultantName: r.consultantName, totalGBP: 0, totalUSD: 0 };
+    grandTotalGBP += r.gbpAmount;
+    if (!totals[r.consultantId]) totals[r.consultantId] = { consultantId: r.consultantId, consultantName: r.consultantName, totalGBP: 0, totalUSD: 0, deals: 0 };
     totals[r.consultantId].totalGBP += r.gbpAmount;
     if (r.usdAmount !== null) totals[r.consultantId].totalUSD += r.usdAmount;
+    totals[r.consultantId].deals += 1;
     if (r.source) {
       if (!bySource[r.source]) bySource[r.source] = { source: r.source, deals: 0, valueGBP: 0, valueUSD: 0 };
       bySource[r.source].deals += 1;
@@ -196,8 +199,12 @@ module.exports = async (req, res) => {
       if (r.usdAmount !== null) bySource[r.source].valueUSD += r.usdAmount;
     }
   }
-  const leaderboard = Object.values(totals).sort((a, b) => b.totalGBP - a.totalGBP);
-  const sourceBreakdown = Object.values(bySource).sort((a, b) => b.valueGBP - a.valueGBP);
+  const leaderboard = Object.values(totals)
+    .map((t) => ({ ...t, percentage: grandTotalGBP > 0 ? (t.totalGBP / grandTotalGBP) * 100 : 0 }))
+    .sort((a, b) => b.totalGBP - a.totalGBP);
+  const sourceBreakdown = Object.values(bySource)
+    .map((s) => ({ ...s, percentage: grandTotalGBP > 0 ? (s.valueGBP / grandTotalGBP) * 100 : 0 }))
+    .sort((a, b) => b.valueGBP - a.valueGBP);
 
   // Full client breakdown — every consultant's deals count here, including
   // Scott and Lee's own, since this is the directors' complete financial
@@ -208,9 +215,10 @@ module.exports = async (req, res) => {
   for (const r of withUSD) {
     if (r.gbpAmount === null || !r.consultantId) continue;
     const firm = r.clientCompanyName || "Unknown";
-    if (!byClient[firm]) byClient[firm] = { firm, totalGBP: 0, totalUSD: 0 };
+    if (!byClient[firm]) byClient[firm] = { firm, totalGBP: 0, totalUSD: 0, deals: 0 };
     byClient[firm].totalGBP += r.gbpAmount;
     if (r.usdAmount !== null) byClient[firm].totalUSD += r.usdAmount;
+    byClient[firm].deals += 1;
     clientGrandTotalGBP += r.gbpAmount;
     if (r.usdAmount !== null) clientGrandTotal += r.usdAmount;
   }
