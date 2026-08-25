@@ -557,6 +557,60 @@ function CommissionPage({ token }) {
     return { clientBreakdown: finish(byClient), sourceBreakdown: finish(bySource), total };
   })();
 
+  const clientPanel = React.createElement(Panel, { key: "client-concentration" },
+    React.createElement(SectionTitle, { title: "Client Concentration" }),
+    React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
+      React.createElement("span", { style: { flex: 1 } }, "Client"),
+      React.createElement("span", { style: { width: 90, flexShrink: 0 } }, "Commission"),
+      React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Deals"),
+      React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Onsites"),
+      React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "%")
+    ),
+    breakdowns.clientBreakdown.map(c => React.createElement("div", {
+      key: c.name, style: { display: "flex", alignItems: "baseline", gap: 4, padding: "5px 0", fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, color: INDIGO, borderBottom: `1px solid ${INDIGO_HAIRLINE}` }
+    },
+      React.createElement("span", { style: { flex: 1 } }, c.name),
+      React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(c.commission).toLocaleString()}`),
+      React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, c.deals),
+      React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, c.onsites),
+      React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, `${c.percentage.toFixed(1)}%`)
+    )),
+    React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, padding: "6px 0 0", marginTop: 4, borderTop: `1px solid ${INDIGO_HAIRLINE}`, fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, fontWeight: 700, color: INDIGO } },
+      React.createElement("span", { style: { flex: 1 } }, "Total"),
+      React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(breakdowns.total).toLocaleString()}`),
+      React.createElement("span", { style: { width: 50, flexShrink: 0 } }, breakdowns.clientBreakdown.reduce((s, c) => s + c.deals, 0)),
+      React.createElement("span", { style: { width: 50, flexShrink: 0 } }, breakdowns.clientBreakdown.reduce((s, c) => s + c.onsites, 0)),
+      React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "100%")
+    )
+  );
+
+  const sourcePanel = React.createElement(Panel, { key: "source-breakdown" },
+    React.createElement(SectionTitle, { title: "Deal Source Breakdown" }),
+    React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
+      React.createElement("span", { style: { flex: 1 } }, "Source"),
+      React.createElement("span", { style: { width: 90, flexShrink: 0 } }, "Commission"),
+      React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Deals"),
+      React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Onsites"),
+      React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "%")
+    ),
+    breakdowns.sourceBreakdown.map(s => React.createElement("div", {
+      key: s.name, style: { display: "flex", alignItems: "baseline", gap: 4, padding: "5px 0", fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, color: INDIGO, borderBottom: `1px solid ${INDIGO_HAIRLINE}` }
+    },
+      React.createElement("span", { style: { flex: 1 } }, s.name),
+      React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(s.commission).toLocaleString()}`),
+      React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, s.deals),
+      React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, s.onsites),
+      React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, `${s.percentage.toFixed(1)}%`)
+    )),
+    React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, padding: "6px 0 0", marginTop: 4, borderTop: `1px solid ${INDIGO_HAIRLINE}`, fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, fontWeight: 700, color: INDIGO } },
+      React.createElement("span", { style: { flex: 1 } }, "Total"),
+      React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(breakdowns.total).toLocaleString()}`),
+      React.createElement("span", { style: { width: 50, flexShrink: 0 } }, breakdowns.sourceBreakdown.reduce((s, r) => s + r.deals, 0)),
+      React.createElement("span", { style: { width: 50, flexShrink: 0 } }, breakdowns.sourceBreakdown.reduce((s, r) => s + r.onsites, 0)),
+      React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "100%")
+    )
+  );
+
   return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 20 } },
     React.createElement(Panel, null,
       React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 } },
@@ -635,6 +689,7 @@ function CommissionPage({ token }) {
             )
       )
     ),
+    !loading && data && data.isCoordinator && breakdowns.total > 0 && React.createElement("div", { style: { display: "flex", gap: 20, flexWrap: "wrap" } }, clientPanel, sourcePanel),
 
     !loading && data && !data.isCoordinator && React.createElement(React.Fragment, null,
       React.createElement(Panel, null,
@@ -679,7 +734,7 @@ function CommissionPage({ token }) {
               ))
             ),
         React.createElement("div", { style: { marginTop: 16, paddingTop: 16, borderTop: `1px solid ${INDIGO_HAIRLINE}`, display: "flex", gap: 30, flexWrap: "wrap" } },
-          React.createElement("div", { style: { flex: 1, minWidth: 280 } },
+          React.createElement("div", { style: { flex: "1 1 380px", maxWidth: 420 } },
             React.createElement("div", { style: labelStyle }, "Deals this year"),
             React.createElement("div", { style: { display: "flex", flexDirection: "column", marginTop: 6 } },
               React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 10, padding: "4px 0" } },
@@ -723,63 +778,10 @@ function CommissionPage({ token }) {
                 )
               )
             )
-          )
+          ),
+          breakdowns.total > 0 && React.createElement("div", { style: { flex: "1 1 320px", display: "flex", flexDirection: "column", gap: 20 } }, clientPanel, sourcePanel)
         )
       ),
-      !loading && data && breakdowns.total > 0 && React.createElement("div", { style: { display: "flex", gap: 20, flexWrap: "wrap" } },
-        React.createElement(Panel, { style: { flex: 1, minWidth: 340 } },
-          React.createElement(SectionTitle, { title: "Client Concentration" }),
-          React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
-            React.createElement("span", { style: { flex: 1 } }, "Client"),
-            React.createElement("span", { style: { width: 90, flexShrink: 0 } }, "Commission"),
-            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Deals"),
-            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Onsites"),
-            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "%")
-          ),
-          breakdowns.clientBreakdown.map(c => React.createElement("div", {
-            key: c.name, style: { display: "flex", alignItems: "baseline", gap: 4, padding: "5px 0", fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, color: INDIGO, borderBottom: `1px solid ${INDIGO_HAIRLINE}` }
-          },
-            React.createElement("span", { style: { flex: 1 } }, c.name),
-            React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(c.commission).toLocaleString()}`),
-            React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, c.deals),
-            React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, c.onsites),
-            React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, `${c.percentage.toFixed(1)}%`)
-          )),
-          React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, padding: "6px 0 0", marginTop: 4, borderTop: `1px solid ${INDIGO_HAIRLINE}`, fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, fontWeight: 700, color: INDIGO } },
-            React.createElement("span", { style: { flex: 1 } }, "Total"),
-            React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(breakdowns.total).toLocaleString()}`),
-            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, breakdowns.clientBreakdown.reduce((s, c) => s + c.deals, 0)),
-            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, breakdowns.clientBreakdown.reduce((s, c) => s + c.onsites, 0)),
-            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "100%")
-          )
-        ),
-        React.createElement(Panel, { style: { flex: 1, minWidth: 340 } },
-          React.createElement(SectionTitle, { title: "Deal Source Breakdown" }),
-          React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
-            React.createElement("span", { style: { flex: 1 } }, "Source"),
-            React.createElement("span", { style: { width: 90, flexShrink: 0 } }, "Commission"),
-            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Deals"),
-            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Onsites"),
-            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "%")
-          ),
-          breakdowns.sourceBreakdown.map(s => React.createElement("div", {
-            key: s.name, style: { display: "flex", alignItems: "baseline", gap: 4, padding: "5px 0", fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, color: INDIGO, borderBottom: `1px solid ${INDIGO_HAIRLINE}` }
-          },
-            React.createElement("span", { style: { flex: 1 } }, s.name),
-            React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(s.commission).toLocaleString()}`),
-            React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, s.deals),
-            React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, s.onsites),
-            React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, `${s.percentage.toFixed(1)}%`)
-          )),
-          React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, padding: "6px 0 0", marginTop: 4, borderTop: `1px solid ${INDIGO_HAIRLINE}`, fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, fontWeight: 700, color: INDIGO } },
-            React.createElement("span", { style: { flex: 1 } }, "Total"),
-            React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(breakdowns.total).toLocaleString()}`),
-            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, breakdowns.sourceBreakdown.reduce((s, r) => s + r.deals, 0)),
-            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, breakdowns.sourceBreakdown.reduce((s, r) => s + r.onsites, 0)),
-            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "100%")
-          )
-        )
-      )
     )
   );
 }
