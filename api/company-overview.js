@@ -103,11 +103,12 @@ module.exports = async (req, res) => {
       const rawUsd = await convertToUSD(r, allRates);
       const placement = r.placementId ? placements[r.placementId] : null;
       const client = (placement && placement.clientCompanyName) || r.projectClientName || "Unknown";
+      const hasPlacementName = !!(placement && placement.candidateName);
 
       // Same revenue-only uplift as the Yearly Deal Table, applied here so
       // Company Overview never silently disagrees with it — deliberately
       // never touches commission anywhere in this codebase.
-      const decision = resolveUplift(r, client, year, overrides);
+      const decision = resolveUplift(r, client, year, overrides, hasPlacementName);
       let gbp = rawGbp;
       let usd = rawUsd;
       if (decision.type === "override") {
