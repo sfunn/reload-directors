@@ -1,6 +1,7 @@
 const { getDirectorFromRequest, kv } = require("./_directorAuth");
 
 const EMPLOYMENT_KEY = "consultant-employment"; // { [id]: { startDate, terminationDate, salaryHistory: [{effectiveDate, salaryGBP, notes}], notes } } — owned entirely by this site, single source of truth for everyone's dates and pay
+const RECORDS_KEY = "atlas-fee-records"; // shared with the incentive site — read only, used here only to suggest a plausible start date, never written
 
 // The full roster this site tracks dates for — the 12 fee-earning people
 // (same list Consultant Stats already uses, reused directly rather than
@@ -24,6 +25,26 @@ const ROSTER = {
   "zoe-coordinator": { name: "Alexandra", category: "coordinator" },
 };
 
+// A person's real start date can genuinely predate their first deal —
+// nobody closes something on day one — so this is only ever a lower bound,
+// "they were definitely here by this date," never a claim about the actual
+// day they joined. Surfaced as a suggestion the director can accept or
+// override, never filled in automatically.
+//
+// Fee-earners and coordinators are attributed differently on a deal record
+// — a fee-earner owns it via consultantId, a coordinator is credited via
+// the separate coordinatorId field — so this has to check the right field
+// for each category, not the same one for everyone.
+function earliestDealDateFor(id, category, records) {
+  const field = category === "coordinator" ? "coordinatorId" : "consultantId";
+  let earliest = null;
+  for (const r of records) {
+    if (r[field] !== id || !r.feeDate) continue;
+    if (earliest === null || r.feeDate < earliest) earliest = r.feeDate;
+  }
+  return earliest;
+}
+
 // Salary genuinely changes over time — promotions, pay rises — so it's
 // tracked as a real dated history, same carry-forward principle already
 // used for commission bands and exchange rates elsewhere in this system:
@@ -45,7 +66,10 @@ module.exports = async (req, res) => {
   if (!director) return res.status(401).json({ error: "Director access required." });
 
   if (req.method === "GET") {
-    const employment = (await kv.get(EMPLOYMENT_KEY)) || {};
+    const [employment, records] = await Promise.all([
+      kv.get(EMPLOYMENT_KEY).then((v) => v || {}),
+      kv.get(RECORDS_KEY).then((v) => v || []),
+    ]);
     const today = new Date().toISOString().slice(0, 10);
     const roster = Object.entries(ROSTER)
       .map(([id, info]) => {
@@ -57,6 +81,7 @@ module.exports = async (req, res) => {
           category: info.category,
           startDate: emp.startDate || null,
           terminationDate: emp.terminationDate || null,
+          earliestDealDate: earliestDealDateFor(id, info.category, records),
           currentSalaryGBP: salaryAsOf(salaryHistory, today),
           salaryHistory: [...salaryHistory].sort((a, b) => a.effectiveDate.localeCompare(b.effectiveDate)),
           notes: emp.notes || null,
