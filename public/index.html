@@ -698,6 +698,15 @@ function formatRatio(a, b) {
   if (!b) return "—";
   return `${(a / b).toFixed(1)} : 1`;
 }
+// Dates are stored and sent to the server as plain ISO (YYYY-MM-DD) — that
+// format is required internally by <input type="date">, so this only ever
+// touches how a date is DISPLAYED as read-only text, never what's stored.
+function formatDateUK(isoDateStr) {
+  if (!isoDateStr) return null;
+  const [y, m, d] = isoDateStr.split("-");
+  if (!y || !m || !d) return isoDateStr;
+  return `${d}/${m}/${y}`;
+}
 
 function ConsultantStatsPage({ token }) {
   const [year, setYear] = useState(new Date().getUTCFullYear());
@@ -836,7 +845,7 @@ function HeadcountPanel({ token }) {
         showHistory === "feeEarning" && React.createElement("div", { style: { marginTop: 8, fontSize: 12 } },
           data.feeEarningHistory.length === 0
             ? React.createElement("div", { style: { color: INDIGO_MUTED } }, "No dates recorded yet.")
-            : data.feeEarningHistory.map((e, i) => React.createElement("div", { key: i, style: { color: INDIGO_MUTED, padding: "2px 0" } }, `${e.date} — ${e.count}`))
+            : data.feeEarningHistory.map((e, i) => React.createElement("div", { key: i, style: { color: INDIGO_MUTED, padding: "2px 0" } }, `${formatDateUK(e.date)} — ${e.count}`))
         )
       ),
       React.createElement("div", null,
@@ -846,7 +855,7 @@ function HeadcountPanel({ token }) {
         showHistory === "coordinators" && React.createElement("div", { style: { marginTop: 8, fontSize: 12 } },
           data.coordinatorHistory.length === 0
             ? React.createElement("div", { style: { color: INDIGO_MUTED } }, "No dates recorded yet.")
-            : data.coordinatorHistory.map((e, i) => React.createElement("div", { key: i, style: { color: INDIGO_MUTED, padding: "2px 0" } }, `${e.date} — ${e.count}`))
+            : data.coordinatorHistory.map((e, i) => React.createElement("div", { key: i, style: { color: INDIGO_MUTED, padding: "2px 0" } }, `${formatDateUK(e.date)} — ${e.count}`))
         )
       )
     )
@@ -860,6 +869,7 @@ function RosterPanel({ token }) {
   const [editingId, setEditingId] = useState(null);
   const [editStart, setEditStart] = useState("");
   const [editEnd, setEditEnd] = useState("");
+  const [editSalary, setEditSalary] = useState("");
   const [editNotes, setEditNotes] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -883,11 +893,12 @@ function RosterPanel({ token }) {
     setEditingId(person.consultantId);
     setEditStart(person.startDate || "");
     setEditEnd(person.terminationDate || "");
+    setEditSalary(person.salaryGBP !== null && person.salaryGBP !== undefined ? String(person.salaryGBP) : "");
     setEditNotes(person.notes || "");
   }
   function cancelEdit() {
     setEditingId(null);
-    setEditStart(""); setEditEnd(""); setEditNotes("");
+    setEditStart(""); setEditEnd(""); setEditSalary(""); setEditNotes("");
   }
   async function saveEmployment() {
     setSaving(true);
@@ -895,7 +906,7 @@ function RosterPanel({ token }) {
       const res = await fetch("/api/roster?action=set-employment", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ consultantId: editingId, startDate: editStart, terminationDate: editEnd, notes: editNotes }),
+        body: JSON.stringify({ consultantId: editingId, startDate: editStart, terminationDate: editEnd, salaryGBP: editSalary, notes: editNotes }),
       });
       if (!res.ok) { const body = await res.json(); setError(body.error || "Couldn't save."); return; }
       cancelEdit();
@@ -909,14 +920,15 @@ function RosterPanel({ token }) {
 
   return React.createElement(Panel, null,
     React.createElement("div", { style: labelStyle }, "Roster — start & termination dates"),
-    React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Feeds Time to Productivity once dates are set — approximate is fine, this doesn't affect anyone's pay or commission."),
+    React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Feeds Time to Productivity once dates are set — approximate is fine, this doesn't affect anyone's pay or commission. Salary is separate personal information, visible only to directors."),
     error && React.createElement("div", { style: errorStyle }, error),
     loading && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Loading…"),
     !loading && roster && React.createElement(React.Fragment, null,
       React.createElement(TableHeader, { cols: [
         { label: "Name", width: 160 },
-        { label: "Start Date", width: 110 },
+        { label: "Start Date", width: 100 },
         { label: "Termination Date", width: 130 },
+        { label: "Salary (p/a)", width: 110 },
         { label: "", flex: 1 },
       ] }),
       roster.map((p) => {
@@ -927,8 +939,9 @@ function RosterPanel({ token }) {
               p.consultantName,
               p.category === "coordinator" && React.createElement("span", { style: { marginLeft: 6, fontSize: 10, color: HEATHER, fontWeight: 600, letterSpacing: "0.04em", textTransform: "uppercase" } }, "Coordinator")
             ),
-            React.createElement(Cell, { width: 110, color: p.startDate ? INDIGO : INDIGO_MUTED }, p.startDate || "Not set"),
-            React.createElement(Cell, { width: 130, color: p.terminationDate ? MELON_LINK : INDIGO_MUTED }, p.terminationDate || "—"),
+            React.createElement(Cell, { width: 100, color: p.startDate ? INDIGO : INDIGO_MUTED }, formatDateUK(p.startDate) || "Not set"),
+            React.createElement(Cell, { width: 130, color: p.terminationDate ? MELON_LINK : INDIGO_MUTED }, formatDateUK(p.terminationDate) || "—"),
+            React.createElement(Cell, { width: 110, color: p.salaryGBP !== null ? INDIGO : INDIGO_MUTED }, p.salaryGBP !== null ? `£${Math.round(p.salaryGBP).toLocaleString()}` : "Not set"),
             React.createElement(Cell, { flex: 1 },
               React.createElement("span", { onClick: () => startEdit(p), style: { fontSize: 11, color: INDIGO_MUTED, textDecoration: "underline", cursor: "pointer" } }, "edit")
             )
@@ -941,6 +954,10 @@ function RosterPanel({ token }) {
             React.createElement("div", null,
               React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Termination date (if applicable)"),
               React.createElement("input", { type: "date", value: editEnd, onChange: e => setEditEnd(e.target.value), style: { ...inputStyle, width: 150, marginBottom: 0 } })
+            ),
+            React.createElement("div", null,
+              React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Salary, GBP (p/a)"),
+              React.createElement("input", { type: "number", value: editSalary, onChange: e => setEditSalary(e.target.value), placeholder: "e.g. 45000", style: { ...inputStyle, width: 130, marginBottom: 0 } })
             ),
             React.createElement("div", { style: { flex: 1, minWidth: 180 } },
               React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Notes"),
