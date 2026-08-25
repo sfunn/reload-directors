@@ -949,6 +949,19 @@ function RosterPanel({ token }) {
       setSavingSalary(false);
     }
   }
+  async function deleteSalaryEntry(consultantId, index) {
+    try {
+      const res = await fetch("/api/roster?action=delete-salary-entry", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ consultantId, index }),
+      });
+      if (!res.ok) { const body = await res.json(); setError(body.error || "Couldn't delete."); return; }
+      await load();
+    } catch (e) {
+      setError("Couldn't reach the server.");
+    }
+  }
 
   return React.createElement(Panel, null,
     React.createElement("div", { style: labelStyle }, "Roster — start & termination dates"),
@@ -985,8 +998,12 @@ function RosterPanel({ token }) {
             )
           ),
           isHistoryOpen && React.createElement("div", { style: { padding: "8px 0", fontSize: 12, borderBottom: `1px solid ${INDIGO_HAIRLINE}` } },
-            (p.salaryHistory || []).map((e, i) => React.createElement("div", { key: i, style: { color: INDIGO_MUTED, padding: "2px 0" } },
-              `${formatDateUK(e.effectiveDate)} — £${Math.round(e.salaryGBP).toLocaleString()}${e.notes ? ` (${e.notes})` : ""}`
+            (p.salaryHistory || []).map((e, i) => React.createElement("div", { key: i, style: { display: "flex", alignItems: "baseline", gap: 8, color: INDIGO_MUTED, padding: "2px 0" } },
+              React.createElement("span", null, `${formatDateUK(e.effectiveDate)} — £${Math.round(e.salaryGBP).toLocaleString()}${e.notes ? ` (${e.notes})` : ""}`),
+              React.createElement("span", {
+                onClick: () => deleteSalaryEntry(p.consultantId, i),
+                style: { fontSize: 10, color: MELON_LINK, textDecoration: "underline", cursor: "pointer" }
+              }, "delete")
             ))
           ),
           isEditing && React.createElement("div", { style: { display: "flex", gap: 10, alignItems: "flex-end", padding: "10px 0", background: "rgba(255,176,140,0.08)", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, flexWrap: "wrap" } },
