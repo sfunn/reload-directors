@@ -98,6 +98,7 @@ module.exports = async (req, res) => {
     let totalRevenueUSD = 0;
     let countedDeals = 0;
     const byClient = {};
+    const byConsultant = {};
     for (const r of yearRecords) {
       const rawGbp = convertToGBP(r, allRates);
       const rawUsd = await convertToUSD(r, allRates);
@@ -151,6 +152,11 @@ module.exports = async (req, res) => {
       if (!byClient[client]) byClient[client] = { gbp: 0, usd: 0 };
       byClient[client].gbp += gbp;
       if (usd !== null) byClient[client].usd += usd;
+      const consultantKey = r.consultantId || "unmapped";
+      const consultantName = r.consultantName || r.consultantId || "Unmapped";
+      if (!byConsultant[consultantKey]) byConsultant[consultantKey] = { consultantName, gbp: 0, usd: 0 };
+      byConsultant[consultantKey].gbp += gbp;
+      if (usd !== null) byConsultant[consultantKey].usd += usd;
     }
 
     const averageFeeGBP = countedDeals > 0 ? totalRevenueGBP / countedDeals : 0;
@@ -166,6 +172,22 @@ module.exports = async (req, res) => {
       .sort((a, b) => b.totalGBP - a.totalGBP);
     const top3Percentage = clientConcentration.slice(0, 3).reduce((s, c) => s + c.percentage, 0);
     const top5Percentage = clientConcentration.slice(0, 5).reduce((s, c) => s + c.percentage, 0);
+
+    // Key-person risk — the exact same computation as client concentration,
+    // just grouped by whoever closed the deal instead of who bought it.
+    // Includes everyone with a real deal attributed to them, Scott and Lee
+    // included, matching how Revenue itself already includes their deals.
+    const consultantConcentration = Object.entries(byConsultant)
+      .map(([consultantId, v]) => ({
+        consultantId,
+        consultantName: v.consultantName,
+        totalGBP: v.gbp,
+        totalUSD: v.usd,
+        percentage: totalRevenueGBP > 0 ? (v.gbp / totalRevenueGBP) * 100 : 0,
+      }))
+      .sort((a, b) => b.totalGBP - a.totalGBP);
+    const consultantTop3Percentage = consultantConcentration.slice(0, 3).reduce((s, c) => s + c.percentage, 0);
+    const consultantTop5Percentage = consultantConcentration.slice(0, 5).reduce((s, c) => s + c.percentage, 0);
 
     const manual = manualMetrics[year] || {};
 
@@ -202,6 +224,7 @@ module.exports = async (req, res) => {
       totalRevenueGBP, totalRevenueUSD, countedDeals,
       averageFeeGBP, averageFeeUSD,
       clientConcentration, top3Percentage, top5Percentage,
+      consultantConcentration, consultantTop3Percentage, consultantTop5Percentage,
       revenuePerHeadGBP,
       revenuePerHeadUSD,
       headcountUsedForPerHead: headcountForYear > 0 ? headcountForYear : null,
