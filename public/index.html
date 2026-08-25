@@ -135,7 +135,7 @@ function LoginPage({ onLoggedIn }) {
       React.createElement("div", { style: { textAlign: "center", marginBottom: 24 } },
         React.createElement("img", { src: LOGO_SRC, alt: "Reload", style: { height: 28 } })
       ),
-      React.createElement(SectionTitle, { eyebrow: "Directors only", title: mode === "login" ? "Sign in" : "Set or reset password" }),
+      React.createElement(SectionTitle, { title: mode === "login" ? "Sign in" : "Set or reset password" }),
       error && React.createElement("div", { style: errorStyle }, error),
       notice && React.createElement("div", { style: { color: VERDIGRIS, fontSize: 13, marginBottom: 12, fontFamily: "'Work Sans', sans-serif" } }, notice),
       React.createElement("form", { onSubmit: mode === "login" ? submitLogin : submitSetup },
@@ -416,12 +416,12 @@ function DealsPage({ token }) {
       )
     ),
     !loading && data && React.createElement(Panel, null,
-      React.createElement(SectionTitle, { eyebrow: "Directors only", title: "Deal details & exchange rates" }),
+      React.createElement(SectionTitle, { title: "Deal details & exchange rates" }),
       React.createElement("div", { style: { marginBottom: 12, fontSize: 12, color: INDIGO_MUTED } }, "Paid status, Source, and Coordinator are set on the incentive site. Revenue figures can be corrected here when the true rate differs from what's recorded — this only ever affects reporting, never any consultant's actual commission."),
       React.createElement(DealDetailsTable, { records: (data.records || []).filter(r => r.hasPlacementName), showSourceAndCoordinator: true, ...overrideEditProps })
     ),
     !loading && data && React.createElement(Panel, null,
-      React.createElement(SectionTitle, { eyebrow: "Directors only", title: "Onsite Fees" }),
+      React.createElement(SectionTitle, { title: "Onsite Fees" }),
       React.createElement("div", { style: { marginTop: 4, marginBottom: 14, fontSize: 12, color: INDIGO_MUTED } }, "Fees with no linked placement — e.g. genuine Onsite fees in Atlas."),
       React.createElement(DealDetailsTable, { records: (data.records || []).filter(r => !r.hasPlacementName), showSourceAndCoordinator: true, ...overrideEditProps })
     )
@@ -502,7 +502,7 @@ function CommissionPage({ token }) {
   return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 20 } },
     React.createElement(Panel, null,
       React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 } },
-        React.createElement(SectionTitle, { eyebrow: "Directors only", title: "Commission" }),
+        React.createElement(SectionTitle, { title: "Commission" }),
         React.createElement("div", { style: { display: "flex", gap: 6 } },
           YEAR_OPTIONS.map(y => React.createElement("button", {
             key: y, onClick: () => setYear(y),
@@ -753,7 +753,7 @@ function ConsultantStatsPage({ token }) {
   return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 20 } },
     React.createElement(Panel, null,
       React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 } },
-        React.createElement(SectionTitle, { eyebrow: "Directors only", title: "Consultant Stats" }),
+        React.createElement(SectionTitle, { title: "Consultant Stats" }),
         React.createElement("div", { style: { display: "flex", gap: 6 } },
           YEAR_OPTIONS.map(y => React.createElement("button", {
             key: y, onClick: () => setYear(y),
@@ -835,7 +835,7 @@ function HeadcountPanel({ token }) {
   useEffect(() => { load(); }, [load]);
 
   return React.createElement(Panel, null,
-    React.createElement("div", { style: labelStyle }, "Headcount"),
+    React.createElement(SectionTitle, { title: "Headcount" }),
     React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Derived directly from the roster below — nothing to update here, edit start and termination dates there instead."),
     error && React.createElement("div", { style: errorStyle }, error),
     loading && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Loading…"),
@@ -984,7 +984,7 @@ function RosterPanel({ token }) {
   }
 
   return React.createElement(Panel, null,
-    React.createElement("div", { style: labelStyle }, "Roster — start & termination dates"),
+    React.createElement(SectionTitle, { title: "Roster — start & termination dates" }),
     React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Feeds Time to Productivity once dates are set — approximate is fine, this doesn't affect anyone's pay or commission. Salary is separate personal information, visible only to directors, and kept as a real history since it changes with raises and promotions — each entry is a new fact, not a correction to the last one."),
     error && React.createElement("div", { style: errorStyle }, error),
     loading && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Loading…"),
@@ -1113,7 +1113,7 @@ function RetentionPanel({ token }) {
   }
 
   return React.createElement(Panel, null,
-    React.createElement("div", { style: labelStyle }, "Staff Retention"),
+    React.createElement(SectionTitle, { title: "Staff Retention" }),
     React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Derived entirely from the roster above — only as accurate as the dates entered there, and only meaningful once there's real history to draw on."),
     error && React.createElement("div", { style: errorStyle }, error),
     loading && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Loading…"),
@@ -1158,7 +1158,7 @@ function TimeToProductivityPanel({ token }) {
   }
 
   return React.createElement(Panel, null,
-    React.createElement("div", { style: labelStyle }, "Time to Productivity"),
+    React.createElement(SectionTitle, { title: "Time to Productivity" }),
     React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Days from a real start date to a genuine first placement — never an Onsite fee. Only counts people with a start date actually entered on the roster."),
     error && React.createElement("div", { style: errorStyle }, error),
     loading && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Loading…"),
@@ -1185,6 +1185,18 @@ function TimeToProductivityPanel({ token }) {
         React.createElement(Cell, { flex: 1, color: statusColor(p) }, statusLabel(p))
       ))
     )
+  );
+}
+
+function StaffInfoPage({ token }) {
+  return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 20 } },
+    React.createElement(Panel, null,
+      React.createElement(SectionTitle, { title: "Staff Info" })
+    ),
+    React.createElement(HeadcountPanel, { token }),
+    React.createElement(RosterPanel, { token }),
+    React.createElement(RetentionPanel, { token }),
+    React.createElement(TimeToProductivityPanel, { token })
   );
 }
 
@@ -1277,7 +1289,7 @@ function CompanyOverviewPage({ token }) {
   return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 20 } },
     React.createElement(Panel, null,
       React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 } },
-        React.createElement(SectionTitle, { eyebrow: "Directors only", title: "Company Overview" }),
+        React.createElement(SectionTitle, { title: "Company Overview" }),
         React.createElement("div", { style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" } },
           React.createElement("div", { style: { display: "flex", gap: 6 } },
             YEAR_OPTIONS.map(y => React.createElement("button", {
@@ -1347,114 +1359,95 @@ function CompanyOverviewPage({ token }) {
           )
         )
       ),
-      React.createElement(Panel, null,
-        React.createElement("div", { style: labelStyle }, "Client Concentration"),
-        React.createElement("div", { style: { display: "flex", gap: 30, marginBottom: 14, fontSize: 13.5 } },
-          React.createElement("div", null, React.createElement("span", { style: labelStyle }, "Top 3 clients: "), React.createElement("strong", null, `${data.top3Percentage.toFixed(1)}%`), " of revenue"),
-          React.createElement("div", null, React.createElement("span", { style: labelStyle }, "Top 5 clients: "), React.createElement("strong", null, `${data.top5Percentage.toFixed(1)}%`), " of revenue")
-        ),
-        data.clientConcentration.length === 0
-          ? React.createElement("div", { style: { color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif", fontSize: 14 } }, "No deals recorded yet for this year.")
-          : data.clientConcentration.slice(0, 10).map(c => React.createElement("div", {
-              key: c.client, style: { display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "6px 0", fontFamily: "'Work Sans', sans-serif", fontSize: 14, borderBottom: `1px solid ${INDIGO_HAIRLINE}` }
-            },
-              React.createElement("span", null, c.client),
-              React.createElement("span", { style: { display: "flex", alignItems: "baseline", gap: 8 } },
-                React.createElement("span", { style: { color: INDIGO } }, `£${Math.round(c.totalGBP).toLocaleString()}`),
-                React.createElement("span", { style: { color: INDIGO_MUTED, fontSize: 12.5 } }, `$${Math.round(c.totalUSD).toLocaleString()} · ${c.percentage.toFixed(1)}%`)
-              )
-            ))
-      ),
-      React.createElement(Panel, null,
-        React.createElement("div", { style: labelStyle }, "Consultant Concentration"),
-        React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Key-person risk — how much of the year's revenue rests on any one person."),
-        React.createElement("div", { style: { display: "flex", gap: 30, marginBottom: 14, fontSize: 13.5 } },
-          React.createElement("div", null, React.createElement("span", { style: labelStyle }, "Top 3 people: "), React.createElement("strong", null, `${data.consultantTop3Percentage.toFixed(1)}%`), " of revenue"),
-          React.createElement("div", null, React.createElement("span", { style: labelStyle }, "Top 5 people: "), React.createElement("strong", null, `${data.consultantTop5Percentage.toFixed(1)}%`), " of revenue")
-        ),
-        data.consultantConcentration.length === 0
-          ? React.createElement("div", { style: { color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif", fontSize: 14 } }, "No deals recorded yet for this year.")
-          : data.consultantConcentration.slice(0, 10).map(c => React.createElement("div", {
-              key: c.consultantId, style: { display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "6px 0", fontFamily: "'Work Sans', sans-serif", fontSize: 14, borderBottom: `1px solid ${INDIGO_HAIRLINE}` }
-            },
-              React.createElement("span", null, c.consultantName),
-              React.createElement("span", { style: { display: "flex", alignItems: "baseline", gap: 8 } },
-                React.createElement("span", { style: { color: INDIGO } }, `£${Math.round(c.totalGBP).toLocaleString()}`),
-                React.createElement("span", { style: { color: INDIGO_MUTED, fontSize: 12.5 } }, `$${Math.round(c.totalUSD).toLocaleString()} · ${c.percentage.toFixed(1)}%`)
-              )
-            ))
-      ),
-      xeroStatus && xeroStatus.connected && React.createElement(Panel, null,
-        React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 12 } },
-          React.createElement("div", { style: labelStyle }, "Pull from Xero"),
-          React.createElement("button", { onClick: pullFromXero, disabled: xeroPulling, style: { ...ghostStyle, padding: "8px 14px" } }, xeroPulling ? "Pulling…" : "Pull latest figures")
-        ),
-        xeroPullError && React.createElement("div", { style: errorStyle }, xeroPullError),
-        xeroPull && React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 12 } },
-          React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED } }, xeroPull.note),
-          React.createElement("div", { style: { display: "flex", gap: 30, flexWrap: "wrap" } },
-            React.createElement("div", null,
-              React.createElement("div", { style: labelStyle }, "Gross Profit (from Xero P&L)"),
-              xeroPull.grossProfit !== null
-                ? React.createElement(React.Fragment, null,
-                    React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 20, color: INDIGO } }, Math.round(xeroPull.grossProfit).toLocaleString()),
-                    React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED } }, `Matched row: "${xeroPull.grossProfitMatchedLabel}"`),
-                    React.createElement("button", {
-                      onClick: () => { setGrossProfitInput(String(Math.round(xeroPull.grossProfit))); setNotesInput(`Pulled from Xero P&L, ${xeroPull.periodStart} to ${xeroPull.periodEnd}`); },
-                      style: { ...ghostStyle, fontSize: 11, padding: "4px 10px", marginTop: 6 }
-                    }, "Use this figure")
-                  )
-                : React.createElement("div", { style: { color: MELON_LINK, fontSize: 13 } }, "Couldn't find a Gross Profit line in this report.")
-            ),
-            React.createElement("div", null,
-              React.createElement("div", { style: labelStyle }, "Cash (from Xero Balance Sheet)"),
-              xeroPull.cash !== null
-                ? React.createElement(React.Fragment, null,
-                    React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 20, color: INDIGO } }, Math.round(xeroPull.cash).toLocaleString()),
-                    React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED } }, `Matched row: "${xeroPull.cashMatchedLabel}" · as at ${xeroPull.asAtDate}`),
-                    React.createElement("button", {
-                      onClick: () => { setCashInput(String(Math.round(xeroPull.cash))); setCashNotesInput(`Pulled from Xero Balance Sheet, as at ${xeroPull.asAtDate}`); },
-                      style: { ...ghostStyle, fontSize: 11, padding: "4px 10px", marginTop: 6 }
-                    }, "Use this figure")
-                  )
-                : React.createElement("div", { style: { color: MELON_LINK, fontSize: 13 } }, "Couldn't find a Cash line in this report.")
-            )
+      React.createElement("div", { style: { display: "flex", gap: 20, flexWrap: "wrap" } },
+        React.createElement(Panel, { style: { flex: 1, minWidth: 340 } },
+          React.createElement(SectionTitle, { title: "Client Concentration" }),
+          React.createElement("div", { style: { display: "flex", gap: 20, marginBottom: 12, fontSize: 13 } },
+            React.createElement("div", null, React.createElement("span", { style: { color: INDIGO_MUTED } }, "Top 3: "), React.createElement("strong", null, `${data.top3Percentage.toFixed(1)}%`)),
+            React.createElement("div", null, React.createElement("span", { style: { color: INDIGO_MUTED } }, "Top 5: "), React.createElement("strong", null, `${data.top5Percentage.toFixed(1)}%`))
           ),
-          React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED } }, "Review the figures above, then set the currency for Cash below if you use it, and click Save to actually store them.")
+          data.clientConcentration.length === 0
+            ? React.createElement("div", { style: { color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif", fontSize: 14 } }, "No deals recorded yet for this year.")
+            : data.clientConcentration.slice(0, 10).map(c => React.createElement("div", {
+                key: c.client, style: { display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, padding: "5px 0", fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, borderBottom: `1px solid ${INDIGO_HAIRLINE}` }
+              },
+                React.createElement("span", null, c.client),
+                React.createElement("span", { style: { display: "flex", alignItems: "baseline", gap: 6, flexShrink: 0 } },
+                  React.createElement("span", { style: { color: INDIGO } }, `£${Math.round(c.totalGBP).toLocaleString()}`),
+                  React.createElement("span", { style: { color: INDIGO_MUTED, fontSize: 12 } }, `${c.percentage.toFixed(1)}%`)
+                )
+              ))
+        ),
+        React.createElement(Panel, { style: { flex: 1, minWidth: 340 } },
+          React.createElement(SectionTitle, { title: "Consultant Concentration" }),
+          React.createElement("div", { style: { display: "flex", gap: 20, marginBottom: 12, fontSize: 13 } },
+            React.createElement("div", null, React.createElement("span", { style: { color: INDIGO_MUTED } }, "Top 3: "), React.createElement("strong", null, `${data.consultantTop3Percentage.toFixed(1)}%`)),
+            React.createElement("div", null, React.createElement("span", { style: { color: INDIGO_MUTED } }, "Top 5: "), React.createElement("strong", null, `${data.consultantTop5Percentage.toFixed(1)}%`))
+          ),
+          data.consultantConcentration.length === 0
+            ? React.createElement("div", { style: { color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif", fontSize: 14 } }, "No deals recorded yet for this year.")
+            : data.consultantConcentration.slice(0, 10).map(c => React.createElement("div", {
+                key: c.consultantId, style: { display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, padding: "5px 0", fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, borderBottom: `1px solid ${INDIGO_HAIRLINE}` }
+              },
+                React.createElement("span", null, c.consultantName),
+                React.createElement("span", { style: { display: "flex", alignItems: "baseline", gap: 6, flexShrink: 0 } },
+                  React.createElement("span", { style: { color: INDIGO } }, `£${Math.round(c.totalGBP).toLocaleString()}`),
+                  React.createElement("span", { style: { color: INDIGO_MUTED, fontSize: 12 } }, `${c.percentage.toFixed(1)}%`)
+                )
+              ))
         )
       ),
       React.createElement(Panel, null,
-        React.createElement("div", { style: labelStyle }, "Gross Profit — manual entry"),
-        React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Atlas has no visibility into costs, so this has to be entered by hand from your accounts — e.g. once a quarter from Xero. Always in GBP, Reload's own accounting currency."),
+        React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 } },
+          React.createElement(SectionTitle, { title: "Gross Profit & Cash" }),
+          xeroStatus && xeroStatus.connected && React.createElement("button", { onClick: pullFromXero, disabled: xeroPulling, style: { ...ghostStyle, padding: "7px 12px", fontSize: 12 } }, xeroPulling ? "Pulling…" : "Pull latest from Xero")
+        ),
+        React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Atlas has no visibility into costs, so this is entered by hand — always in GBP, Reload's own accounting currency."),
+        xeroPullError && React.createElement("div", { style: errorStyle }, xeroPullError),
+        xeroPull && React.createElement("div", { style: { display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap", padding: "8px 10px", marginBottom: 14, background: "rgba(142,185,176,0.10)", borderRadius: 6, fontSize: 12.5 } },
+          React.createElement("span", { style: { color: INDIGO_MUTED } }, "Xero:"),
+          xeroPull.grossProfit !== null
+            ? React.createElement("span", null,
+                `Gross Profit ${Math.round(xeroPull.grossProfit).toLocaleString()} `,
+                React.createElement("span", {
+                  onClick: () => { setGrossProfitInput(String(Math.round(xeroPull.grossProfit))); setNotesInput(`Pulled from Xero P&L, ${xeroPull.periodStart} to ${xeroPull.periodEnd}`); },
+                  style: { color: VERDIGRIS, textDecoration: "underline", cursor: "pointer" }
+                }, "use")
+              )
+            : React.createElement("span", { style: { color: MELON_LINK } }, "No Gross Profit line found"),
+          xeroPull.cash !== null
+            ? React.createElement("span", null,
+                `Cash ${Math.round(xeroPull.cash).toLocaleString()} `,
+                React.createElement("span", {
+                  onClick: () => { setCashInput(String(Math.round(xeroPull.cash))); setCashNotesInput(`Pulled from Xero Balance Sheet, as at ${xeroPull.asAtDate}`); },
+                  style: { color: VERDIGRIS, textDecoration: "underline", cursor: "pointer" }
+                }, "use")
+              )
+            : React.createElement("span", { style: { color: MELON_LINK } }, "No Cash line found")
+        ),
         saveError && React.createElement("div", { style: errorStyle }, saveError),
-        React.createElement("div", { style: { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 16 } },
+        React.createElement("div", { style: { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 10 } },
           React.createElement("div", null,
-            React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Amount (GBP)"),
-            React.createElement("input", { type: "number", value: grossProfitInput, onChange: e => setGrossProfitInput(e.target.value), placeholder: "e.g. 250000", style: { ...inputStyle, width: 160, marginBottom: 0 } })
+            React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Gross Profit (GBP)"),
+            React.createElement("input", { type: "number", value: grossProfitInput, onChange: e => setGrossProfitInput(e.target.value), placeholder: "e.g. 250000", style: { ...inputStyle, width: 150, marginBottom: 0 } })
           ),
-          React.createElement("div", { style: { flex: 1, minWidth: 200 } },
+          React.createElement("div", { style: { flex: 1, minWidth: 160 } },
             React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Notes"),
             React.createElement("input", { type: "text", value: notesInput, onChange: e => setNotesInput(e.target.value), placeholder: "e.g. From Xero, Q3 export", style: { ...inputStyle, width: "100%", marginBottom: 0 } })
           )
         ),
-        React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Cash"),
-        React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Always in GBP, Reload's own accounting currency."),
         React.createElement("div", { style: { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" } },
           React.createElement("div", null,
-            React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Amount (GBP)"),
-            React.createElement("input", { type: "number", value: cashInput, onChange: e => setCashInput(e.target.value), placeholder: "e.g. 75000", style: { ...inputStyle, width: 160, marginBottom: 0 } })
+            React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Cash (GBP)"),
+            React.createElement("input", { type: "number", value: cashInput, onChange: e => setCashInput(e.target.value), placeholder: "e.g. 75000", style: { ...inputStyle, width: 150, marginBottom: 0 } })
           ),
-          React.createElement("div", { style: { flex: 1, minWidth: 200 } },
+          React.createElement("div", { style: { flex: 1, minWidth: 160 } },
             React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Notes"),
             React.createElement("input", { type: "text", value: cashNotesInput, onChange: e => setCashNotesInput(e.target.value), placeholder: "e.g. From Xero Balance Sheet", style: { ...inputStyle, width: "100%", marginBottom: 0 } })
           ),
           React.createElement("button", { onClick: saveGrossProfit, disabled: saving, style: { ...ghostStyle, padding: "9px 16px" } }, saving ? "Saving…" : "Save")
         )
-      ),
-      React.createElement(HeadcountPanel, { token }),
-      React.createElement(RosterPanel, { token }),
-      React.createElement(RetentionPanel, { token }),
-      React.createElement(TimeToProductivityPanel, { token })
+      )
     )
   );
 }
@@ -1466,6 +1459,7 @@ function MainShell({ token, email, onLogout }) {
     { id: "deals", label: "Yearly Deal Table" },
     { id: "commission", label: "Commission" },
     { id: "stats", label: "Consultant Stats" },
+    { id: "staff", label: "Staff Info" },
   ];
 
   return React.createElement("div", { style: { minHeight: "100vh", background: IVORY, color: INDIGO, fontFamily: "'Work Sans', sans-serif" } },
@@ -1495,7 +1489,8 @@ function MainShell({ token, email, onLogout }) {
       tab === "deals" && React.createElement(DealsPage, { token }),
       tab === "commission" && React.createElement(CommissionPage, { token }),
       tab === "stats" && React.createElement(ConsultantStatsPage, { token }),
-      tab === "overview" && React.createElement(CompanyOverviewPage, { token })
+      tab === "overview" && React.createElement(CompanyOverviewPage, { token }),
+      tab === "staff" && React.createElement(StaffInfoPage, { token })
     )
   );
 }
