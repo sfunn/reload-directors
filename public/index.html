@@ -1278,6 +1278,24 @@ function CompanyOverviewPage({ token }) {
   const [xeroPull, setXeroPull] = useState(null);
   const [xeroPullError, setXeroPullError] = useState("");
   const [xeroPulling, setXeroPulling] = useState(false);
+  const [repeatData, setRepeatData] = useState(null);
+  const [repeatError, setRepeatError] = useState("");
+
+  // All-time, deliberately never re-fetched when the year picker changes —
+  // "repeat" is a question across the whole relationship, not within
+  // whichever single year happens to be selected above.
+  const loadRepeatClients = useCallback(async () => {
+    try {
+      const res = await fetch("/api/company-overview?action=repeat-clients", { headers: { Authorization: `Bearer ${token}` } });
+      const body = await res.json();
+      if (!res.ok) { setRepeatError(body.error || "Couldn't load repeat client data."); return; }
+      setRepeatData(body);
+    } catch (e) {
+      setRepeatError("Couldn't reach the server.");
+    }
+  }, [token]);
+
+  useEffect(() => { loadRepeatClients(); }, [loadRepeatClients]);
 
   const loadXeroStatus = useCallback(async () => {
     try {
@@ -1496,6 +1514,40 @@ function CompanyOverviewPage({ token }) {
                   React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "100%")
                 )
               )
+        )
+      ),
+      React.createElement(Panel, null,
+        React.createElement(SectionTitle, { title: "Repeat Client Rate" }),
+        React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "All-time, not tied to the year picker above — a client who placed once in 2023 and once in 2026 is a genuine repeat, even though those two deals never appear together in any single year's view. Counts genuine placements only, never Onsite fees."),
+        repeatError && React.createElement("div", { style: errorStyle }, repeatError),
+        !repeatData && !repeatError && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Loading…"),
+        repeatData && React.createElement(React.Fragment, null,
+          React.createElement("div", { style: { display: "flex", gap: 40, marginBottom: 14, flexWrap: "wrap" } },
+            React.createElement("div", null,
+              React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.08em" } }, "Repeat rate"),
+              React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO } },
+                repeatData.repeatClientRate !== null ? `${repeatData.repeatClientRate.toFixed(1)}%` : "—"
+              )
+            ),
+            React.createElement("div", null,
+              React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.08em" } }, "Repeat clients"),
+              React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO } }, `${repeatData.repeatClients} of ${repeatData.totalClients}`)
+            )
+          ),
+          repeatData.clients.length > 0 && React.createElement(React.Fragment, null,
+            React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
+              React.createElement("span", { style: { width: 180, flexShrink: 0 } }, "Client"),
+              React.createElement("span", { style: { width: 90, flexShrink: 0 } }, "Placements"),
+              React.createElement("span", { style: { flex: 1 } }, "First → Most Recent")
+            ),
+            repeatData.clients.filter(c => c.placementCount >= 2).map(c => React.createElement("div", {
+              key: c.client, style: { display: "flex", alignItems: "baseline", gap: 4, padding: "5px 0", fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, color: INDIGO, borderBottom: `1px solid ${INDIGO_HAIRLINE}` }
+            },
+              React.createElement("span", { style: { width: 180, flexShrink: 0 } }, c.client),
+              React.createElement("span", { style: { width: 90, flexShrink: 0 } }, c.placementCount),
+              React.createElement("span", { style: { flex: 1, color: INDIGO_MUTED, fontSize: 12.5 } }, `${formatDateUK(c.firstPlacementDate)} → ${formatDateUK(c.lastPlacementDate)}`)
+            ))
+          )
         )
       ),
       React.createElement(Panel, null,
