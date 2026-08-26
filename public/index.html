@@ -39,7 +39,7 @@ function Panel({ children, style }) {
       border: `1px solid ${INDIGO_HAIRLINE}`,
       borderRadius: 10,
       padding: "20px 22px",
-      boxShadow: "0 1px 3px rgba(46,64,91,0.06)",
+      boxShadow: "0 2px 8px rgba(46,64,91,0.12)",
       ...style
     }
   }, children);
@@ -814,6 +814,32 @@ function formatRatio(a, b) {
   if (!b) return "—";
   return `${(a / b).toFixed(1)} : 1`;
 }
+// Genuine percentage, matching the incentive site's own methodology —
+// interviews as a % of CVs sent, not the reverse, and not a "X : 1" ratio.
+// Returns null (not 0) when there's no meaningful denominator for that
+// period, so an averaging step downstream can correctly skip it rather
+// than treating a genuinely untracked period as a real 0%.
+function computePercentage(numerator, denominator) {
+  if (!denominator) return null;
+  return (numerator / denominator) * 100;
+}
+function formatPercentage(value) {
+  return value === null || value === undefined ? "—" : `${value.toFixed(0)}%`;
+}
+// The actual methodology point — a year's percentage is the AVERAGE of
+// each month's own genuine percentage, never recalculated from the
+// year's pooled totals. Two consultants with wildly different volume in
+// different months would otherwise get a number dominated by whichever
+// month happened to be biggest, instead of a fair average of their
+// actual monthly conversion rates. Skips months with no real denominator
+// entirely, rather than treating them as a 0% that never really happened.
+function averageMonthlyPercentage(monthlyEntries, numeratorKey, denominatorKey) {
+  const values = monthlyEntries
+    .map((m) => computePercentage(m[numeratorKey], m[denominatorKey]))
+    .filter((v) => v !== null);
+  if (values.length === 0) return null;
+  return values.reduce((s, v) => s + v, 0) / values.length;
+}
 // Dates are stored and sent to the server as plain ISO (YYYY-MM-DD) — that
 // format is required internally by <input type="date">, so this only ever
 // touches how a date is DISPLAYED as read-only text, never what's stored.
@@ -827,6 +853,7 @@ function formatDateUK(isoDateStr) {
 function ConsultantStatsPage({ token }) {
   const [year, setYear] = useState(new Date().getUTCFullYear());
   const [month, setMonth] = useState(String(new Date().getUTCMonth() + 1).padStart(2, "0"));
+  const [showTotal, setShowTotal] = useState(false);
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -848,21 +875,84 @@ function ConsultantStatsPage({ token }) {
   useEffect(() => { load(); }, [load]);
 
   const monthKey = `${year}-${month}`;
-  const rows = data ? STATS_CONSULTANTS.map(sc => {
-    const c = data.consultants.find(x => x.consultantId === sc.id);
-    const isTeamLead = c ? c.isTeamLead : (sc.id === "james-lancer" || sc.id === "josh-stark");
-    const entry = c ? c.monthly.find(m => m.month === monthKey) : null;
+
+  // Builds one row's figures, either for a single selected month or for
+  // the whole year — the two modes deliberately use different logic, not
+  // just a different filter, since raw counts and percentages behave
+  // differently: counts are honest to sum across a year, but a year's
+  // percentage is the average of each month's own genuine percentage,
+  // never recalculated by pooling every month's counts into one number
+  // first. A month with huge volume would otherwise silently dominate
+  // the year figure instead of counting as just one month among many.
+  function buildRow(consultantId, consultantName, isTeamLead, monthlyEntries) {
+    if (!showTotal) {
+      const entry = monthlyEntries.find((m) => m.month === monthKey);
+      const cvs = entry ? entry.cvs : 0;
+      const interviews = entry ? entry.interviews : 0;
+      const onsite = entry ? entry.onsite : 0;
+      const offers = entry ? entry.offers : 0;
+      const placements = entry ? entry.placements : 0;
+      return {
+        consultantId, consultantName, isTeamLead,
+        cvs, interviews, onsite, offers, placements,
+        cvToInterview: computePercentage(interviews, cvs),
+        interviewToOnsite: computePercentage(onsite, interviews),
+        onsiteToOffer: computePercentage(offers, onsite),
+        offerToPlacement: computePercentage(placements, offers),
+      };
+    }
+    const yearEntries = monthlyEntries.filter((m) => m.month.startsWith(`${year}-`));
     return {
-      consultantId: sc.id,
-      consultantName: sc.name,
-      isTeamLead,
-      cvs: entry ? entry.cvs : 0,
-      interviews: entry ? entry.interviews : 0,
-      onsite: entry ? entry.onsite : 0,
-      offers: entry ? entry.offers : 0,
-      placements: entry ? entry.placements : 0,
+      consultantId, consultantName, isTeamLead,
+      cvs: yearEntries.reduce((s, m) => s + m.cvs, 0),
+      interviews: yearEntries.reduce((s, m) => s + m.interviews, 0),
+      onsite: yearEntries.reduce((s, m) => s + m.onsite, 0),
+      offers: yearEntries.reduce((s, m) => s + m.offers, 0),
+      placements: yearEntries.reduce((s, m) => s + m.placements, 0),
+      cvToInterview: averageMonthlyPercentage(yearEntries, "interviews", "cvs"),
+      interviewToOnsite: averageMonthlyPercentage(yearEntries, "onsite", "interviews"),
+      onsiteToOffer: averageMonthlyPercentage(yearEntries, "offers", "onsite"),
+      offerToPlacement: averageMonthlyPercentage(yearEntries, "placements", "offers"),
     };
+  }
+
+  const rows = data ? STATS_CONSULTANTS.map((sc) => {
+    const c = data.consultants.find((x) => x.consultantId === sc.id);
+    const isTeamLead = c ? c.isTeamLead : (sc.id === "james-lancer" || sc.id === "josh-stark");
+    return buildRow(sc.id, sc.name, isTeamLead, c ? c.monthly : []);
   }) : [];
+
+  // Company-wide "Everyone" row — deliberately built from the SAME
+  // per-person rows already computed above, not a separate recomputation,
+  // so it can never silently disagree with them. Raw counts are a genuine
+  // sum, that's just total company activity for the period. Percentages
+  // are the AVERAGE of each person's own percentage for that period —
+  // the same "average, don't pool" principle that already applies across
+  // months applies here across people too, since pooling everyone's raw
+  // counts into one percentage would let whichever person had the most
+  // volume quietly dominate the figure, exactly the distortion averaging
+  // exists to avoid. Team leads' own personal figures are included here
+  // on purpose — a deliberate difference from the incentive site's own
+  // equivalent figure, which excludes them for a different reason
+  // (keeping the consultants' own ranked competition uncontaminated by
+  // their team leads). This is the directors' full company picture instead.
+  const everyoneRow = data ? (() => {
+    const avg = (key) => {
+      const values = rows.map((r) => r[key]).filter((v) => v !== null);
+      return values.length > 0 ? values.reduce((s, v) => s + v, 0) / values.length : null;
+    };
+    return {
+      cvs: rows.reduce((s, r) => s + r.cvs, 0),
+      interviews: rows.reduce((s, r) => s + r.interviews, 0),
+      onsite: rows.reduce((s, r) => s + r.onsite, 0),
+      offers: rows.reduce((s, r) => s + r.offers, 0),
+      placements: rows.reduce((s, r) => s + r.placements, 0),
+      cvToInterview: avg("cvToInterview"),
+      interviewToOnsite: avg("interviewToOnsite"),
+      onsiteToOffer: avg("onsiteToOffer"),
+      offerToPlacement: avg("offerToPlacement"),
+    };
+  })() : null;
 
   return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 20 } },
     React.createElement(Panel, null,
@@ -875,17 +965,30 @@ function ConsultantStatsPage({ token }) {
           }, y))
         )
       ),
-      React.createElement("div", { style: { marginTop: 12, display: "flex", flexWrap: "wrap", gap: 6 } },
-        MONTH_OPTIONS.map(mm => React.createElement("button", {
-          key: mm, onClick: () => setMonth(mm),
+      React.createElement("div", { style: { marginTop: 12, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" } },
+        React.createElement("button", {
+          onClick: () => setShowTotal(!showTotal),
           style: {
             ...chipStyle,
-            background: month === mm ? INDIGO : "rgba(46,64,91,0.06)",
-            color: month === mm ? WHITE : INDIGO,
-            fontWeight: month === mm ? 700 : 500,
+            background: showTotal ? INDIGO : "rgba(46,64,91,0.06)",
+            color: showTotal ? WHITE : INDIGO,
+            fontWeight: 700,
+          }
+        }, "Total"),
+        React.createElement("div", { style: { width: 1, height: 20, background: INDIGO_HAIRLINE, margin: "0 4px" } }),
+        MONTH_OPTIONS.map(mm => React.createElement("button", {
+          key: mm, onClick: () => setMonth(mm), disabled: showTotal,
+          style: {
+            ...chipStyle,
+            background: !showTotal && month === mm ? INDIGO : "rgba(46,64,91,0.06)",
+            color: !showTotal && month === mm ? WHITE : INDIGO,
+            fontWeight: !showTotal && month === mm ? 700 : 500,
+            opacity: showTotal ? 0.4 : 1,
+            cursor: showTotal ? "default" : "pointer",
           }
         }, MONTH_LABELS[mm]))
-      )
+      ),
+      showTotal && React.createElement("div", { style: { marginTop: 10, fontSize: 12, color: INDIGO_MUTED } }, `Full year — each percentage is the average of that person's own monthly percentage across ${year}, not recalculated from the year's pooled totals.`)
     ),
     error && React.createElement("div", { style: errorStyle }, error),
     loading && React.createElement(Panel, null, React.createElement("div", { style: { padding: 20, textAlign: "center", color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif" } }, "Loading…")),
@@ -913,15 +1016,27 @@ function ConsultantStatsPage({ token }) {
           React.createElement(Cell, { width: 70 }, r.onsite),
           React.createElement(Cell, { width: 70 }, r.offers),
           React.createElement(Cell, { width: 90 }, r.placements),
-          React.createElement(Cell, { width: 110, color: INDIGO_MUTED }, formatRatio(r.cvs, r.interviews)),
-          React.createElement(Cell, { width: 130, color: INDIGO_MUTED }, formatRatio(r.interviews, r.onsite)),
-          React.createElement(Cell, { width: 110, color: INDIGO_MUTED }, formatRatio(r.onsite, r.offers)),
-          React.createElement(Cell, { width: 120, color: INDIGO_MUTED }, formatRatio(r.offers, r.placements))
-        ))
+          React.createElement(Cell, { width: 110, color: INDIGO_MUTED }, formatPercentage(r.cvToInterview)),
+          React.createElement(Cell, { width: 130, color: INDIGO_MUTED }, formatPercentage(r.interviewToOnsite)),
+          React.createElement(Cell, { width: 110, color: INDIGO_MUTED }, formatPercentage(r.onsiteToOffer)),
+          React.createElement(Cell, { width: 120, color: INDIGO_MUTED }, formatPercentage(r.offerToPlacement))
+        )),
+        everyoneRow && React.createElement(RowLine, { key: "everyone", highlighted: true },
+          React.createElement(Cell, { width: 160, bold: true }, "Everyone"),
+          React.createElement(Cell, { width: 80, bold: true }, everyoneRow.cvs),
+          React.createElement(Cell, { width: 90, bold: true }, everyoneRow.interviews),
+          React.createElement(Cell, { width: 70, bold: true }, everyoneRow.onsite),
+          React.createElement(Cell, { width: 70, bold: true }, everyoneRow.offers),
+          React.createElement(Cell, { width: 90, bold: true }, everyoneRow.placements),
+          React.createElement(Cell, { width: 110, bold: true }, formatPercentage(everyoneRow.cvToInterview)),
+          React.createElement(Cell, { width: 130, bold: true }, formatPercentage(everyoneRow.interviewToOnsite)),
+          React.createElement(Cell, { width: 110, bold: true }, formatPercentage(everyoneRow.onsiteToOffer)),
+          React.createElement(Cell, { width: 120, bold: true }, formatPercentage(everyoneRow.offerToPlacement))
+        )
       )
     ),
     !loading && data && React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif" } },
-      "CVs, interviews, onsite and offer counts come from the incentive site's finalized weekly records — only complete weeks are counted. Placements are genuine placements only, bucketed by their real start date. Onsite and Offer tracking only started recently, so months before that will show zero there even if real activity happened, since there's nothing to backfill."
+      "CVs, interviews, onsite and offer counts come from the incentive site's finalized weekly records — only complete weeks are counted. Placements are genuine placements only, bucketed by their real start date. Onsite and Offer tracking only started recently, so months before that will show zero there even if real activity happened, since there's nothing to backfill. \"Everyone\" includes James and Josh's own personal figures, averaged the same way as everyone else's."
     )
   );
 }
