@@ -826,6 +826,18 @@ function computePercentage(numerator, denominator) {
 function formatPercentage(value) {
   return value === null || value === undefined ? "—" : `${value.toFixed(0)}%`;
 }
+// A small visual flag, matching the incentive site's own convention for a
+// manually corrected figure — this site is display-only, so there's no
+// "revert to auto" link here, just an honest indicator that this
+// particular number isn't the raw computed one, someone corrected it.
+function overrideValue(overrides, field, displayValue) {
+  const isOverridden = overrides && overrides[field];
+  if (!isOverridden) return displayValue;
+  return React.createElement("span", {
+    style: { borderBottom: `2px solid ${MELON}`, paddingBottom: 1 },
+    title: "Manually corrected on the incentive site",
+  }, displayValue);
+}
 // The actual methodology point — a year's percentage is the AVERAGE of
 // each month's own genuine percentage, never recalculated from the
 // year's pooled totals. Two consultants with wildly different volume in
@@ -898,7 +910,8 @@ function ConsultantStatsPage({ token }) {
       return {
         consultantId, consultantName, isTeamLead,
         calls: entry ? entry.calls : 0,
-        callSeconds: entry ? entry.callSeconds : 0,
+        phoneHours: entry ? entry.phoneHours : 0,
+        overrides: entry ? entry.overrides : {},
         cvs, interviews, onsite, offers, placements,
         cvToInterview: computePercentage(interviews, cvs),
         interviewToOnsite: computePercentage(onsite, interviews),
@@ -910,7 +923,8 @@ function ConsultantStatsPage({ token }) {
     return {
       consultantId, consultantName, isTeamLead,
       calls: yearEntries.reduce((s, m) => s + m.calls, 0),
-      callSeconds: yearEntries.reduce((s, m) => s + m.callSeconds, 0),
+      phoneHours: Math.round(yearEntries.reduce((s, m) => s + m.phoneHours, 0) * 10) / 10,
+      overrides: {},
       cvs: yearEntries.reduce((s, m) => s + m.cvs, 0),
       interviews: yearEntries.reduce((s, m) => s + m.interviews, 0),
       onsite: yearEntries.reduce((s, m) => s + m.onsite, 0),
@@ -957,7 +971,7 @@ function ConsultantStatsPage({ token }) {
     };
     return {
       calls: allRows.reduce((s, r) => s + r.calls, 0),
-      callSeconds: allRows.reduce((s, r) => s + r.callSeconds, 0),
+      phoneHours: Math.round(allRows.reduce((s, r) => s + r.phoneHours, 0) * 10) / 10,
       cvs: allRows.reduce((s, r) => s + r.cvs, 0),
       interviews: allRows.reduce((s, r) => s + r.interviews, 0),
       onsite: allRows.reduce((s, r) => s + r.onsite, 0),
@@ -1039,13 +1053,13 @@ function ConsultantStatsPage({ token }) {
             r.consultantName,
             r.isTeamLead && React.createElement("div", { style: { fontSize: 10, color: MELON, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" } }, "Team lead")
           ),
-          React.createElement(Cell, { width: 70 }, r.calls),
-          React.createElement(Cell, { width: 80 }, (r.callSeconds / 3600).toFixed(1)),
-          React.createElement(Cell, { width: 80 }, r.cvs),
-          React.createElement(Cell, { width: 90 }, r.interviews),
-          React.createElement(Cell, { width: 70 }, r.onsite),
-          React.createElement(Cell, { width: 70 }, r.offers),
-          React.createElement(Cell, { width: 90 }, r.placements),
+          React.createElement(Cell, { width: 70 }, overrideValue(r.overrides, "calls", r.calls)),
+          React.createElement(Cell, { width: 80 }, overrideValue(r.overrides, "phoneHours", r.phoneHours.toFixed(1))),
+          React.createElement(Cell, { width: 80 }, overrideValue(r.overrides, "cvs", r.cvs)),
+          React.createElement(Cell, { width: 90 }, overrideValue(r.overrides, "interviews", r.interviews)),
+          React.createElement(Cell, { width: 70 }, overrideValue(r.overrides, "onsite", r.onsite)),
+          React.createElement(Cell, { width: 70 }, overrideValue(r.overrides, "offers", r.offers)),
+          React.createElement(Cell, { width: 90 }, overrideValue(r.overrides, "placements", r.placements)),
           React.createElement(Cell, { width: 110, color: INDIGO_MUTED }, formatPercentage(r.cvToInterview)),
           React.createElement(Cell, { width: 130, color: INDIGO_MUTED }, formatPercentage(r.interviewToOnsite)),
           React.createElement(Cell, { width: 110, color: INDIGO_MUTED }, formatPercentage(r.onsiteToOffer)),
@@ -1054,7 +1068,7 @@ function ConsultantStatsPage({ token }) {
         selectedConsultant === "everyone" && everyoneRow && React.createElement(RowLine, { key: "everyone", highlighted: true },
           React.createElement(Cell, { width: 160, bold: true }, "Everyone"),
           React.createElement(Cell, { width: 70, bold: true }, everyoneRow.calls),
-          React.createElement(Cell, { width: 80, bold: true }, (everyoneRow.callSeconds / 3600).toFixed(1)),
+          React.createElement(Cell, { width: 80, bold: true }, everyoneRow.phoneHours.toFixed(1)),
           React.createElement(Cell, { width: 80, bold: true }, everyoneRow.cvs),
           React.createElement(Cell, { width: 90, bold: true }, everyoneRow.interviews),
           React.createElement(Cell, { width: 70, bold: true }, everyoneRow.onsite),
