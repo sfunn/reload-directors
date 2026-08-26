@@ -931,11 +931,10 @@ function ConsultantStatsPage({ token }) {
   // months applies here across people too, since pooling everyone's raw
   // counts into one percentage would let whichever person had the most
   // volume quietly dominate the figure, exactly the distortion averaging
-  // exists to avoid. Team leads' own personal figures are included here
-  // on purpose — a deliberate difference from the incentive site's own
-  // equivalent figure, which excludes them for a different reason
-  // (keeping the consultants' own ranked competition uncontaminated by
-  // their team leads). This is the directors' full company picture instead.
+  // exists to avoid. Team leads' own personal figures are included here,
+  // confirmed directly by Scott — both sites do this the same way for
+  // the KPI/Consultant Stats team average. Not a divergence between the
+  // two sites, they agree.
   const everyoneRow = data ? (() => {
     const avg = (key) => {
       const values = rows.map((r) => r[key]).filter((v) => v !== null);
