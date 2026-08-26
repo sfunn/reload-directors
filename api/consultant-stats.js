@@ -10,6 +10,22 @@ const PLACEMENTS_KEY = "atlas-placements";
 // machine calls count the same as real conversations, so no further
 // filtering happens on this end.
 const RINGOVER_KEY = "ringover-tally"; // { [isoWeek]: { [consultantId]: { calls, seconds, ... } } }
+// Entirely separate from the raw tracked data — a manual correction never
+// touches reload-league-weeks or ringover-tally, it lives in its own key
+// and is checked afterward, computed value never mutated.
+const OVERRIDES_KEY = "kpi-overrides"; // { [personId]: { [monthKey]: { [field]: value } } }
+
+// Exact logic the incentive site itself uses to decide which number is
+// real — a stored override wins if one exists for that person/month/field,
+// otherwise fall back to whatever was actually computed from the raw
+// source data. Kept word for word, not reinterpreted, so this can never
+// silently diverge from what the incentive site's own edit screen shows.
+function kpiOverrideValue(kpiOverrides, personId, monthKey, field, computedValue) {
+  const stored = kpiOverrides && kpiOverrides[personId] && kpiOverrides[personId][monthKey] && kpiOverrides[personId][monthKey][field];
+  return (stored !== undefined && stored !== null)
+    ? { value: stored, isOverridden: true }
+    : { value: computedValue, isOverridden: false };
+}
 
 // Same roster the incentive site's own Team Lead Bonus uses — coordinators
 // don't do CV/interview work, so they're deliberately excluded here too.
@@ -87,12 +103,13 @@ module.exports = async (req, res) => {
 
   const year = req.query.year ? parseInt(req.query.year, 10) : new Date().getUTCFullYear();
 
-  const [weeks, teamOverrides, records, placements, ringover] = await Promise.all([
+  const [weeks, teamOverrides, records, placements, ringover, kpiOverrides] = await Promise.all([
     kv.get(WEEKS_KEY).then((v) => v || []),
     kv.get(TEAMS_KEY).then((v) => v || {}),
     kv.get(RECORDS_KEY).then((v) => v || []),
     kv.get(PLACEMENTS_KEY).then((v) => v || {}),
     kv.get(RINGOVER_KEY).then((v) => v || {}),
+    kv.get(OVERRIDES_KEY).then((v) => v || {}),
   ]);
 
   // Current roster: default list plus anyone who's had their team
@@ -189,6 +206,37 @@ module.exports = async (req, res) => {
     perConsultant[r.consultantId].yearTotal.placements += 1;
   }
 
+  // Overrides apply per person, per month, per field — computed after
+  // every raw source (weekly tracking, Ringover, Atlas placements) has
+  // already been fully tallied above. Phone hours need converting from
+  // seconds first, since that's the unit a manual override is actually
+  // entered in, not raw seconds. yearTotal is deliberately rebuilt from
+  // scratch here by summing the final, post-override monthly figures —
+  // not the running total accumulated during the raw computation passes
+  // above — so a corrected month genuinely changes the year total too,
+  // exactly as it should.
+  const OVERRIDE_FIELDS = ["cvs", "interviews", "onsite", "offers", "placements", "calls", "phoneHours"];
+  for (const c of Object.values(perConsultant)) {
+    const finalMonthly = {};
+    for (const [monthKey, m] of Object.entries(c.monthly)) {
+      const computedPhoneHours = Math.round((m.callSeconds / 3600) * 10) / 10;
+      const resolved = {};
+      const overrideFlags = {};
+      for (const field of OVERRIDE_FIELDS) {
+        const computedValue = field === "phoneHours" ? computedPhoneHours : m[field];
+        const { value, isOverridden } = kpiOverrideValue(kpiOverrides, c.consultantId, monthKey, field, computedValue);
+        resolved[field] = value;
+        overrideFlags[field] = isOverridden;
+      }
+      finalMonthly[monthKey] = { month: monthKey, ...resolved, overrides: overrideFlags };
+    }
+    c.monthly = finalMonthly;
+    c.yearTotal = OVERRIDE_FIELDS.reduce((acc, field) => {
+      acc[field] = Object.values(finalMonthly).reduce((s, m) => s + (Number(m[field]) || 0), 0);
+      return acc;
+    }, {});
+  }
+
   const consultants = Object.values(perConsultant).map((c) => ({
     consultantId: c.consultantId,
     consultantName: c.consultantName,
@@ -201,3 +249,4 @@ module.exports = async (req, res) => {
 };
 
 module.exports.isoWeekToSunday = isoWeekToSunday;
+module.exports.kpiOverrideValue = kpiOverrideValue;
