@@ -4,6 +4,12 @@ const WEEKS_KEY = "reload-league-weeks"; // shared with the incentive site — r
 const TEAMS_KEY = "consultant-teams";
 const RECORDS_KEY = "atlas-fee-records";
 const PLACEMENTS_KEY = "atlas-placements";
+// Entirely new, shared with the incentive site, sourced from Ringover's
+// own webhooks — read only, never written here. Already clean at the
+// source: internal staff-to-staff calls are excluded, and answering-
+// machine calls count the same as real conversations, so no further
+// filtering happens on this end.
+const RINGOVER_KEY = "ringover-tally"; // { [isoWeek]: { [consultantId]: { calls, seconds, ... } } }
 
 // Same roster the incentive site's own Team Lead Bonus uses — coordinators
 // don't do CV/interview work, so they're deliberately excluded here too.
@@ -31,10 +37,39 @@ const TEAM_LEAD_NAMES = {
 };
 
 function emptyMonthEntry(monthKey) {
-  return { month: monthKey, cvs: 0, interviews: 0, onsite: 0, offers: 0, placements: 0 };
+  return { month: monthKey, calls: 0, callSeconds: 0, cvs: 0, interviews: 0, onsite: 0, offers: 0, placements: 0 };
 }
 function emptyYearTotal() {
-  return { cvs: 0, interviews: 0, onsite: 0, offers: 0, placements: 0 };
+  return { calls: 0, callSeconds: 0, cvs: 0, interviews: 0, onsite: 0, offers: 0, placements: 0 };
+}
+
+// An ISO week string like "2026-W35" identifies a week, not a specific
+// date — bucketing it into a calendar month requires picking one real
+// day from within it. This app's established convention, used for
+// reload-league-weeks already, is that a week belongs to whichever month
+// its SUNDAY falls in, not its Monday. ISO weeks run Monday to Sunday,
+// so the Sunday is the week's last day, not its first.
+//
+// Standard ISO 8601 rule: January 4th always falls in week 1. Find that
+// week's Monday, add (week-1) full weeks to reach the target week's
+// Monday, then add 6 days to land on that week's Sunday.
+function isoWeekToSunday(isoWeekStr) {
+  const match = /^(\d{4})-W(\d{2})$/.exec(isoWeekStr);
+  if (!match) return null;
+  const year = parseInt(match[1], 10);
+  const week = parseInt(match[2], 10);
+  const jan4 = new Date(Date.UTC(year, 0, 4));
+  const jan4DayOfWeek = jan4.getUTCDay() || 7; // Sunday=0 -> treat as 7, so Monday=1..Sunday=7
+  const week1Monday = new Date(jan4);
+  week1Monday.setUTCDate(jan4.getUTCDate() - (jan4DayOfWeek - 1));
+  const targetMonday = new Date(week1Monday);
+  targetMonday.setUTCDate(week1Monday.getUTCDate() + (week - 1) * 7);
+  const targetSunday = new Date(targetMonday);
+  targetSunday.setUTCDate(targetMonday.getUTCDate() + 6);
+  return targetSunday;
+}
+function monthKeyFromDate(d) {
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
 module.exports = async (req, res) => {
@@ -52,11 +87,12 @@ module.exports = async (req, res) => {
 
   const year = req.query.year ? parseInt(req.query.year, 10) : new Date().getUTCFullYear();
 
-  const [weeks, teamOverrides, records, placements] = await Promise.all([
+  const [weeks, teamOverrides, records, placements, ringover] = await Promise.all([
     kv.get(WEEKS_KEY).then((v) => v || []),
     kv.get(TEAMS_KEY).then((v) => v || {}),
     kv.get(RECORDS_KEY).then((v) => v || []),
     kv.get(PLACEMENTS_KEY).then((v) => v || {}),
+    kv.get(RINGOVER_KEY).then((v) => v || {}),
   ]);
 
   // Current roster: default list plus anyone who's had their team
@@ -115,6 +151,25 @@ module.exports = async (req, res) => {
     }
   }
 
+  // Ringover call tracking — each ISO week is bucketed by its Sunday,
+  // same convention as everything else in this app for deciding which
+  // calendar month a week belongs to.
+  for (const [isoWeek, byConsultant] of Object.entries(ringover)) {
+    const sunday = isoWeekToSunday(isoWeek);
+    if (!sunday || sunday.getUTCFullYear() !== year) continue;
+    const monthKey = monthKeyFromDate(sunday);
+    for (const [consultantId, stats] of Object.entries(byConsultant || {})) {
+      if (!perConsultant[consultantId]) continue;
+      if (!perConsultant[consultantId].monthly[monthKey]) perConsultant[consultantId].monthly[monthKey] = emptyMonthEntry(monthKey);
+      const m = perConsultant[consultantId].monthly[monthKey];
+      const calls = Number(stats.calls) || 0;
+      const callSeconds = Number(stats.seconds) || 0;
+      m.calls += calls; m.callSeconds += callSeconds;
+      const yt = perConsultant[consultantId].yearTotal;
+      yt.calls += calls; yt.callSeconds += callSeconds;
+    }
+  }
+
   // Placements — a genuine placement (a real linked candidate name, not an
   // onsite fee), bucketed by the placement's own start date, same fields
   // the Yearly Deal Table already trusts. Counted regardless of currency
@@ -144,3 +199,5 @@ module.exports = async (req, res) => {
 
   return res.status(200).json({ year, consultants });
 };
+
+module.exports.isoWeekToSunday = isoWeekToSunday;
