@@ -188,19 +188,23 @@ module.exports = async (req, res) => {
   }
 
   // Placements — a genuine placement (a real linked candidate name, not an
-  // onsite fee), bucketed by the placement's own start date, same fields
-  // the Yearly Deal Table already trusts. Counted regardless of currency
-  // or exchange rate availability, since this is a headcount of placements,
-  // not a revenue figure — a missing FX rate should never hide a real
-  // placement from this count.
+  // onsite fee), bucketed by when the DEAL was agreed (the fee's own
+  // feeDate, same "Date Signed" field Commission already shows), not the
+  // candidate's job start date. A candidate can start months after the
+  // deal was actually signed, notice periods being what they are, so
+  // start date would measure the wrong event entirely for "activity in
+  // this month." Counted regardless of currency or exchange rate
+  // availability, since this is a headcount of placements, not a revenue
+  // figure — a missing FX rate should never hide a real placement from
+  // this count.
   for (const r of records) {
     if (!r.consultantId || !perConsultant[r.consultantId]) continue;
     const placement = r.placementId ? placements[r.placementId] : null;
     const hasPlacementName = !!(placement && placement.candidateName);
     if (!hasPlacementName) continue;
-    const startDate = placement.startDate;
-    if (!startDate || !startDate.startsWith(String(year))) continue;
-    const monthKey = startDate.slice(0, 7);
+    const agreedDate = r.feeDate;
+    if (!agreedDate || !agreedDate.startsWith(String(year))) continue;
+    const monthKey = agreedDate.slice(0, 7);
     if (!perConsultant[r.consultantId].monthly[monthKey]) perConsultant[r.consultantId].monthly[monthKey] = emptyMonthEntry(monthKey);
     perConsultant[r.consultantId].monthly[monthKey].placements += 1;
     perConsultant[r.consultantId].yearTotal.placements += 1;
