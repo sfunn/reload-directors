@@ -274,5 +274,39 @@ module.exports = async (req, res) => {
     return res.status(200).json({ ok: true, year: y, metrics: all[y] });
   }
 
+  // Repeat Client Rate — deliberately NOT scoped to a single year, unlike
+  // everything else in this file. "Repeat" is a question across the whole
+  // relationship, not within one calendar year — a client who placed once
+  // in 2023 and once in 2025 is a genuine repeat client even though those
+  // two deals never appear together in any single year's view. Counts
+  // genuine placements only, matching the same distinction used everywhere
+  // else in this system — an onsite fee isn't the thing "did they come
+  // back for another hire" is actually asking about.
+  if (req.method === "GET" && action === "repeat-clients") {
+    const [records, placements] = await Promise.all([
+      kv.get(RECORDS_KEY).then((v) => v || []),
+      kv.get(PLACEMENTS_KEY).then((v) => v || {}),
+    ]);
+    const byClient = {};
+    for (const r of records) {
+      const placement = r.placementId ? placements[r.placementId] : null;
+      const hasPlacementName = !!(placement && placement.candidateName);
+      if (!hasPlacementName) continue; // onsite fees don't count toward "repeat"
+      const client = (placement && placement.clientCompanyName) || r.projectClientName || "Unknown";
+      if (!byClient[client]) byClient[client] = { client, placementCount: 0, firstPlacementDate: null, lastPlacementDate: null };
+      byClient[client].placementCount += 1;
+      const d = r.feeDate;
+      if (d) {
+        if (!byClient[client].firstPlacementDate || d < byClient[client].firstPlacementDate) byClient[client].firstPlacementDate = d;
+        if (!byClient[client].lastPlacementDate || d > byClient[client].lastPlacementDate) byClient[client].lastPlacementDate = d;
+      }
+    }
+    const clients = Object.values(byClient).sort((a, b) => b.placementCount - a.placementCount);
+    const totalClients = clients.length;
+    const repeatClients = clients.filter((c) => c.placementCount >= 2).length;
+    const repeatClientRate = totalClients > 0 ? (repeatClients / totalClients) * 100 : null;
+    return res.status(200).json({ clients, totalClients, repeatClients, repeatClientRate });
+  }
+
   return res.status(400).json({ error: "Unknown action." });
 };
