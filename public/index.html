@@ -854,6 +854,7 @@ function ConsultantStatsPage({ token }) {
   const [year, setYear] = useState(new Date().getUTCFullYear());
   const [month, setMonth] = useState(String(new Date().getUTCMonth() + 1).padStart(2, "0"));
   const [showTotal, setShowTotal] = useState(false);
+  const [selectedConsultant, setSelectedConsultant] = useState("everyone");
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -884,6 +885,8 @@ function ConsultantStatsPage({ token }) {
   // never recalculated by pooling every month's counts into one number
   // first. A month with huge volume would otherwise silently dominate
   // the year figure instead of counting as just one month among many.
+  // Calls and phone hours are plain activity totals, not percentages —
+  // correctly summed either way, no averaging concern applies to them.
   function buildRow(consultantId, consultantName, isTeamLead, monthlyEntries) {
     if (!showTotal) {
       const entry = monthlyEntries.find((m) => m.month === monthKey);
@@ -894,6 +897,8 @@ function ConsultantStatsPage({ token }) {
       const placements = entry ? entry.placements : 0;
       return {
         consultantId, consultantName, isTeamLead,
+        calls: entry ? entry.calls : 0,
+        callSeconds: entry ? entry.callSeconds : 0,
         cvs, interviews, onsite, offers, placements,
         cvToInterview: computePercentage(interviews, cvs),
         interviewToOnsite: computePercentage(onsite, interviews),
@@ -904,6 +909,8 @@ function ConsultantStatsPage({ token }) {
     const yearEntries = monthlyEntries.filter((m) => m.month.startsWith(`${year}-`));
     return {
       consultantId, consultantName, isTeamLead,
+      calls: yearEntries.reduce((s, m) => s + m.calls, 0),
+      callSeconds: yearEntries.reduce((s, m) => s + m.callSeconds, 0),
       cvs: yearEntries.reduce((s, m) => s + m.cvs, 0),
       interviews: yearEntries.reduce((s, m) => s + m.interviews, 0),
       onsite: yearEntries.reduce((s, m) => s + m.onsite, 0),
@@ -916,18 +923,26 @@ function ConsultantStatsPage({ token }) {
     };
   }
 
-  const rows = data ? STATS_CONSULTANTS.map((sc) => {
+  const allRows = data ? STATS_CONSULTANTS.map((sc) => {
     const c = data.consultants.find((x) => x.consultantId === sc.id);
     const isTeamLead = c ? c.isTeamLead : (sc.id === "james-lancer" || sc.id === "josh-stark");
     return buildRow(sc.id, sc.name, isTeamLead, c ? c.monthly : []);
   }) : [];
 
-  // Company-wide "Everyone" row — deliberately built from the SAME
-  // per-person rows already computed above, not a separate recomputation,
-  // so it can never silently disagree with them. Raw counts are a genuine
-  // sum, that's just total company activity for the period. Percentages
-  // are the AVERAGE of each person's own percentage for that period —
-  // the same "average, don't pool" principle that already applies across
+  // "Everyone" shows the full table, same as before. Selecting one
+  // specific person filters down to just their own row — matching the
+  // incentive site's own selector, which this page never actually had
+  // until now, it just always showed everyone with no way to focus on
+  // one person.
+  const rows = selectedConsultant === "everyone" ? allRows : allRows.filter((r) => r.consultantId === selectedConsultant);
+
+  // Company-wide "Everyone" row — deliberately built from allRows, the
+  // full unfiltered set, not the (possibly filtered-to-one-person) rows
+  // above, so it always represents the whole company regardless of which
+  // individual is currently selected. Raw counts are a genuine sum,
+  // that's just total company activity for the period. Percentages are
+  // the AVERAGE of each person's own percentage for that period — the
+  // same "average, don't pool" principle that already applies across
   // months applies here across people too, since pooling everyone's raw
   // counts into one percentage would let whichever person had the most
   // volume quietly dominate the figure, exactly the distortion averaging
@@ -937,15 +952,17 @@ function ConsultantStatsPage({ token }) {
   // two sites, they agree.
   const everyoneRow = data ? (() => {
     const avg = (key) => {
-      const values = rows.map((r) => r[key]).filter((v) => v !== null);
+      const values = allRows.map((r) => r[key]).filter((v) => v !== null);
       return values.length > 0 ? values.reduce((s, v) => s + v, 0) / values.length : null;
     };
     return {
-      cvs: rows.reduce((s, r) => s + r.cvs, 0),
-      interviews: rows.reduce((s, r) => s + r.interviews, 0),
-      onsite: rows.reduce((s, r) => s + r.onsite, 0),
-      offers: rows.reduce((s, r) => s + r.offers, 0),
-      placements: rows.reduce((s, r) => s + r.placements, 0),
+      calls: allRows.reduce((s, r) => s + r.calls, 0),
+      callSeconds: allRows.reduce((s, r) => s + r.callSeconds, 0),
+      cvs: allRows.reduce((s, r) => s + r.cvs, 0),
+      interviews: allRows.reduce((s, r) => s + r.interviews, 0),
+      onsite: allRows.reduce((s, r) => s + r.onsite, 0),
+      offers: allRows.reduce((s, r) => s + r.offers, 0),
+      placements: allRows.reduce((s, r) => s + r.placements, 0),
       cvToInterview: avg("cvToInterview"),
       interviewToOnsite: avg("interviewToOnsite"),
       onsiteToOffer: avg("onsiteToOffer"),
@@ -964,7 +981,17 @@ function ConsultantStatsPage({ token }) {
           }, y))
         )
       ),
-      React.createElement("div", { style: { marginTop: 12, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" } },
+      React.createElement("div", { style: { marginTop: 12, display: "flex", flexWrap: "wrap", gap: 6 } },
+        React.createElement("button", {
+          onClick: () => setSelectedConsultant("everyone"),
+          style: { ...chipStyle, background: selectedConsultant === "everyone" ? MELON : "rgba(255,176,140,0.14)", fontWeight: selectedConsultant === "everyone" ? 700 : 500 }
+        }, "Everyone"),
+        STATS_CONSULTANTS.map(sc => React.createElement("button", {
+          key: sc.id, onClick: () => setSelectedConsultant(sc.id),
+          style: { ...chipStyle, background: selectedConsultant === sc.id ? MELON : "rgba(255,176,140,0.14)", fontWeight: selectedConsultant === sc.id ? 700 : 500 }
+        }, sc.name))
+      ),
+      React.createElement("div", { style: { marginTop: 10, display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center" } },
         React.createElement("button", {
           onClick: () => setShowTotal(!showTotal),
           style: {
@@ -995,6 +1022,8 @@ function ConsultantStatsPage({ token }) {
       React.createElement("div", { style: { overflowX: "auto" } },
         React.createElement(TableHeader, { cols: [
           { label: "Consultant", width: 160 },
+          { label: "Calls", width: 70 },
+          { label: "Phone Hrs", width: 80 },
           { label: "CVs Out", width: 80 },
           { label: "Interviews", width: 90 },
           { label: "Onsite", width: 70 },
@@ -1010,6 +1039,8 @@ function ConsultantStatsPage({ token }) {
             r.consultantName,
             r.isTeamLead && React.createElement("div", { style: { fontSize: 10, color: MELON, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" } }, "Team lead")
           ),
+          React.createElement(Cell, { width: 70 }, r.calls),
+          React.createElement(Cell, { width: 80 }, (r.callSeconds / 3600).toFixed(1)),
           React.createElement(Cell, { width: 80 }, r.cvs),
           React.createElement(Cell, { width: 90 }, r.interviews),
           React.createElement(Cell, { width: 70 }, r.onsite),
@@ -1020,8 +1051,10 @@ function ConsultantStatsPage({ token }) {
           React.createElement(Cell, { width: 110, color: INDIGO_MUTED }, formatPercentage(r.onsiteToOffer)),
           React.createElement(Cell, { width: 120, color: INDIGO_MUTED }, formatPercentage(r.offerToPlacement))
         )),
-        everyoneRow && React.createElement(RowLine, { key: "everyone", highlighted: true },
+        selectedConsultant === "everyone" && everyoneRow && React.createElement(RowLine, { key: "everyone", highlighted: true },
           React.createElement(Cell, { width: 160, bold: true }, "Everyone"),
+          React.createElement(Cell, { width: 70, bold: true }, everyoneRow.calls),
+          React.createElement(Cell, { width: 80, bold: true }, (everyoneRow.callSeconds / 3600).toFixed(1)),
           React.createElement(Cell, { width: 80, bold: true }, everyoneRow.cvs),
           React.createElement(Cell, { width: 90, bold: true }, everyoneRow.interviews),
           React.createElement(Cell, { width: 70, bold: true }, everyoneRow.onsite),
