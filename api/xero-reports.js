@@ -1,6 +1,7 @@
 const { getDirectorFromRequest, kv } = require("./_directorAuth");
 
 const TOKENS_KEY = "xero-oauth-tokens"; // { refreshToken, tenantId, tenantName, connectedAt }
+const TRACKED_SUPPLIERS_KEY = "cost-per-person-tracked-suppliers"; // string[] — owned entirely by this site, exact supplier names as Xero has them, chosen from a real fetch so there's no risk of a typo silently breaking the match
 
 // Xero rotates the refresh token on EVERY use — the one you just used
 // becomes invalid the instant a new one is issued. If we don't store the
@@ -158,16 +159,37 @@ function splitIntoChunks(fromDate, toDate, maxSpanDays = 364) {
 
 module.exports = async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   if (req.method === "OPTIONS") return res.status(200).end();
+
+  const director = await getDirectorFromRequest(req);
+  if (!director) return res.status(401).json({ error: "Director access required." });
+
+  // Managing which suppliers are tracked for cost-per-person is genuinely
+  // separate from everything else in this file — it never touches Xero at
+  // all, it's just this site's own stored list, so it deliberately runs
+  // before the token refresh below rather than needing a live Xero
+  // connection to simply add or remove a name from a list.
+  if (req.query.action === "tracked-suppliers" && req.method === "GET") {
+    const tracked = (await kv.get(TRACKED_SUPPLIERS_KEY)) || [];
+    return res.status(200).json({ tracked });
+  }
+  if (req.query.action === "toggle-tracked-supplier" && req.method === "POST") {
+    const { supplier } = req.body || {};
+    if (!supplier || typeof supplier !== "string") {
+      return res.status(400).json({ error: "A supplier name is required." });
+    }
+    const tracked = (await kv.get(TRACKED_SUPPLIERS_KEY)) || [];
+    const alreadyTracked = tracked.includes(supplier);
+    const updated = alreadyTracked ? tracked.filter((s) => s !== supplier) : [...tracked, supplier];
+    await kv.set(TRACKED_SUPPLIERS_KEY, updated);
+    return res.status(200).json({ tracked: updated, nowTracked: !alreadyTracked });
+  }
 
   if (req.method !== "GET") {
     return res.status(405).json({ error: "This endpoint is read-only." });
   }
-
-  const director = await getDirectorFromRequest(req);
-  if (!director) return res.status(401).json({ error: "Director access required." });
 
   const year = req.query.year ? parseInt(req.query.year, 10) : new Date().getUTCFullYear();
   const currentDateStr = new Date().toISOString().slice(0, 10);
