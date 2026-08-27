@@ -1860,63 +1860,8 @@ function CompanyOverviewPage({ token }) {
           ),
           React.createElement("button", { onClick: saveGrossProfit, disabled: saving, style: { ...ghostStyle, padding: "9px 16px" } }, saving ? "Saving…" : "Save")
         )
-      ),
-      xeroStatus && xeroStatus.connected && React.createElement(ExpenseBreakdownPanel, { token, year }),
-      xeroStatus && xeroStatus.connected && React.createElement(SupplierBillsPanel, { token, year }),
-      xeroStatus && xeroStatus.connected && React.createElement(CostPerPersonPanel, { token, year })
+      )
     )
-  );
-}
-
-function ExpenseBreakdownPanel({ token, year }) {
-  const [lines, setLines] = useState(null);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [checked, setChecked] = useState(false);
-
-  async function check() {
-    setError(""); setLoading(true); setChecked(true);
-    try {
-      const res = await fetch(`/api/xero-reports?action=expense-breakdown&year=${year}`, { headers: { Authorization: `Bearer ${token}` } });
-      const body = await res.json();
-      if (!res.ok) { setError(body.error || "Couldn't pull the report."); return; }
-      setLines(body.lines);
-    } catch (e) {
-      setError("Couldn't reach the server.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  // Grouped by section purely for readability — Xero's own chart of
-  // accounts decides what the sections and their names actually are,
-  // nothing here assumes or invents a structure.
-  const bySection = {};
-  if (lines) {
-    for (const l of lines) {
-      const key = l.section || "Other";
-      if (!bySection[key]) bySection[key] = [];
-      bySection[key].push(l);
-    }
-  }
-
-  return React.createElement(Panel, null,
-    React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 } },
-      React.createElement(SectionTitle, { title: "What's in Xero" }),
-      React.createElement("button", { onClick: check, disabled: loading, style: { ...ghostStyle, padding: "7px 12px", fontSize: 12 } }, loading ? "Checking…" : "Check chart of accounts")
-    ),
-    React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Purely diagnostic — pulls every line item from this year's Profit and Loss report exactly as Xero names it, so you can see for real whether something like Atlas or LinkedIn has its own line, before building anything around a name that might not be right."),
-    error && React.createElement("div", { style: errorStyle }, error),
-    checked && !loading && !error && lines && lines.length === 0 && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "No line items came back for this year."),
-    lines && lines.length > 0 && Object.entries(bySection).map(([section, sectionLines]) => React.createElement("div", { key: section, style: { marginBottom: 16 } },
-      React.createElement("div", { style: { ...labelStyle, marginBottom: 6 } }, section),
-      sectionLines.map((l) => React.createElement("div", {
-        key: l.label, style: { display: "flex", alignItems: "baseline", gap: 4, padding: "4px 0", fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, color: INDIGO, borderBottom: `1px solid ${INDIGO_HAIRLINE}` }
-      },
-        React.createElement("span", { style: { width: 240, flexShrink: 0 } }, l.label),
-        React.createElement("span", { style: { color: INDIGO_MUTED } }, l.value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
-      ))
-    ))
   );
 }
 
@@ -1980,7 +1925,7 @@ function SupplierBillsPanel({ token, year }) {
 
   return React.createElement(Panel, null,
     React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 } },
-      React.createElement(SectionTitle, { title: "Who's actually been paid" }),
+      React.createElement(SectionTitle, { title: "Xero Expenses" }),
       React.createElement("button", { onClick: check, disabled: loading, style: { ...ghostStyle, padding: "7px 12px", fontSize: 12 } }, loading ? "Checking…" : "Check bills by supplier")
     ),
     React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "A different question from the chart of accounts above — this pulls every real bill for this year, grouped by the actual supplier name, regardless of which account it happened to be coded to. Excludes VAT and any draft or voided bills, only counts what was genuinely authorised or paid. Click \"track\" next to any supplier to follow their spend per person below — most suppliers bill monthly, but if one bills quarterly or annually, set that here so their spend genuinely spreads across the real months it covers, not all in one."),
@@ -2127,6 +2072,24 @@ function ProfitabilityPage({ token }) {
   const [loading, setLoading] = useState(false);
   const [checkingSpend, setCheckingSpend] = useState(false);
   const [sortByProfit, setSortByProfit] = useState(false);
+  const [xeroStatus, setXeroStatus] = useState(null);
+
+  // Same status check already proven on Company Overview — Cost per
+  // Person and Xero Expenses both moved onto this page, and both
+  // genuinely need Xero connected to do anything, same as the overhead
+  // figure above already does.
+  const loadXeroStatus = useCallback(async () => {
+    try {
+      const res = await fetch("/api/xero-callback?action=status", { headers: { Authorization: `Bearer ${token}` } });
+      if (!res.ok) return;
+      const body = await res.json();
+      setXeroStatus(body);
+    } catch (e) {
+      // silent — the rest of the page still works even if this check fails
+    }
+  }, [token]);
+
+  useEffect(() => { loadXeroStatus(); }, [loadXeroStatus]);
 
   // Revenue, headcount, salary, commission, and the last real spend check
   // are all cheap to load — commission and spend both come from data
@@ -2273,12 +2236,16 @@ function ProfitabilityPage({ token }) {
               style: { ...chipStyle, background: year === y ? MELON : "rgba(255,176,140,0.14)", fontWeight: year === y ? 700 : 500 }
             }, y))
           ),
-          React.createElement("button", { onClick: checkSpend, disabled: checkingSpend, style: { ...ghostStyle, padding: "7px 12px", fontSize: 12 } }, checkingSpend ? "Checking…" : "Check spend")
+          React.createElement("button", {
+            onClick: checkSpend, disabled: checkingSpend || !(xeroStatus && xeroStatus.connected),
+            style: { ...ghostStyle, padding: "7px 12px", fontSize: 12, opacity: (xeroStatus && xeroStatus.connected) ? 1 : 0.4 }
+          }, checkingSpend ? "Checking…" : "Check spend")
         )
       ),
       React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginTop: 10 } }, "Revenue is genuine money brought in, placements and onsite fees both — the same real question this whole page exists to answer, not just the placements-only figure Average Fee uses. Commission is what was actually paid out on their own deals. Overhead is each tracked supplier's real monthly spend, split evenly across however many people were actually part of the team that month, summed across the year."),
+      xeroStatus && !xeroStatus.connected && React.createElement("div", { style: { fontSize: 12, color: MELON_LINK, marginTop: 6 } }, "Xero isn't connected yet — connect it from Company Overview first."),
       spendChecked && spendCheckedAt && React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 6 } }, `Overhead last checked ${new Date(spendCheckedAt).toLocaleString("en-GB")} — click "Check spend" for a fresher figure any time.`),
-      !spendChecked && React.createElement("div", { style: { fontSize: 12, color: MELON_LINK, marginTop: 6 } }, "Overhead has never been checked for this year yet — profit below excludes it until you click \"Check spend\"."),
+      !spendChecked && xeroStatus && xeroStatus.connected && React.createElement("div", { style: { fontSize: 12, color: MELON_LINK, marginTop: 6 } }, "Overhead has never been checked for this year yet — profit below excludes it until you click \"Check spend\"."),
       spendError && React.createElement("div", { style: { ...errorStyle, marginTop: 6 } }, spendError)
     ),
     error && React.createElement("div", { style: errorStyle }, error),
@@ -2314,7 +2281,9 @@ function ProfitabilityPage({ token }) {
           )
         ))
       )
-    )
+    ),
+    xeroStatus && xeroStatus.connected && React.createElement(CostPerPersonPanel, { token, year }),
+    xeroStatus && xeroStatus.connected && React.createElement(SupplierBillsPanel, { token, year })
   );
 }
 
