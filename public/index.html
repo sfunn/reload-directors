@@ -1665,7 +1665,8 @@ function CompanyOverviewPage({ token }) {
             React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" } },
               React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO } }, `£${Math.round(data.averageFeeGBP).toLocaleString()}`),
               React.createElement("div", { style: { fontSize: 13, color: INDIGO_MUTED } }, `$${Math.round(data.averageFeeUSD).toLocaleString()}`)
-            )
+            ),
+            React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 2 } }, `Genuine placements only — ${data.averageFeePlacementCount} this year, onsite fees excluded`)
           ),
           React.createElement("div", { style: { flex: 1, minWidth: 160 } },
             React.createElement("div", { style: labelStyle }, "Revenue per Head"),
@@ -1964,33 +1965,67 @@ function SupplierBillsPanel({ token, year }) {
     }
   }
 
+  async function setFrequency(supplierName, frequency, direction) {
+    try {
+      const res = await fetch("/api/xero-reports?action=set-supplier-frequency", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ supplier: supplierName, frequency, direction }),
+      });
+      if (res.ok) { const body = await res.json(); setTracked(body.tracked); }
+    } catch (e) {
+      setError("Couldn't reach the server.");
+    }
+  }
+
   return React.createElement(Panel, null,
     React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 } },
       React.createElement(SectionTitle, { title: "Who's actually been paid" }),
       React.createElement("button", { onClick: check, disabled: loading, style: { ...ghostStyle, padding: "7px 12px", fontSize: 12 } }, loading ? "Checking…" : "Check bills by supplier")
     ),
-    React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "A different question from the chart of accounts above — this pulls every real bill for this year, grouped by the actual supplier name, regardless of which account it happened to be coded to. Excludes VAT and any draft or voided bills, only counts what was genuinely authorised or paid. Click \"track\" next to any supplier to follow their spend per person below."),
+    React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "A different question from the chart of accounts above — this pulls every real bill for this year, grouped by the actual supplier name, regardless of which account it happened to be coded to. Excludes VAT and any draft or voided bills, only counts what was genuinely authorised or paid. Click \"track\" next to any supplier to follow their spend per person below — most suppliers bill monthly, but if one bills quarterly or annually, set that here so their spend genuinely spreads across the real months it covers, not all in one."),
     error && React.createElement("div", { style: errorStyle }, error),
     checked && !loading && !error && suppliers && suppliers.length === 0 && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "No bills came back for this year."),
     meta && React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginBottom: 10 } }, `${meta.committedBillsCounted} bills counted, of ${meta.totalBillsFound} found for the period.`),
     suppliers && suppliers.length > 0 && React.createElement(React.Fragment, null,
       React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
-        React.createElement("span", { style: { width: 240, flexShrink: 0 } }, "Supplier"),
+        React.createElement("span", { style: { width: 220, flexShrink: 0 } }, "Supplier"),
         React.createElement("span", { style: { width: 100, flexShrink: 0 } }, "Total (ex VAT)"),
-        React.createElement("span", { style: { width: 60, flexShrink: 0 } }, "Bills"),
-        React.createElement("span", { style: { width: 60, flexShrink: 0 } }, "")
+        React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Bills"),
+        React.createElement("span", { style: { flex: 1 } }, "")
       ),
-      suppliers.map((s) => React.createElement("div", {
-        key: s.supplier, style: { display: "flex", alignItems: "baseline", gap: 4, padding: "4px 0", fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, color: INDIGO, borderBottom: `1px solid ${INDIGO_HAIRLINE}` }
-      },
-        React.createElement("span", { style: { width: 240, flexShrink: 0 } }, s.supplier),
-        React.createElement("span", { style: { width: 100, flexShrink: 0 } }, s.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })),
-        React.createElement("span", { style: { width: 60, flexShrink: 0, color: INDIGO_MUTED } }, s.billCount),
-        React.createElement("span", {
-          onClick: () => toggleTrack(s.supplier),
-          style: { width: 60, flexShrink: 0, fontSize: 11, color: tracked.includes(s.supplier) ? VERDIGRIS : INDIGO_MUTED, textDecoration: "underline", cursor: "pointer" }
-        }, tracked.includes(s.supplier) ? "tracked" : "track")
-      ))
+      suppliers.map((s) => {
+        const trackedEntry = tracked.find((t) => t.supplier === s.supplier);
+        return React.createElement("div", {
+          key: s.supplier, style: { padding: "4px 0", borderBottom: `1px solid ${INDIGO_HAIRLINE}` }
+        },
+          React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, color: INDIGO } },
+            React.createElement("span", { style: { width: 220, flexShrink: 0 } }, s.supplier),
+            React.createElement("span", { style: { width: 100, flexShrink: 0 } }, s.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })),
+            React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, s.billCount),
+            React.createElement("span", {
+              onClick: () => toggleTrack(s.supplier),
+              style: { flexShrink: 0, fontSize: 11, color: trackedEntry ? VERDIGRIS : INDIGO_MUTED, textDecoration: "underline", cursor: "pointer" }
+            }, trackedEntry ? "tracked" : "track")
+          ),
+          trackedEntry && React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 8, marginTop: 4, marginLeft: 0, fontSize: 11, color: INDIGO_MUTED } },
+            React.createElement("span", null, "Bills:"),
+            ["monthly", "quarterly", "annual"].map((f) => React.createElement("span", {
+              key: f,
+              onClick: () => setFrequency(s.supplier, f, trackedEntry.direction || "advance"),
+              style: { cursor: "pointer", textDecoration: trackedEntry.frequency === f ? "none" : "underline", fontWeight: trackedEntry.frequency === f ? 700 : 400, color: trackedEntry.frequency === f ? INDIGO : INDIGO_MUTED }
+            }, f)),
+            trackedEntry.frequency !== "monthly" && React.createElement(React.Fragment, null,
+              React.createElement("span", null, "—"),
+              ["advance", "arrears"].map((d) => React.createElement("span", {
+                key: d,
+                onClick: () => setFrequency(s.supplier, trackedEntry.frequency, d),
+                style: { cursor: "pointer", textDecoration: (trackedEntry.direction || "advance") === d ? "none" : "underline", fontWeight: (trackedEntry.direction || "advance") === d ? 700 : 400, color: (trackedEntry.direction || "advance") === d ? INDIGO : INDIGO_MUTED }
+              }, d === "advance" ? "paid in advance" : "paid in arrears"))
+            )
+          )
+        );
+      })
     )
   );
 }
@@ -2035,9 +2070,9 @@ function CostPerPersonPanel({ token, year }) {
     }
   }
 
-  const trackedWithSpend = tracked.map((name) => {
-    const match = spend ? spend.find((s) => s.supplier === name) : null;
-    return { name, total: match ? match.total : null };
+  const trackedWithSpend = tracked.map((entry) => {
+    const match = spend ? spend.find((s) => s.supplier === entry.supplier) : null;
+    return { supplier: entry.supplier, total: match ? match.total : null };
   });
 
   return React.createElement(Panel, null,
@@ -2056,9 +2091,9 @@ function CostPerPersonPanel({ token, year }) {
         React.createElement("span", { style: { width: 60, flexShrink: 0 } }, "")
       ),
       trackedWithSpend.map((t) => React.createElement("div", {
-        key: t.name, style: { display: "flex", alignItems: "baseline", gap: 4, padding: "4px 0", fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, color: INDIGO, borderBottom: `1px solid ${INDIGO_HAIRLINE}` }
+        key: t.supplier, style: { display: "flex", alignItems: "baseline", gap: 4, padding: "4px 0", fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, color: INDIGO, borderBottom: `1px solid ${INDIGO_HAIRLINE}` }
       },
-        React.createElement("span", { style: { width: 200, flexShrink: 0 } }, t.name),
+        React.createElement("span", { style: { width: 200, flexShrink: 0 } }, t.supplier),
         React.createElement("span", { style: { width: 110, flexShrink: 0 } }, t.total !== null ? t.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : (checked ? "£0.00" : "—")),
         React.createElement("span", { style: { width: 110, flexShrink: 0, color: INDIGO_MUTED } },
           t.total !== null && headcount ? (t.total / headcount).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : "—"
@@ -2068,7 +2103,7 @@ function CostPerPersonPanel({ token, year }) {
             const res = await fetch("/api/xero-reports?action=toggle-tracked-supplier", {
               method: "POST",
               headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-              body: JSON.stringify({ supplier: t.name }),
+              body: JSON.stringify({ supplier: t.supplier }),
             });
             if (res.ok) { const body = await res.json(); setTracked(body.tracked); }
           },
