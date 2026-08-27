@@ -89,6 +89,66 @@ async function getOverrides() {
   return (await kv.get(OVERRIDES_KEY)) || {};
 }
 
+// --- Currency conversion, moved here from being duplicated identically
+// across deals.js, company-overview.js, and consultant-stats.js. That
+// duplication is exactly how the last real bug happened — one copy
+// missed a step the other two had, and nothing caught it until Scott
+// noticed the numbers didn't match. Three copies of the same logic will
+// drift apart again given enough time; one shared copy can't. ---
+function monthKeyFromDateStr(dateStr) {
+  const d = dateStr ? new Date(dateStr) : new Date();
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+function latestSetMonthKeyForCurrency(allRates, currency) {
+  const keys = Object.keys(allRates)
+    .filter((k) => allRates[k] && allRates[k][currency] !== undefined && allRates[k][currency] !== null && allRates[k][currency] !== 0)
+    .sort();
+  return keys.length ? keys[keys.length - 1] : null;
+}
+function getRateForCurrency(record, allRates, currency) {
+  if (record.paid && record.paidMarkedAt) {
+    const paidMonthKey = monthKeyFromDateStr(record.paidMarkedAt);
+    const paidRate = allRates[paidMonthKey] && allRates[paidMonthKey][currency];
+    if (paidRate) return paidRate;
+  }
+  const latestKey = latestSetMonthKeyForCurrency(allRates, currency);
+  return latestKey ? allRates[latestKey][currency] : null;
+}
+function convertToGBP(record, allRates) {
+  if (record.currency === "GBP") return record.shareAmount;
+  const gbpRate = getRateForCurrency(record, allRates, "GBP");
+  if (!gbpRate) return null;
+  if (record.currency === "USD") return record.shareAmount / gbpRate;
+  if (record.currency === "EUR") {
+    const eurRate = getRateForCurrency(record, allRates, "EUR");
+    if (!eurRate) return null;
+    const usdEquivalent = record.shareAmount * eurRate;
+    return usdEquivalent / gbpRate;
+  }
+  return null;
+}
+
+// The single source of truth for "what is this record's revenue in GBP" —
+// conversion, then whichever uplift decision applies, applied correctly.
+// Every page that shows a revenue figure should call this instead of
+// keeping its own copy of the branching logic, so they can never quietly
+// disagree with each other the way they briefly did before this existed.
+function resolvedRevenueGBP(record, clientName, year, overrides, hasPlacementName, allRates) {
+  const rawGbp = convertToGBP(record, allRates);
+  const decision = resolveUplift(record, clientName, year, overrides, hasPlacementName);
+  if (decision.type === "override") {
+    if (decision.customRate) {
+      return decision.currency === "GBP" ? decision.amount : decision.amount / decision.customRate;
+    }
+    return convertToGBP({ currency: decision.currency, shareAmount: decision.amount, paid: record.paid, paidMarkedAt: record.paidMarkedAt }, allRates);
+  }
+  if (decision.type === "multiplier" && rawGbp !== null) {
+    return rawGbp * decision.value;
+  }
+  return rawGbp;
+}
+// --- End currency conversion ---
+
 async function setOverride(feeId, splitId, amount, currency, customRate, notes) {
   const all = await getOverrides();
   const key = `${feeId}:${splitId}`;
@@ -103,4 +163,4 @@ async function setOverride(feeId, splitId, amount, currency, customRate, notes) 
   return all[key] || null;
 }
 
-module.exports = { CLIENT_UPLIFT_RULES, defaultMultiplierFor, resolveUplift, getOverrides, setOverride, OVERRIDES_KEY };
+module.exports = { CLIENT_UPLIFT_RULES, defaultMultiplierFor, resolveUplift, getOverrides, setOverride, OVERRIDES_KEY, convertToGBP, resolvedRevenueGBP };
