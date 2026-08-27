@@ -2119,30 +2119,54 @@ function ProfitabilityPage({ token }) {
   const [revenueData, setRevenueData] = useState(null);
   const [headcountMonthly, setHeadcountMonthly] = useState(null);
   const [salaryData, setSalaryData] = useState(null);
+  const [commissionByConsultant, setCommissionByConsultant] = useState(null);
   const [spendMonthly, setSpendMonthly] = useState(null);
+  const [spendCheckedAt, setSpendCheckedAt] = useState(null);
   const [error, setError] = useState("");
   const [spendError, setSpendError] = useState("");
   const [loading, setLoading] = useState(false);
   const [checkingSpend, setCheckingSpend] = useState(false);
-  const [spendChecked, setSpendChecked] = useState(false);
+  const [sortByProfit, setSortByProfit] = useState(false);
 
-  // Revenue, headcount, and salary are all cheap — no Xero call involved,
-  // so these load automatically whenever the year changes. Tracked spend
-  // stays deliberately on-demand only, same reasoning as everywhere else
-  // this data appears on this site — that's the one expensive call.
+  // Revenue, headcount, salary, commission, and the last real spend check
+  // are all cheap to load — commission and spend both come from data
+  // that's either already computed or already sitting in this site's own
+  // memory, no fresh Xero call needed for either. Loading the cached
+  // spend here, automatically, on every visit, is the actual fix for it
+  // disappearing every time this page was left and come back to — it
+  // used to live only in this component's own state, gone the instant
+  // the component unmounted. Now it's read back from where the last
+  // real "Check spend" already saved it, so it's simply there again.
   const loadCheap = useCallback(async () => {
     setError(""); setLoading(true);
     try {
-      const [revRes, headRes, salRes] = await Promise.all([
+      const [revRes, headRes, salRes, cachedSpendRes, ...commissionResults] = await Promise.all([
         fetch(`/api/consultant-stats?year=${year}`, { headers: { Authorization: `Bearer ${token}` } }),
         fetch(`/api/headcount?action=monthly&year=${year}`, { headers: { Authorization: `Bearer ${token}` } }),
         fetch(`/api/roster?action=monthly-salary&year=${year}`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`/api/xero-reports?action=cached-spend&year=${year}`, { headers: { Authorization: `Bearer ${token}` } }),
+        ...STATS_CONSULTANTS.map((sc) => fetch(`/api/commission?consultantId=${sc.id}&year=${year}`, { headers: { Authorization: `Bearer ${token}` } })),
       ]);
       if (!revRes.ok || !headRes.ok || !salRes.ok) { setError("Couldn't load one of the underlying figures."); return; }
       setRevenueData(await revRes.json());
       setHeadcountMonthly((await headRes.json()).monthly);
       setSalaryData((await salRes.json()).people);
+
+      if (cachedSpendRes.ok) {
+        const body = await cachedSpendRes.json();
+        if (body.cached) { setSpendMonthly(body.cached.monthlyBySupplier); setSpendCheckedAt(body.cached.checkedAt); }
+      }
+
+      const commissionByPerson = {};
+      for (let i = 0; i < STATS_CONSULTANTS.length; i++) {
+        if (commissionResults[i].ok) {
+          const body = await commissionResults[i].json();
+          commissionByPerson[STATS_CONSULTANTS[i].id] = body.totalCommission || 0;
+        }
+      }
+      setCommissionByConsultant(commissionByPerson);
     } catch (e) {
+      console.error("[ProfitabilityPage] loadCheap failed:", e);
       setError("Couldn't reach the server.");
     } finally {
       setLoading(false);
@@ -2152,12 +2176,13 @@ function ProfitabilityPage({ token }) {
   useEffect(() => { loadCheap(); }, [loadCheap]);
 
   async function checkSpend() {
-    setSpendError(""); setCheckingSpend(true); setSpendChecked(true);
+    setSpendError(""); setCheckingSpend(true);
     try {
       const res = await fetch(`/api/xero-reports?action=bills-by-supplier&year=${year}`, { headers: { Authorization: `Bearer ${token}` } });
       const body = await res.json();
       if (!res.ok) { setSpendError(body.error || "Couldn't pull the bills."); return; }
       setSpendMonthly(body.monthlyBySupplier);
+      setSpendCheckedAt(body.checkedAt);
     } catch (e) {
       setSpendError("Couldn't reach the server.");
     } finally {
@@ -2183,17 +2208,21 @@ function ProfitabilityPage({ token }) {
   const headcountByMonth = {};
   if (headcountMonthly) for (const h of headcountMonthly) headcountByMonth[h.month] = h.feeEarning;
 
+  const spendChecked = spendMonthly !== null;
+
   // Builds one consultant's full year: revenue from consultant-stats
   // (placements plus onsites, genuine money they brought in), salary
-  // summed from their own dated history, and their equal share of the
-  // shared overhead each month they were actually part of the headcount
-  // — a month with no salary on record is flagged incomplete rather than
-  // silently treated as free, since that would inflate apparent profit
-  // for a data gap rather than a real saving.
+  // summed from their own dated history, commission actually paid on
+  // their own deals, and their equal share of the shared overhead each
+  // month they were actually part of the headcount — a month with no
+  // salary on record is flagged incomplete rather than silently treated
+  // as free, since that would inflate apparent profit for a data gap
+  // rather than a real saving.
   function buildConsultantYear(consultantId, consultantName) {
     const rev = revenueData ? revenueData.consultants.find((c) => c.consultantId === consultantId) : null;
     const sal = salaryData ? salaryData.find((p) => p.consultantId === consultantId) : null;
     const revenueGBP = rev ? rev.yearTotal.totalRevenueGBP : 0;
+    const commissionGBP = commissionByConsultant ? (commissionByConsultant[consultantId] || 0) : 0;
 
     let salaryGBP = 0;
     let salaryIncomplete = false;
@@ -2224,13 +2253,14 @@ function ProfitabilityPage({ token }) {
 
     return {
       consultantId, consultantName,
-      revenueGBP, salaryGBP, overheadShareGBP,
-      profitGBP: revenueGBP - salaryGBP - overheadShareGBP,
+      revenueGBP, salaryGBP, commissionGBP, overheadShareGBP,
+      profitGBP: revenueGBP - salaryGBP - commissionGBP - overheadShareGBP,
       salaryIncomplete, overheadIncomplete,
     };
   }
 
-  const rows = revenueData ? STATS_CONSULTANTS.map((sc) => buildConsultantYear(sc.id, sc.name)) : [];
+  let rows = revenueData ? STATS_CONSULTANTS.map((sc) => buildConsultantYear(sc.id, sc.name)) : [];
+  if (sortByProfit) rows = [...rows].sort((a, b) => b.profitGBP - a.profitGBP);
 
   return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 20 } },
     React.createElement(Panel, null,
@@ -2246,8 +2276,9 @@ function ProfitabilityPage({ token }) {
           React.createElement("button", { onClick: checkSpend, disabled: checkingSpend, style: { ...ghostStyle, padding: "7px 12px", fontSize: 12 } }, checkingSpend ? "Checking…" : "Check spend")
         )
       ),
-      React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginTop: 10 } }, "Revenue is genuine money brought in, placements and onsite fees both — the same real question this whole page exists to answer, not just the placements-only figure Average Fee uses. Overhead is each tracked supplier's real monthly spend, split evenly across however many people were actually part of the team that month, summed across the year. Click \"Check spend\" for a real overhead figure — until then, profit only reflects revenue and salary."),
-      !spendChecked && React.createElement("div", { style: { fontSize: 12, color: MELON_LINK, marginTop: 6 } }, "Overhead not checked yet — profit below excludes it until you click \"Check spend\"."),
+      React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginTop: 10 } }, "Revenue is genuine money brought in, placements and onsite fees both — the same real question this whole page exists to answer, not just the placements-only figure Average Fee uses. Commission is what was actually paid out on their own deals. Overhead is each tracked supplier's real monthly spend, split evenly across however many people were actually part of the team that month, summed across the year."),
+      spendChecked && spendCheckedAt && React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 6 } }, `Overhead last checked ${new Date(spendCheckedAt).toLocaleString("en-GB")} — click "Check spend" for a fresher figure any time.`),
+      !spendChecked && React.createElement("div", { style: { fontSize: 12, color: MELON_LINK, marginTop: 6 } }, "Overhead has never been checked for this year yet — profit below excludes it until you click \"Check spend\"."),
       spendError && React.createElement("div", { style: { ...errorStyle, marginTop: 6 } }, spendError)
     ),
     error && React.createElement("div", { style: errorStyle }, error),
@@ -2256,20 +2287,25 @@ function ProfitabilityPage({ token }) {
       React.createElement("div", { style: { overflowX: "auto" } },
         React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
           React.createElement("span", { style: { width: 160, flexShrink: 0 } }, "Consultant"),
-          React.createElement("span", { style: { width: 130, flexShrink: 0 } }, "Revenue"),
-          React.createElement("span", { style: { width: 130, flexShrink: 0 } }, "Salary"),
+          React.createElement("span", { style: { width: 120, flexShrink: 0 } }, "Revenue"),
+          React.createElement("span", { style: { width: 120, flexShrink: 0 } }, "Salary"),
+          React.createElement("span", { style: { width: 120, flexShrink: 0 } }, "Commission"),
           React.createElement("span", { style: { width: 130, flexShrink: 0 } }, "Overhead share"),
-          React.createElement("span", { style: { width: 140, flexShrink: 0 } }, "Profit")
+          React.createElement("span", {
+            onClick: () => setSortByProfit(!sortByProfit),
+            style: { width: 140, flexShrink: 0, cursor: "pointer", textDecoration: "underline", color: sortByProfit ? INDIGO : INDIGO_MUTED }
+          }, sortByProfit ? "Profit ▾" : "Profit (sort)")
         ),
         rows.map((r) => React.createElement("div", {
           key: r.consultantId, style: { display: "flex", alignItems: "baseline", gap: 4, padding: "6px 0", fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, color: INDIGO, borderBottom: `1px solid ${INDIGO_HAIRLINE}` }
         },
           React.createElement("span", { style: { width: 160, flexShrink: 0 } }, r.consultantName),
-          React.createElement("span", { style: { width: 130, flexShrink: 0 } }, `£${Math.round(r.revenueGBP).toLocaleString()}`),
-          React.createElement("span", { style: { width: 130, flexShrink: 0 } },
+          React.createElement("span", { style: { width: 120, flexShrink: 0 } }, `£${Math.round(r.revenueGBP).toLocaleString()}`),
+          React.createElement("span", { style: { width: 120, flexShrink: 0 } },
             `£${Math.round(r.salaryGBP).toLocaleString()}`,
             r.salaryIncomplete && React.createElement("span", { style: { color: MELON_LINK, fontSize: 10, marginLeft: 4 } }, "(incomplete)")
           ),
+          React.createElement("span", { style: { width: 120, flexShrink: 0 } }, `£${Math.round(r.commissionGBP).toLocaleString()}`),
           React.createElement("span", { style: { width: 130, flexShrink: 0, color: INDIGO_MUTED } },
             r.overheadIncomplete ? "—" : `£${Math.round(r.overheadShareGBP).toLocaleString()}`
           ),
