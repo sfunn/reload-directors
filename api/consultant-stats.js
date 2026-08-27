@@ -4,6 +4,7 @@ const WEEKS_KEY = "reload-league-weeks"; // shared with the incentive site — r
 const TEAMS_KEY = "consultant-teams";
 const RECORDS_KEY = "atlas-fee-records";
 const PLACEMENTS_KEY = "atlas-placements";
+const FX_KEY = "atlas-fx-rates";
 // Entirely new, shared with the incentive site, sourced from Ringover's
 // own webhooks — read only, never written here. Already clean at the
 // source: internal staff-to-staff calls are excluded, and answering-
@@ -53,11 +54,47 @@ const TEAM_LEAD_NAMES = {
 };
 
 function emptyMonthEntry(monthKey) {
-  return { month: monthKey, calls: 0, callSeconds: 0, cvs: 0, interviews: 0, onsite: 0, offers: 0, placements: 0 };
+  return { month: monthKey, calls: 0, callSeconds: 0, cvs: 0, interviews: 0, onsite: 0, offers: 0, placements: 0, placementRevenueGBP: 0 };
 }
 function emptyYearTotal() {
-  return { calls: 0, callSeconds: 0, cvs: 0, interviews: 0, onsite: 0, offers: 0, placements: 0 };
+  return { calls: 0, callSeconds: 0, cvs: 0, interviews: 0, onsite: 0, offers: 0, placements: 0, placementRevenueGBP: 0 };
 }
+
+// --- Ported directly from company-overview.js, not re-derived, so GBP
+// revenue is computed exactly the same way everywhere on this site. ---
+function monthKeyFromDateStr(dateStr) {
+  const d = dateStr ? new Date(dateStr) : new Date();
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+function latestSetMonthKeyForCurrency(allRates, currency) {
+  const keys = Object.keys(allRates)
+    .filter((k) => allRates[k] && allRates[k][currency] !== undefined && allRates[k][currency] !== null && allRates[k][currency] !== 0)
+    .sort();
+  return keys.length ? keys[keys.length - 1] : null;
+}
+function getRateForCurrency(record, allRates, currency) {
+  if (record.paid && record.paidMarkedAt) {
+    const paidMonthKey = monthKeyFromDateStr(record.paidMarkedAt);
+    const paidRate = allRates[paidMonthKey] && allRates[paidMonthKey][currency];
+    if (paidRate) return paidRate;
+  }
+  const latestKey = latestSetMonthKeyForCurrency(allRates, currency);
+  return latestKey ? allRates[latestKey][currency] : null;
+}
+function convertToGBP(record, allRates) {
+  if (record.currency === "GBP") return record.shareAmount;
+  const gbpRate = getRateForCurrency(record, allRates, "GBP");
+  if (!gbpRate) return null;
+  if (record.currency === "USD") return record.shareAmount / gbpRate;
+  if (record.currency === "EUR") {
+    const eurRate = getRateForCurrency(record, allRates, "EUR");
+    if (!eurRate) return null;
+    const usdEquivalent = record.shareAmount * eurRate;
+    return usdEquivalent / gbpRate;
+  }
+  return null;
+}
+// --- End direct port ---
 
 // An ISO week string like "2026-W35" identifies a week, not a specific
 // date — bucketing it into a calendar month requires picking one real
@@ -103,13 +140,14 @@ module.exports = async (req, res) => {
 
   const year = req.query.year ? parseInt(req.query.year, 10) : new Date().getUTCFullYear();
 
-  const [weeks, teamOverrides, records, placements, ringover, kpiOverrides] = await Promise.all([
+  const [weeks, teamOverrides, records, placements, ringover, kpiOverrides, fxRates] = await Promise.all([
     kv.get(WEEKS_KEY).then((v) => v || []),
     kv.get(TEAMS_KEY).then((v) => v || {}),
     kv.get(RECORDS_KEY).then((v) => v || []),
     kv.get(PLACEMENTS_KEY).then((v) => v || {}),
     kv.get(RINGOVER_KEY).then((v) => v || {}),
     kv.get(OVERRIDES_KEY).then((v) => v || {}),
+    kv.get(FX_KEY).then((v) => v || {}),
   ]);
 
   // Current roster: default list plus anyone who's had their team
@@ -208,6 +246,18 @@ module.exports = async (req, res) => {
     if (!perConsultant[r.consultantId].monthly[monthKey]) perConsultant[r.consultantId].monthly[monthKey] = emptyMonthEntry(monthKey);
     perConsultant[r.consultantId].monthly[monthKey].placements += 1;
     perConsultant[r.consultantId].yearTotal.placements += 1;
+    // GBP revenue for this same genuine placement — deliberately a plain
+    // computed figure, not one of the override-able KPI fields above.
+    // This is real financial data, already governed by its own separate
+    // correctness mechanisms (FX rates, manual per-deal overrides)
+    // elsewhere in the system, not something a director corrects here.
+    // A record without a usable FX rate contributes 0 rather than being
+    // silently dropped, so this always adds up to a real, checkable total.
+    const gbp = convertToGBP(r, fxRates);
+    if (gbp !== null) {
+      perConsultant[r.consultantId].monthly[monthKey].placementRevenueGBP += gbp;
+      perConsultant[r.consultantId].yearTotal.placementRevenueGBP += gbp;
+    }
   }
 
   // Overrides apply per person, per month, per field — computed after
@@ -232,13 +282,17 @@ module.exports = async (req, res) => {
         resolved[field] = value;
         overrideFlags[field] = isOverridden;
       }
-      finalMonthly[monthKey] = { month: monthKey, ...resolved, overrides: overrideFlags };
+      // Not an override-able KPI field, carried through exactly as
+      // computed — dropped entirely if left out of this object here,
+      // since everything below is rebuilt fresh from OVERRIDE_FIELDS only.
+      finalMonthly[monthKey] = { month: monthKey, ...resolved, placementRevenueGBP: m.placementRevenueGBP, overrides: overrideFlags };
     }
     c.monthly = finalMonthly;
     c.yearTotal = OVERRIDE_FIELDS.reduce((acc, field) => {
       acc[field] = Object.values(finalMonthly).reduce((s, m) => s + (Number(m[field]) || 0), 0);
       return acc;
     }, {});
+    c.yearTotal.placementRevenueGBP = Object.values(finalMonthly).reduce((s, m) => s + (Number(m.placementRevenueGBP) || 0), 0);
   }
 
   const consultants = Object.values(perConsultant).map((c) => ({
