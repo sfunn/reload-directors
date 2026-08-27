@@ -1,5 +1,5 @@
 const { getDirectorFromRequest, kv } = require("./_directorAuth");
-const { resolveUplift, getOverrides, setOverride } = require("./_dealRevenueUplift");
+const { resolveUplift, resolvedRevenueGBP, getOverrides, setOverride } = require("./_dealRevenueUplift");
 
 const RECORDS_KEY = "atlas-fee-records"; // shared with the incentive site — read only, never written here
 const FX_KEY = "atlas-fx-rates";
@@ -118,39 +118,29 @@ module.exports = async (req, res) => {
       const rawUsdAmount = await convertToUSD(r, allRates);
       const rawGbpAmount = convertToGBP(r, allRates);
 
-      // Revenue-only uplift — never touches commission, never touches the
-      // underlying record, only what gets shown as this deal's revenue
-      // figure here and on Company Overview. GBP is the primary, editable
-      // figure on this page now, matching Company Overview's own
-      // convention; USD is derived alongside purely as a reference.
+      // GBP now comes from the single shared function every revenue page
+      // calls, so this can never quietly drift from Company Overview or
+      // Consultant Stats the way it briefly did before that existed. USD
+      // stays computed locally — a genuinely separate concern the shared
+      // function doesn't cover, and not worth touching in an
+      // already-correct file just to consolidate further right now.
       const decision = resolveUplift(r, clientCompanyName, year, overrides, hasPlacementName);
+      const gbpAmount = resolvedRevenueGBP(r, clientCompanyName, year, overrides, hasPlacementName, allRates);
       let usdAmount = rawUsdAmount;
-      let gbpAmount = rawGbpAmount;
       if (decision.type === "override") {
         if (decision.customRate) {
           // A specific real rate was recorded for this deal, overriding the
           // standard monthly rate table entirely — expressed as 1 GBP = X
           // USD, same convention as everywhere else, regardless of which
           // currency the override amount itself was entered in.
-          if (decision.currency === "GBP") {
-            gbpAmount = decision.amount;
-            usdAmount = decision.amount * decision.customRate;
-          } else {
-            usdAmount = decision.amount;
-            gbpAmount = decision.amount / decision.customRate;
-          }
+          usdAmount = decision.currency === "GBP" ? decision.amount * decision.customRate : decision.amount;
         } else {
           // The override might genuinely be in GBP, not USD — e.g. a deal
-          // recorded in Atlas as USD but actually paid in pounds. Build one
-          // pseudo-record and run it through BOTH conversion functions —
-          // each already handles GBP and USD correctly on its own.
-          const pseudoRecord = { currency: decision.currency, shareAmount: decision.amount, paid: r.paid, paidMarkedAt: r.paidMarkedAt };
-          gbpAmount = convertToGBP(pseudoRecord, allRates);
-          usdAmount = await convertToUSD(pseudoRecord, allRates);
+          // recorded in Atlas as USD but actually paid in pounds.
+          usdAmount = await convertToUSD({ currency: decision.currency, shareAmount: decision.amount, paid: r.paid, paidMarkedAt: r.paidMarkedAt }, allRates);
         }
       } else if (decision.type === "multiplier") {
         if (rawUsdAmount !== null) usdAmount = rawUsdAmount * decision.value;
-        if (rawGbpAmount !== null) gbpAmount = rawGbpAmount * decision.value;
       }
 
       return {
