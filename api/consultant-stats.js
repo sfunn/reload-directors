@@ -1,4 +1,5 @@
 const { getDirectorFromRequest, kv } = require("./_directorAuth");
+const { resolvedRevenueGBP, getOverrides } = require("./_dealRevenueUplift");
 
 const WEEKS_KEY = "reload-league-weeks"; // shared with the incentive site — read only, never written here
 const TEAMS_KEY = "consultant-teams";
@@ -60,42 +61,6 @@ function emptyYearTotal() {
   return { calls: 0, callSeconds: 0, cvs: 0, interviews: 0, onsite: 0, offers: 0, placements: 0, placementRevenueGBP: 0, totalRevenueGBP: 0 };
 }
 
-// --- Ported directly from company-overview.js, not re-derived, so GBP
-// revenue is computed exactly the same way everywhere on this site. ---
-function monthKeyFromDateStr(dateStr) {
-  const d = dateStr ? new Date(dateStr) : new Date();
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
-}
-function latestSetMonthKeyForCurrency(allRates, currency) {
-  const keys = Object.keys(allRates)
-    .filter((k) => allRates[k] && allRates[k][currency] !== undefined && allRates[k][currency] !== null && allRates[k][currency] !== 0)
-    .sort();
-  return keys.length ? keys[keys.length - 1] : null;
-}
-function getRateForCurrency(record, allRates, currency) {
-  if (record.paid && record.paidMarkedAt) {
-    const paidMonthKey = monthKeyFromDateStr(record.paidMarkedAt);
-    const paidRate = allRates[paidMonthKey] && allRates[paidMonthKey][currency];
-    if (paidRate) return paidRate;
-  }
-  const latestKey = latestSetMonthKeyForCurrency(allRates, currency);
-  return latestKey ? allRates[latestKey][currency] : null;
-}
-function convertToGBP(record, allRates) {
-  if (record.currency === "GBP") return record.shareAmount;
-  const gbpRate = getRateForCurrency(record, allRates, "GBP");
-  if (!gbpRate) return null;
-  if (record.currency === "USD") return record.shareAmount / gbpRate;
-  if (record.currency === "EUR") {
-    const eurRate = getRateForCurrency(record, allRates, "EUR");
-    if (!eurRate) return null;
-    const usdEquivalent = record.shareAmount * eurRate;
-    return usdEquivalent / gbpRate;
-  }
-  return null;
-}
-// --- End direct port ---
-
 // An ISO week string like "2026-W35" identifies a week, not a specific
 // date — bucketing it into a calendar month requires picking one real
 // day from within it. This app's established convention, used for
@@ -140,7 +105,7 @@ module.exports = async (req, res) => {
 
   const year = req.query.year ? parseInt(req.query.year, 10) : new Date().getUTCFullYear();
 
-  const [weeks, teamOverrides, records, placements, ringover, kpiOverrides, fxRates] = await Promise.all([
+  const [weeks, teamOverrides, records, placements, ringover, kpiOverrides, fxRates, revenueUpliftOverrides] = await Promise.all([
     kv.get(WEEKS_KEY).then((v) => v || []),
     kv.get(TEAMS_KEY).then((v) => v || {}),
     kv.get(RECORDS_KEY).then((v) => v || []),
@@ -148,6 +113,7 @@ module.exports = async (req, res) => {
     kv.get(RINGOVER_KEY).then((v) => v || {}),
     kv.get(OVERRIDES_KEY).then((v) => v || {}),
     kv.get(FX_KEY).then((v) => v || {}),
+    getOverrides(),
   ]);
 
   // Current roster: default list plus anyone who's had their team
@@ -253,6 +219,7 @@ module.exports = async (req, res) => {
   for (const r of records) {
     if (!r.consultantId || !perConsultant[r.consultantId]) continue;
     const placement = r.placementId ? placements[r.placementId] : null;
+    const client = (placement && placement.clientCompanyName) || r.projectClientName || null;
     const hasPlacementName = !!(placement && placement.candidateName);
     const agreedDate = r.feeDate;
     if (!agreedDate || !agreedDate.startsWith(String(year))) continue;
@@ -266,7 +233,12 @@ module.exports = async (req, res) => {
       yt.placements += 1;
     }
 
-    const gbp = convertToGBP(r, fxRates);
+    // The single shared function every revenue-showing page now calls,
+    // rather than each keeping its own copy of this branching — that
+    // duplication is exactly how the earlier bug happened, one copy
+    // missed a step the others had.
+    const gbp = resolvedRevenueGBP(r, client, year, revenueUpliftOverrides, hasPlacementName, fxRates);
+
     if (gbp !== null) {
       m.totalRevenueGBP += gbp;
       yt.totalRevenueGBP += gbp;
