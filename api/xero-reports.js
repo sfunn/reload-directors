@@ -1,7 +1,59 @@
 const { getDirectorFromRequest, kv } = require("./_directorAuth");
 
 const TOKENS_KEY = "xero-oauth-tokens"; // { refreshToken, tenantId, tenantName, connectedAt }
-const TRACKED_SUPPLIERS_KEY = "cost-per-person-tracked-suppliers"; // string[] — owned entirely by this site, exact supplier names as Xero has them, chosen from a real fetch so there's no risk of a typo silently breaking the match
+const TRACKED_SUPPLIERS_KEY = "cost-per-person-tracked-suppliers"; // { supplier, frequency, direction }[] — owned entirely by this site, exact supplier names as Xero has them, chosen from a real fetch so there's no risk of a typo silently breaking the match
+
+// Entries here started out as plain supplier-name strings, before billing
+// frequency existed at all — real, already-tracked suppliers (Atlas,
+// Linked In, Sourcewhale, Warmy.io) are sitting in KV in that old shape
+// right now. Reading them as if they were always {supplier, frequency,
+// direction} objects would silently fail to recognise an already-tracked
+// name (a plain string has no .supplier property), letting a "remove"
+// click add a broken duplicate instead of actually removing it. Every
+// read goes through this first, so both shapes keep working the same
+// way — old data never needs migrating by hand.
+function normalizeTracked(raw) {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((t) =>
+    typeof t === "string"
+      ? { supplier: t, frequency: "monthly", direction: "advance" }
+      : { supplier: t.supplier, frequency: t.frequency || "monthly", direction: t.direction || "advance" }
+  );
+}
+
+// Adds (or subtracts, with a negative delta) whole months to a "YYYY-MM"
+// key, correctly rolling over the year boundary — plain string slicing
+// can't do this safely on its own, December plus one month has to become
+// January of the NEXT year, not month "13" of the same one.
+function addMonths(monthKey, delta) {
+  const [y, m] = monthKey.split("-").map(Number);
+  const total = (y * 12 + (m - 1)) + delta;
+  const newYear = Math.floor(total / 12);
+  const newMonth = (total % 12) + 1;
+  return `${newYear}-${String(newMonth).padStart(2, "0")}`;
+}
+
+// Turns one real bill into however many monthly figures it actually
+// represents — a monthly-billed supplier needs none of this, the bill
+// simply belongs to the month it's dated in. A quarterly or annual bill
+// gets split evenly across the real months it covers, in advance meaning
+// the bill's own month is the FIRST of the period it pays for, in
+// arrears meaning it's the LAST — same amount either way, genuinely
+// different months.
+function spreadBillAcrossMonths(billDateStr, amount, frequency, direction) {
+  const billMonth = billDateStr.slice(0, 7);
+  if (frequency === "monthly" || !frequency) {
+    return [{ month: billMonth, amount }];
+  }
+  const spanMonths = frequency === "quarterly" ? 3 : frequency === "annual" ? 12 : 1;
+  const perMonth = amount / spanMonths;
+  const startOffset = direction === "arrears" ? -(spanMonths - 1) : 0;
+  const result = [];
+  for (let i = 0; i < spanMonths; i++) {
+    result.push({ month: addMonths(billMonth, startOffset + i), amount: perMonth });
+  }
+  return result;
+}
 
 // Xero rotates the refresh token on EVERY use — the one you just used
 // becomes invalid the instant a new one is issued. If we don't store the
@@ -171,8 +223,17 @@ module.exports = async (req, res) => {
   // all, it's just this site's own stored list, so it deliberately runs
   // before the token refresh below rather than needing a live Xero
   // connection to simply add or remove a name from a list.
+  //
+  // Each tracked supplier carries its own billing frequency and, for
+  // anything billed less often than monthly, which direction the bill
+  // runs — a quarterly bill dated in January could mean "covers Jan-Mar,
+  // paid in advance" or "covers Oct-Dec, paid in arrears," and getting
+  // that backwards would misattribute real money to the wrong months.
+  // Monthly is the safe default for anything newly tracked, since most
+  // suppliers genuinely do bill monthly and that needs no spreading logic
+  // at all — a bill just belongs to whichever month it's actually dated.
   if (req.query.action === "tracked-suppliers" && req.method === "GET") {
-    const tracked = (await kv.get(TRACKED_SUPPLIERS_KEY)) || [];
+    const tracked = normalizeTracked(await kv.get(TRACKED_SUPPLIERS_KEY));
     return res.status(200).json({ tracked });
   }
   if (req.query.action === "toggle-tracked-supplier" && req.method === "POST") {
@@ -180,11 +241,23 @@ module.exports = async (req, res) => {
     if (!supplier || typeof supplier !== "string") {
       return res.status(400).json({ error: "A supplier name is required." });
     }
-    const tracked = (await kv.get(TRACKED_SUPPLIERS_KEY)) || [];
-    const alreadyTracked = tracked.includes(supplier);
-    const updated = alreadyTracked ? tracked.filter((s) => s !== supplier) : [...tracked, supplier];
+    const tracked = normalizeTracked(await kv.get(TRACKED_SUPPLIERS_KEY));
+    const alreadyTracked = tracked.some((t) => t.supplier === supplier);
+    const updated = alreadyTracked
+      ? tracked.filter((t) => t.supplier !== supplier)
+      : [...tracked, { supplier, frequency: "monthly", direction: "advance" }];
     await kv.set(TRACKED_SUPPLIERS_KEY, updated);
     return res.status(200).json({ tracked: updated, nowTracked: !alreadyTracked });
+  }
+  if (req.query.action === "set-supplier-frequency" && req.method === "POST") {
+    const { supplier, frequency, direction } = req.body || {};
+    if (!supplier || !["monthly", "quarterly", "annual"].includes(frequency)) {
+      return res.status(400).json({ error: "A valid supplier and frequency are required." });
+    }
+    const tracked = normalizeTracked(await kv.get(TRACKED_SUPPLIERS_KEY));
+    const updated = tracked.map((t) => t.supplier === supplier ? { ...t, frequency, direction: direction || "advance" } : t);
+    await kv.set(TRACKED_SUPPLIERS_KEY, updated);
+    return res.status(200).json({ tracked: updated });
   }
 
   if (req.method !== "GET") {
@@ -320,10 +393,89 @@ module.exports = async (req, res) => {
       }
       const suppliers = Object.values(bySupplier).sort((a, b) => b.total - a.total);
 
+      // A real monthly breakdown, but only computed for the suppliers
+      // actually being tracked — pulling every bill's own individual date
+      // only matters for the handful of suppliers someone's chosen to
+      // follow this closely, not all two hundred, and each bill is
+      // genuinely spread according to that supplier's own configured
+      // billing frequency, not assumed to be monthly across the board.
+      //
+      // A quarterly or annual bill dated BEFORE this period even starts
+      // can still genuinely spread money into it — a LinkedIn bill dated
+      // in June, paid in advance, covers June, July, AND August, so if
+      // this fiscal year starts 1 August, that June bill's real
+      // contribution to August would be invisible if only bills dated
+      // on or after 1 August were ever fetched. Confirmed as a genuine
+      // gap by testing it directly, not assumed. Fixed with a second,
+      // separate fetch that looks back far enough to catch the longest
+      // possible spread (12 months, for anything billed annually),
+      // filtered to just the tracked supplier names so it stays cheap
+      // rather than re-fetching every bill in the company a second time.
+      const tracked = normalizeTracked(await kv.get(TRACKED_SUPPLIERS_KEY));
+      const monthlyBySupplier = {};
+      for (const t of tracked) monthlyBySupplier[t.supplier] = {};
+
+      if (tracked.length > 0) {
+        const maxSpanMonths = Math.max(1, ...tracked.map((t) => t.frequency === "annual" ? 12 : t.frequency === "quarterly" ? 3 : 1));
+        const lookbackFromDate = addMonths(fromDate.slice(0, 7), -(maxSpanMonths - 1)) + "-01";
+        const contactFilter = tracked.map((t) => `Contact.Name=="${t.supplier.replace(/"/g, '\\"')}"`).join("||");
+        const trackedWhereClause = `Type=="ACCPAY"&&Date>=DateTime(${lookbackFromDate.split("-").map(Number).join(",")})&&Date<=DateTime(${ty},${tm},${td})&&(${contactFilter})`;
+
+        let trackedBills = [];
+        let trackedPage = 1;
+        while (trackedPage <= 50) {
+          const trackedRes = await fetch(
+            `https://api.xero.com/api.xro/2.0/Invoices?where=${encodeURIComponent(trackedWhereClause)}&page=${trackedPage}&order=Date`,
+            { headers: xeroHeaders }
+          );
+          if (!trackedRes.ok) {
+            const body = await trackedRes.text();
+            console.error("[xero-reports] tracked-supplier lookback fetch failed:", { page: trackedPage, status: trackedRes.status, body });
+            break; // don't fail the whole request over the monthly breakdown specifically — the year totals above are still good
+          }
+          const trackedData = await trackedRes.json();
+          const invoices = trackedData.Invoices || [];
+          trackedBills.push(...invoices);
+          if (invoices.length < 100) break;
+          trackedPage += 1;
+        }
+
+        const trackedCommitted = trackedBills.filter((b) => b.Status === "AUTHORISED" || b.Status === "PAID");
+        for (const b of trackedCommitted) {
+          const name = (b.Contact && b.Contact.Name) || "Unknown supplier";
+          const trackedEntry = tracked.find((t) => t.supplier === name);
+          if (!trackedEntry || !b.Date) continue;
+          const amount = b.SubTotal !== undefined && b.SubTotal !== null ? b.SubTotal : b.Total;
+          // Xero's own Invoice Date field arrives as "/Date(1700000000000+0000)/"
+          // — its own odd .NET-era serialisation, not ISO — a real, documented
+          // quirk of Xero's API, not a guess. Falls back to reading it as a
+          // plain date string in case that assumption turns out wrong for a
+          // particular response, and logs plainly rather than silently
+          // dropping the bill if neither format can be read.
+          const msMatch = /\/Date\((\d+)/.exec(b.Date);
+          let billDateStr = null;
+          if (msMatch) {
+            billDateStr = new Date(Number(msMatch[1])).toISOString().slice(0, 10);
+          } else if (b.Date) {
+            const parsed = new Date(b.Date);
+            if (!isNaN(parsed.getTime())) billDateStr = parsed.toISOString().slice(0, 10);
+          }
+          if (!billDateStr) {
+            console.error("[xero-reports] couldn't read a bill's date, skipped from the monthly breakdown:", { supplier: name, rawDate: b.Date });
+            continue;
+          }
+          const spread = spreadBillAcrossMonths(billDateStr, amount || 0, trackedEntry.frequency, trackedEntry.direction);
+          for (const s of spread) {
+            monthlyBySupplier[name][s.month] = (monthlyBySupplier[name][s.month] || 0) + s.amount;
+          }
+        }
+      }
+
       return res.status(200).json({
         year, tenantName,
         periodStart: fromDate, periodEnd: toDate,
         suppliers,
+        monthlyBySupplier,
         totalBillsFound: allBills.length,
         committedBillsCounted: committed.length,
         note: "Every bill found for this period, grouped by the supplier's real name in Xero, excluding VAT. Only bills that are Authorised or Paid are counted — drafts and voided bills are excluded.",
