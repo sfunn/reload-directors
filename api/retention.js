@@ -1,6 +1,6 @@
 const { getDirectorFromRequest, kv } = require("./_directorAuth");
 const { ROSTER, EMPLOYMENT_KEY } = require("./roster");
-const { buildTimeline, countAsOf } = require("./headcount");
+const { buildTimeline, countAsOf, averageHeadcountOverPeriod } = require("./headcount");
 
 // This only exists because the roster now holds real start and termination
 // dates — genuinely computable now, in a way it simply wasn't when this
@@ -51,32 +51,6 @@ function averageTenureOfDeparted(employment, category) {
     count += 1;
   }
   return { years: count > 0 ? totalDays / count / DAYS_PER_YEAR : null, count };
-}
-
-// A properly time-weighted average headcount over a window, not a crude
-// average of the two endpoints — walks the actual timeline, weighting each
-// distinct headcount level by how much of the window it was genuinely in
-// effect for, so a brief spike or dip doesn't get over- or under-counted.
-function averageHeadcountOverPeriod(timeline, fromDateStr, toDateStr) {
-  const from = new Date(`${fromDateStr}T00:00:00Z`);
-  const to = new Date(`${toDateStr}T00:00:00Z`);
-  const totalMs = to - from;
-  if (totalMs <= 0) return 0;
-
-  let currentCount = countAsOf(timeline, fromDateStr);
-  let cursor = from;
-  let weightedSum = 0;
-
-  const eventsInWindow = timeline.filter((t) => t.date > fromDateStr && t.date <= toDateStr);
-  for (const ev of eventsInWindow) {
-    const evDate = new Date(`${ev.date}T00:00:00Z`);
-    weightedSum += currentCount * (evDate - cursor);
-    cursor = evDate;
-    currentCount = ev.count;
-  }
-  weightedSum += currentCount * (to - cursor);
-
-  return weightedSum / totalMs;
 }
 
 function departuresInWindow(employment, category, fromDateStr, toDateStr) {
