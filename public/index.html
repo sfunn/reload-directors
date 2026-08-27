@@ -1633,7 +1633,13 @@ function CompanyOverviewPage({ token }) {
           ),
           React.createElement("span", { style: { width: 1, height: 20, background: INDIGO_HAIRLINE } }),
           xeroStatus && xeroStatus.connected
-            ? React.createElement("div", { style: { fontSize: 12, color: VERDIGRIS, fontFamily: "'Work Sans', sans-serif" } }, `Connected to ${xeroStatus.tenantName || "Xero"}`)
+            ? React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } },
+                React.createElement("div", { style: { fontSize: 12, color: VERDIGRIS, fontFamily: "'Work Sans', sans-serif" } }, `Connected to ${xeroStatus.tenantName || "Xero"}`),
+                React.createElement("span", {
+                  onClick: () => { window.location.href = `/api/xero-callback?action=connect&token=${encodeURIComponent(token)}`; },
+                  style: { fontSize: 11, color: INDIGO_MUTED, textDecoration: "underline", cursor: "pointer" }
+                }, "Reconnect")
+              )
             : React.createElement("button", {
                 onClick: () => { window.location.href = `/api/xero-callback?action=connect&token=${encodeURIComponent(token)}`; },
                 style: ghostStyle
