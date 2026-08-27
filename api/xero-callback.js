@@ -84,21 +84,30 @@ async function handleConnect(req, res) {
   // callback — see the note in handleCallback below.)
   const state = Math.random().toString(36).slice(2) + Date.now().toString(36);
 
-  // Reverted back to exactly the two known-working scopes after
-  // accounting.transactions.read came back invalid_scope from Xero — that
-  // guess was wrong, or this app isn't configured for it yet, genuinely
-  // not sure which without checking the app's own scope list directly.
-  // Left broken, the whole authorize request fails as one unit, which
-  // would have blocked reconnecting even for Gross Profit and Cash, the
-  // two things that were already working — reverting first to restore
-  // that, the bill-reading scope needs confirming properly before trying
-  // again, not guessing a second time.
+  // Confirmed directly from Xero's own current scopes documentation, not
+  // guessed a second time — accounting.transactions.read is the OLD broad
+  // scope, deprecated as of Xero's move to granular scopes in March 2026.
+  // Apps already granted a broad scope before that cutoff can keep using
+  // it until September 2027, but a scope requested for the FIRST time
+  // after the cutoff has to use its granular replacement instead, which
+  // is exactly why the broad scope came back invalid_scope — this app had
+  // never been granted transaction access before, so it only ever had the
+  // option of the new name. accounting.invoices.read is that replacement:
+  // Xero's own documentation lists Invoices as covering Bills too (a Bill
+  // is just an Invoice with Type ACCPAY), which is exactly the resource
+  // the supplier lookup reads.
+  //
+  // Adding this scope here only changes what a NEW connection is granted
+  // going forward — it can't retroactively widen a refresh token that's
+  // already been issued under the old, narrower scope. Reconnecting is
+  // required once for this to take effect.
   const scopes = [
     "openid",
     "profile",
     "email",
     "accounting.reports.profitandloss.read",
     "accounting.reports.balancesheet.read",
+    "accounting.invoices.read",
     "offline_access",
   ].join(" ");
 
