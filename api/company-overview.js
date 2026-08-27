@@ -1,5 +1,5 @@
 const { getDirectorFromRequest, kv } = require("./_directorAuth");
-const { resolveUplift, getOverrides } = require("./_dealRevenueUplift");
+const { resolveUplift, resolvedRevenueGBP, getOverrides } = require("./_dealRevenueUplift");
 const { EMPLOYMENT_KEY } = require("./roster");
 const { buildTimeline, countAsOf } = require("./headcount");
 
@@ -97,6 +97,9 @@ module.exports = async (req, res) => {
     let totalRevenueGBP = 0;
     let totalRevenueUSD = 0;
     let countedDeals = 0;
+    let placementRevenueGBP = 0;
+    let placementRevenueUSD = 0;
+    let placementCount = 0;
     const byClient = {};
     const byConsultant = {};
     for (const r of yearRecords) {
@@ -106,37 +109,26 @@ module.exports = async (req, res) => {
       const client = (placement && placement.clientCompanyName) || r.projectClientName || "Unknown";
       const hasPlacementName = !!(placement && placement.candidateName);
 
-      // Same revenue-only uplift as the Yearly Deal Table, applied here so
-      // Company Overview never silently disagrees with it — deliberately
-      // never touches commission anywhere in this codebase.
+      // GBP now comes from the single shared function every revenue page
+      // calls, so this can never quietly drift from the Deal Table or
+      // Consultant Stats the way it briefly did before that existed. USD
+      // stays computed locally — a genuinely separate concern the shared
+      // function doesn't cover.
       const decision = resolveUplift(r, client, year, overrides, hasPlacementName);
-      let gbp = rawGbp;
+      const gbp = resolvedRevenueGBP(r, client, year, overrides, hasPlacementName, allRates);
       let usd = rawUsd;
       if (decision.type === "override") {
         if (decision.customRate) {
           // A specific real rate was recorded for this deal, overriding the
           // standard monthly rate table entirely — expressed as 1 GBP = X
           // USD, same convention as everywhere else in this system.
-          if (decision.currency === "GBP") {
-            gbp = decision.amount;
-            usd = decision.amount * decision.customRate;
-          } else {
-            usd = decision.amount;
-            gbp = decision.amount / decision.customRate;
-          }
+          usd = decision.currency === "GBP" ? decision.amount * decision.customRate : decision.amount;
         } else {
           // The override might genuinely be in GBP, not USD — e.g. a deal
-          // recorded in Atlas as USD but actually paid in pounds. Build one
-          // pseudo-record carrying whichever currency was actually entered,
-          // and run it through BOTH existing conversion functions — each
-          // already handles GBP and USD correctly on its own, so there's no
-          // new conversion logic here, just reuse in both directions.
-          const pseudoRecord = { currency: decision.currency, shareAmount: decision.amount, paid: r.paid, paidMarkedAt: r.paidMarkedAt };
-          gbp = convertToGBP(pseudoRecord, allRates);
-          usd = await convertToUSD(pseudoRecord, allRates);
+          // recorded in Atlas as USD but actually paid in pounds.
+          usd = await convertToUSD({ currency: decision.currency, shareAmount: decision.amount, paid: r.paid, paidMarkedAt: r.paidMarkedAt }, allRates);
         }
       } else if (decision.type === "multiplier") {
-        if (rawGbp !== null) gbp = rawGbp * decision.value;
         if (rawUsd !== null) usd = rawUsd * decision.value;
       }
 
@@ -149,6 +141,16 @@ module.exports = async (req, res) => {
       totalRevenueGBP += gbp;
       if (usd !== null) totalRevenueUSD += usd;
       countedDeals += 1;
+      // A genuinely separate running total, only for real placements — an
+      // onsite fee is real revenue (it stays in totalRevenueGBP above,
+      // unchanged), but it isn't a placement, and Average Fee is meant to
+      // answer "what's a typical placement worth," not get quietly dragged
+      // down by small onsite fees counted as if each one were a deal too.
+      if (hasPlacementName) {
+        placementRevenueGBP += gbp;
+        if (usd !== null) placementRevenueUSD += usd;
+        placementCount += 1;
+      }
       if (!byClient[client]) byClient[client] = { gbp: 0, usd: 0, deals: 0, onsites: 0 };
       byClient[client].gbp += gbp;
       if (usd !== null) byClient[client].usd += usd;
@@ -161,8 +163,12 @@ module.exports = async (req, res) => {
       if (hasPlacementName) byConsultant[consultantKey].deals += 1; else byConsultant[consultantKey].onsites += 1;
     }
 
-    const averageFeeGBP = countedDeals > 0 ? totalRevenueGBP / countedDeals : 0;
-    const averageFeeUSD = countedDeals > 0 ? totalRevenueUSD / countedDeals : 0;
+    // A real placement's average value, not diluted by onsite fees counted
+    // as if each one were its own deal — Total Revenue above still
+    // correctly includes onsite money, this is deliberately a separate
+    // calculation, not a filtered view of the same one.
+    const averageFeeGBP = placementCount > 0 ? placementRevenueGBP / placementCount : 0;
+    const averageFeeUSD = placementCount > 0 ? placementRevenueUSD / placementCount : 0;
 
     const clientConcentration = Object.entries(byClient)
       .map(([client, v]) => ({
@@ -228,6 +234,7 @@ module.exports = async (req, res) => {
     return res.status(200).json({
       year,
       totalRevenueGBP, totalRevenueUSD, countedDeals,
+      averageFeePlacementCount: placementCount,
       averageFeeGBP, averageFeeUSD,
       clientConcentration, top3Percentage, top5Percentage,
       consultantConcentration, consultantTop3Percentage, consultantTop5Percentage,
