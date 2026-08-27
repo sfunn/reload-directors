@@ -1854,7 +1854,8 @@ function CompanyOverviewPage({ token }) {
           React.createElement("button", { onClick: saveGrossProfit, disabled: saving, style: { ...ghostStyle, padding: "9px 16px" } }, saving ? "Saving…" : "Save")
         )
       ),
-      xeroStatus && xeroStatus.connected && React.createElement(ExpenseBreakdownPanel, { token, year })
+      xeroStatus && xeroStatus.connected && React.createElement(ExpenseBreakdownPanel, { token, year }),
+      xeroStatus && xeroStatus.connected && React.createElement(SupplierBillsPanel, { token, year })
     )
   );
 }
@@ -1908,6 +1909,54 @@ function ExpenseBreakdownPanel({ token, year }) {
         React.createElement("span", { style: { color: INDIGO_MUTED } }, l.value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
       ))
     ))
+  );
+}
+
+function SupplierBillsPanel({ token, year }) {
+  const [suppliers, setSuppliers] = useState(null);
+  const [meta, setMeta] = useState(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [checked, setChecked] = useState(false);
+
+  async function check() {
+    setError(""); setLoading(true); setChecked(true);
+    try {
+      const res = await fetch(`/api/xero-reports?action=bills-by-supplier&year=${year}`, { headers: { Authorization: `Bearer ${token}` } });
+      const body = await res.json();
+      if (!res.ok) { setError(body.error || "Couldn't pull the bills."); return; }
+      setSuppliers(body.suppliers);
+      setMeta({ totalBillsFound: body.totalBillsFound, committedBillsCounted: body.committedBillsCounted });
+    } catch (e) {
+      setError("Couldn't reach the server.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return React.createElement(Panel, null,
+    React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 } },
+      React.createElement(SectionTitle, { title: "Who's actually been paid" }),
+      React.createElement("button", { onClick: check, disabled: loading, style: { ...ghostStyle, padding: "7px 12px", fontSize: 12 } }, loading ? "Checking…" : "Check bills by supplier")
+    ),
+    React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "A different question from the chart of accounts above — this pulls every real bill for this year, grouped by the actual supplier name, regardless of which account it happened to be coded to. Excludes VAT and any draft or voided bills, only counts what was genuinely authorised or paid."),
+    error && React.createElement("div", { style: errorStyle }, error),
+    checked && !loading && !error && suppliers && suppliers.length === 0 && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "No bills came back for this year."),
+    meta && React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginBottom: 10 } }, `${meta.committedBillsCounted} bills counted, of ${meta.totalBillsFound} found for the period.`),
+    suppliers && suppliers.length > 0 && React.createElement(React.Fragment, null,
+      React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
+        React.createElement("span", { style: { width: 240, flexShrink: 0 } }, "Supplier"),
+        React.createElement("span", { style: { width: 100, flexShrink: 0 } }, "Total (ex VAT)"),
+        React.createElement("span", { style: { width: 60, flexShrink: 0 } }, "Bills")
+      ),
+      suppliers.map((s) => React.createElement("div", {
+        key: s.supplier, style: { display: "flex", alignItems: "baseline", gap: 4, padding: "4px 0", fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, color: INDIGO, borderBottom: `1px solid ${INDIGO_HAIRLINE}` }
+      },
+        React.createElement("span", { style: { width: 240, flexShrink: 0 } }, s.supplier),
+        React.createElement("span", { style: { width: 100, flexShrink: 0 } }, s.total.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })),
+        React.createElement("span", { style: { width: 60, flexShrink: 0, color: INDIGO_MUTED } }, s.billCount)
+      ))
+    )
   );
 }
 
