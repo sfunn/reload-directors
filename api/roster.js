@@ -65,6 +65,36 @@ module.exports = async (req, res) => {
   const director = await getDirectorFromRequest(req);
   if (!director) return res.status(401).json({ error: "Director access required." });
 
+  if (req.method === "GET" && req.query.action === "monthly-salary") {
+    const year = req.query.year ? parseInt(req.query.year, 10) : new Date().getUTCFullYear();
+    const employment = (await kv.get(EMPLOYMENT_KEY)) || {};
+    const people = Object.entries(ROSTER).map(([id, info]) => {
+      const emp = employment[id] || {};
+      const salaryHistory = emp.salaryHistory || [];
+      const monthly = [];
+      for (let m = 1; m <= 12; m++) {
+        const monthKey = `${year}-${String(m).padStart(2, "0")}`;
+        // salaryAsOf looks up whichever entry applies on or before a given
+        // date — using the LAST day of the month here, not the first, so a
+        // pay rise effective partway through a month is already reflected
+        // in that same month's figure, not deferred to the next one.
+        const lastDayOfMonth = new Date(Date.UTC(year, m, 0)).toISOString().slice(0, 10);
+        const annualSalaryGBP = salaryAsOf(salaryHistory, lastDayOfMonth);
+        // The stored figure is annual, same as everywhere else this data
+        // is shown — a real monthly cost is that divided evenly across
+        // twelve months, not a separate figure someone entered
+        // separately, which could quietly drift from the annual one.
+        monthly.push({
+          month: monthKey,
+          annualSalaryGBP,
+          monthlySalaryGBP: annualSalaryGBP !== null ? annualSalaryGBP / 12 : null,
+        });
+      }
+      return { consultantId: id, consultantName: info.name, category: info.category, monthly };
+    });
+    return res.status(200).json({ year, people });
+  }
+
   if (req.method === "GET") {
     const [employment, records] = await Promise.all([
       kv.get(EMPLOYMENT_KEY).then((v) => v || {}),
