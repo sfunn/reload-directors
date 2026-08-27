@@ -216,35 +216,63 @@ module.exports = async (req, res) => {
   // converted — a record without a usable rate contributes nothing
   // rather than a wrong number, so both totals always add up to a real,
   // checkable figure.
+// Exact port of deals.js's own effectiveYear date resolution — placement
+// start date first, falling back to the fee's own date only when there's
+// no placement start date recorded at all. This is what decides which
+// FINANCIAL YEAR a deal's revenue counts toward, deliberately different
+// from the feeDate-only rule used for placement activity just below,
+// since these are genuinely different questions. "Which month did this
+// person agree a deal in" is an activity question — feeDate, the actual
+// date signed. "Which financial year does this revenue belong to" has to
+// agree with the Deal Table's own figure, or the two pages would show
+// different revenue for the same person with no real explanation why.
+function revenueDateFor(record, placement) {
+  return (placement && placement.startDate) || record.feeDate;
+}
+
   for (const r of records) {
     if (!r.consultantId || !perConsultant[r.consultantId]) continue;
     const placement = r.placementId ? placements[r.placementId] : null;
     const client = (placement && placement.clientCompanyName) || r.projectClientName || null;
     const hasPlacementName = !!(placement && placement.candidateName);
-    const agreedDate = r.feeDate;
-    if (!agreedDate || !agreedDate.startsWith(String(year))) continue;
-    const monthKey = agreedDate.slice(0, 7);
-    if (!perConsultant[r.consultantId].monthly[monthKey]) perConsultant[r.consultantId].monthly[monthKey] = emptyMonthEntry(monthKey);
-    const m = perConsultant[r.consultantId].monthly[monthKey];
-    const yt = perConsultant[r.consultantId].yearTotal;
 
-    if (hasPlacementName) {
-      m.placements += 1;
-      yt.placements += 1;
+    // Placement activity — "did this person agree a deal this month" —
+    // stays exactly as before, feeDate only, matching the "Deals Agreed"
+    // methodology already confirmed correct for this specific question.
+    const agreedDate = r.feeDate;
+    if (agreedDate && agreedDate.startsWith(String(year)) && hasPlacementName) {
+      const activityMonthKey = agreedDate.slice(0, 7);
+      if (!perConsultant[r.consultantId].monthly[activityMonthKey]) perConsultant[r.consultantId].monthly[activityMonthKey] = emptyMonthEntry(activityMonthKey);
+      perConsultant[r.consultantId].monthly[activityMonthKey].placements += 1;
+      perConsultant[r.consultantId].yearTotal.placements += 1;
     }
 
-    // The single shared function every revenue-showing page now calls,
-    // rather than each keeping its own copy of this branching — that
-    // duplication is exactly how the earlier bug happened, one copy
-    // missed a step the others had.
-    const gbp = resolvedRevenueGBP(r, client, year, revenueUpliftOverrides, hasPlacementName, fxRates);
+    // Revenue — "which financial year and month does this money belong
+    // to" — uses the same date deals.js already uses, which can genuinely
+    // differ from feeDate for a deal whose candidate starts months after
+    // the deal itself was signed. Checked independently from the
+    // placement-activity gate above, since a record can belong to this
+    // year under one rule while falling outside it under the other.
+    const revDate = revenueDateFor(r, placement);
+    if (revDate && revDate.startsWith(String(year))) {
+      const revenueMonthKey = revDate.slice(0, 7);
+      if (!perConsultant[r.consultantId].monthly[revenueMonthKey]) perConsultant[r.consultantId].monthly[revenueMonthKey] = emptyMonthEntry(revenueMonthKey);
+      const m = perConsultant[r.consultantId].monthly[revenueMonthKey];
+      const yt = perConsultant[r.consultantId].yearTotal;
 
-    if (gbp !== null) {
-      m.totalRevenueGBP += gbp;
-      yt.totalRevenueGBP += gbp;
-      if (hasPlacementName) {
-        m.placementRevenueGBP += gbp;
-        yt.placementRevenueGBP += gbp;
+      // The single shared function every revenue-showing page now calls,
+      // rather than each keeping its own copy of this branching — that
+      // duplication is exactly how the earlier bug happened, one copy
+      // missed a step the others had.
+      const gbp = resolvedRevenueGBP(r, client, year, revenueUpliftOverrides, hasPlacementName, fxRates);
+
+      if (gbp !== null) {
+        m.totalRevenueGBP += gbp;
+        yt.totalRevenueGBP += gbp;
+        if (hasPlacementName) {
+          m.placementRevenueGBP += gbp;
+          yt.placementRevenueGBP += gbp;
+        }
       }
     }
   }
