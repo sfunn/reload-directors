@@ -957,23 +957,33 @@ function ConsultantStatsPage({ token }) {
   // figure below (the Everyone row, and the per-month and year team
   // averages inside the individual detail view), so all three can never
   // silently compute this differently from each other.
+  // A genuine average across people, never a sum mislabeled as one — a
+  // count with zero activity for someone that period is a real data
+  // point (they were employed and did nothing), so it always counts
+  // toward the headcount in the denominator, unlike a percentage, which
+  // has nothing meaningful to average when there's no real denominator
+  // for that person that period.
   function averageAcrossPeople(peopleRows) {
-    const avg = (key) => {
+    const avgPercentage = (key) => {
       const values = peopleRows.map((r) => r[key]).filter((v) => v !== null);
       return values.length > 0 ? values.reduce((s, v) => s + v, 0) / values.length : null;
     };
+    const avgCount = (key) => {
+      if (peopleRows.length === 0) return 0;
+      return peopleRows.reduce((s, r) => s + r[key], 0) / peopleRows.length;
+    };
     return {
-      calls: peopleRows.reduce((s, r) => s + r.calls, 0),
-      phoneHours: Math.round(peopleRows.reduce((s, r) => s + r.phoneHours, 0) * 10) / 10,
-      cvs: peopleRows.reduce((s, r) => s + r.cvs, 0),
-      interviews: peopleRows.reduce((s, r) => s + r.interviews, 0),
-      onsite: peopleRows.reduce((s, r) => s + r.onsite, 0),
-      offers: peopleRows.reduce((s, r) => s + r.offers, 0),
-      placements: peopleRows.reduce((s, r) => s + r.placements, 0),
-      cvToInterview: avg("cvToInterview"),
-      interviewToOnsite: avg("interviewToOnsite"),
-      onsiteToOffer: avg("onsiteToOffer"),
-      offerToPlacement: avg("offerToPlacement"),
+      calls: avgCount("calls"),
+      phoneHours: avgCount("phoneHours"),
+      cvs: avgCount("cvs"),
+      interviews: avgCount("interviews"),
+      onsite: avgCount("onsite"),
+      offers: avgCount("offers"),
+      placements: avgCount("placements"),
+      cvToInterview: avgPercentage("cvToInterview"),
+      interviewToOnsite: avgPercentage("interviewToOnsite"),
+      onsiteToOffer: avgPercentage("onsiteToOffer"),
+      offerToPlacement: avgPercentage("offerToPlacement"),
     };
   }
 
@@ -1097,15 +1107,15 @@ function ConsultantStatsPage({ token }) {
           React.createElement(Cell, { width: 110, color: INDIGO_MUTED }, formatPercentage(r.onsiteToOffer)),
           React.createElement(Cell, { width: 120, color: INDIGO_MUTED }, formatPercentage(r.offerToPlacement))
         )),
-        everyoneRow && React.createElement(RowLine, { key: "everyone", highlighted: true },
-          React.createElement(Cell, { width: 160, bold: true }, "Everyone"),
-          React.createElement(Cell, { width: 70, bold: true }, everyoneRow.calls),
+        everyoneRow && React.createElement(RowLine, { key: "average", highlighted: true },
+          React.createElement(Cell, { width: 160, bold: true }, "Average"),
+          React.createElement(Cell, { width: 70, bold: true }, everyoneRow.calls.toFixed(1)),
           React.createElement(Cell, { width: 80, bold: true }, everyoneRow.phoneHours.toFixed(1)),
-          React.createElement(Cell, { width: 80, bold: true }, everyoneRow.cvs),
-          React.createElement(Cell, { width: 90, bold: true }, everyoneRow.interviews),
-          React.createElement(Cell, { width: 70, bold: true }, everyoneRow.onsite),
-          React.createElement(Cell, { width: 70, bold: true }, everyoneRow.offers),
-          React.createElement(Cell, { width: 90, bold: true }, everyoneRow.placements),
+          React.createElement(Cell, { width: 80, bold: true }, everyoneRow.cvs.toFixed(1)),
+          React.createElement(Cell, { width: 90, bold: true }, everyoneRow.interviews.toFixed(1)),
+          React.createElement(Cell, { width: 70, bold: true }, everyoneRow.onsite.toFixed(1)),
+          React.createElement(Cell, { width: 70, bold: true }, everyoneRow.offers.toFixed(1)),
+          React.createElement(Cell, { width: 90, bold: true }, everyoneRow.placements.toFixed(1)),
           React.createElement(Cell, { width: 110, bold: true }, formatPercentage(everyoneRow.cvToInterview)),
           React.createElement(Cell, { width: 130, bold: true }, formatPercentage(everyoneRow.interviewToOnsite)),
           React.createElement(Cell, { width: 110, bold: true }, formatPercentage(everyoneRow.onsiteToOffer)),
@@ -1133,34 +1143,34 @@ function ConsultantStatsPage({ token }) {
         ] }),
         individualDetail.monthRows.map((mr) => React.createElement(RowLine, { key: mr.monthKey },
           React.createElement(Cell, { width: 130 }, fullMonthLabel(mr.monthKey)),
-          cellWithAvg(70, overrideValue(mr.person.overrides, "calls", mr.person.calls), mr.teamAverage.calls, (v) => Math.round(v)),
+          cellWithAvg(70, overrideValue(mr.person.overrides, "calls", mr.person.calls), mr.teamAverage.calls, (v) => v.toFixed(1)),
           cellWithAvg(80, overrideValue(mr.person.overrides, "phoneHours", mr.person.phoneHours.toFixed(1)), mr.teamAverage.phoneHours, (v) => v.toFixed(1)),
-          cellWithAvg(80, overrideValue(mr.person.overrides, "cvs", mr.person.cvs), mr.teamAverage.cvs, (v) => Math.round(v)),
-          cellWithAvg(90, overrideValue(mr.person.overrides, "interviews", mr.person.interviews), mr.teamAverage.interviews, (v) => Math.round(v)),
-          cellWithAvg(70, overrideValue(mr.person.overrides, "onsite", mr.person.onsite), mr.teamAverage.onsite, (v) => Math.round(v)),
-          cellWithAvg(70, overrideValue(mr.person.overrides, "offers", mr.person.offers), mr.teamAverage.offers, (v) => Math.round(v)),
-          cellWithAvg(90, overrideValue(mr.person.overrides, "placements", mr.person.placements), mr.teamAverage.placements, (v) => Math.round(v)),
+          cellWithAvg(80, overrideValue(mr.person.overrides, "cvs", mr.person.cvs), mr.teamAverage.cvs, (v) => v.toFixed(1)),
+          cellWithAvg(90, overrideValue(mr.person.overrides, "interviews", mr.person.interviews), mr.teamAverage.interviews, (v) => v.toFixed(1)),
+          cellWithAvg(70, overrideValue(mr.person.overrides, "onsite", mr.person.onsite), mr.teamAverage.onsite, (v) => v.toFixed(1)),
+          cellWithAvg(70, overrideValue(mr.person.overrides, "offers", mr.person.offers), mr.teamAverage.offers, (v) => v.toFixed(1)),
+          cellWithAvg(90, overrideValue(mr.person.overrides, "placements", mr.person.placements), mr.teamAverage.placements, (v) => v.toFixed(1)),
           cellWithAvg(110, formatPercentage(mr.person.cvToInterview), mr.teamAverage.cvToInterview, formatPercentage),
           cellWithAvg(130, formatPercentage(mr.person.interviewToOnsite), mr.teamAverage.interviewToOnsite, formatPercentage),
           cellWithAvg(110, formatPercentage(mr.person.onsiteToOffer), mr.teamAverage.onsiteToOffer, formatPercentage),
           cellWithAvg(120, formatPercentage(mr.person.offerToPlacement), mr.teamAverage.offerToPlacement, formatPercentage)
         )),
-        React.createElement(RowLine, { key: "total", highlighted: true },
-          React.createElement(Cell, { width: 130, bold: true }, "Total"),
-          React.createElement(Cell, { width: 70, bold: true }, Math.round(individualDetail.teamYearAverage.calls)),
+        React.createElement(RowLine, { key: "average", highlighted: true },
+          React.createElement(Cell, { width: 130, bold: true }, "Average"),
+          React.createElement(Cell, { width: 70, bold: true }, individualDetail.teamYearAverage.calls.toFixed(1)),
           React.createElement(Cell, { width: 80, bold: true }, individualDetail.teamYearAverage.phoneHours.toFixed(1)),
-          React.createElement(Cell, { width: 80, bold: true }, Math.round(individualDetail.teamYearAverage.cvs)),
-          React.createElement(Cell, { width: 90, bold: true }, Math.round(individualDetail.teamYearAverage.interviews)),
-          React.createElement(Cell, { width: 70, bold: true }, Math.round(individualDetail.teamYearAverage.onsite)),
-          React.createElement(Cell, { width: 70, bold: true }, Math.round(individualDetail.teamYearAverage.offers)),
-          React.createElement(Cell, { width: 90, bold: true }, Math.round(individualDetail.teamYearAverage.placements)),
+          React.createElement(Cell, { width: 80, bold: true }, individualDetail.teamYearAverage.cvs.toFixed(1)),
+          React.createElement(Cell, { width: 90, bold: true }, individualDetail.teamYearAverage.interviews.toFixed(1)),
+          React.createElement(Cell, { width: 70, bold: true }, individualDetail.teamYearAverage.onsite.toFixed(1)),
+          React.createElement(Cell, { width: 70, bold: true }, individualDetail.teamYearAverage.offers.toFixed(1)),
+          React.createElement(Cell, { width: 90, bold: true }, individualDetail.teamYearAverage.placements.toFixed(1)),
           React.createElement(Cell, { width: 110, bold: true }, formatPercentage(individualDetail.teamYearAverage.cvToInterview)),
           React.createElement(Cell, { width: 130, bold: true }, formatPercentage(individualDetail.teamYearAverage.interviewToOnsite)),
           React.createElement(Cell, { width: 110, bold: true }, formatPercentage(individualDetail.teamYearAverage.onsiteToOffer)),
           React.createElement(Cell, { width: 120, bold: true }, formatPercentage(individualDetail.teamYearAverage.offerToPlacement))
         )
       ),
-      React.createElement("div", { style: { marginTop: 10, fontSize: 12, color: INDIGO_MUTED } }, "Total is the team's own average for the year, not this person's total again — that's already visible summed across the twelve months above.")
+      React.createElement("div", { style: { marginTop: 10, fontSize: 12, color: INDIGO_MUTED } }, "Average is the team's own average for the year, across all ten consultants including James and Josh — not this person's own year total, which is already visible summed across the twelve months above.")
     ),
 
     !loading && data && React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif" } },
