@@ -73,6 +73,37 @@ function findRowByLabel(rows, candidateLabels) {
   return null;
 }
 
+// Genuinely different from findRowByLabel above — that one hunts for ONE
+// specific named line and stops. This one has no idea what's actually in
+// Reload's chart of accounts, so it can't search for a name it doesn't
+// know yet — it walks the whole report and returns EVERY line it finds,
+// tagged with whichever section it sat under, so a real person can look
+// at the actual list and see what's genuinely there. Section titles come
+// from the row immediately preceding a group of data rows in Xero's own
+// report structure, not a fixed position, since that also isn't
+// guaranteed to sit in the same place for every organisation.
+function collectAllLines(rows, currentSection) {
+  const results = [];
+  if (!Array.isArray(rows)) return results;
+  for (const row of rows) {
+    const isSectionHeader = row.RowType === "Section" && row.Title;
+    const sectionName = isSectionHeader ? row.Title : currentSection;
+    if (row.Cells && row.Cells[0] && typeof row.Cells[0].Value === "string" && row.Cells[0].Value.trim() !== "") {
+      const label = row.Cells[0].Value.trim();
+      const valueCell = row.Cells[1];
+      const raw = valueCell ? valueCell.Value : null;
+      const num = raw !== null && raw !== undefined && raw !== "" ? Number(raw) : null;
+      if (num !== null && !isNaN(num)) {
+        results.push({ section: sectionName || null, label, value: num });
+      }
+    }
+    if (Array.isArray(row.Rows)) {
+      results.push(...collectAllLines(row.Rows, sectionName));
+    }
+  }
+  return results;
+}
+
 // Reload's real financial year, hardcoded, not derived from any general
 // rule — because it genuinely isn't a general rule, it's a one-time
 // transition. Confirmed directly with Scott, not guessed:
@@ -150,6 +181,60 @@ module.exports = async (req, res) => {
     "Xero-tenant-id": tenantId,
     Accept: "application/json",
   };
+
+  // A genuinely different action from the default one below — this one
+  // exists purely to see what's actually in the chart of accounts, before
+  // committing to building anything permanent around a specific line
+  // item's name, since that name is currently unknown and worth checking
+  // for real rather than guessing at.
+  if (req.query.action === "expense-breakdown") {
+    try {
+      const { fromDate, periodEndDate } = fiscalYearRange(year);
+      if (currentDateStr < fromDate) {
+        return res.status(400).json({ error: `That financial year hasn't started yet — it begins ${fromDate}.` });
+      }
+      const toDate = currentDateStr < periodEndDate ? currentDateStr : periodEndDate;
+      const plChunks = splitIntoChunks(fromDate, toDate);
+
+      const plResults = await Promise.all(plChunks.map((c) =>
+        fetch(`https://api.xero.com/api.xro/2.0/Reports/ProfitAndLoss?fromDate=${c.from}&toDate=${c.to}`, { headers: xeroHeaders })
+      ));
+      const failedChunk = plResults.find((r) => !r.ok);
+      if (failedChunk) {
+        const plBodies = await Promise.all(plResults.map((r) => r.text()));
+        console.error("[xero-reports] expense-breakdown fetch failed:", { plChunks, plStatuses: plResults.map((r) => r.status), plBodies });
+        return res.status(502).json({ error: "Xero rejected the report request. Check the Vercel logs for the exact response." });
+      }
+      const plDataChunks = await Promise.all(plResults.map((r) => r.json()));
+
+      // Multiple chunks means the same named line (e.g. "Atlas CRM") can
+      // legitimately appear once per chunk with its own partial value for
+      // that slice of the year — summed together here by label, so a
+      // 17-month bridge year still gives one honest total per account,
+      // not several fragments that all need adding up by hand.
+      const byLabel = {};
+      for (const plData of plDataChunks) {
+        const plReport = plData.Reports && plData.Reports[0];
+        const lines = plReport ? collectAllLines(plReport.Rows, null) : [];
+        for (const line of lines) {
+          const key = `${line.section || "—"}::${line.label}`;
+          if (!byLabel[key]) byLabel[key] = { section: line.section, label: line.label, value: 0 };
+          byLabel[key].value += line.value;
+        }
+      }
+      const allLines = Object.values(byLabel).sort((a, b) => (a.section || "").localeCompare(b.section || "") || a.label.localeCompare(b.label));
+
+      return res.status(200).json({
+        year, tenantName,
+        periodStart: fromDate, periodEnd: toDate,
+        lines: allLines,
+        note: "Every line item found in the Profit and Loss report for this period, exactly as Xero's own chart of accounts names it. Figures are in your Xero organisation's own reporting currency.",
+      });
+    } catch (e) {
+      console.error("[xero-reports] expense-breakdown error:", e);
+      return res.status(500).json({ error: "Something went wrong pulling the report. Check the Vercel logs for details." });
+    }
+  }
 
   try {
     const { fromDate, periodEndDate } = fiscalYearRange(year);
