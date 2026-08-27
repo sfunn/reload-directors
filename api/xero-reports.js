@@ -2,6 +2,13 @@ const { getDirectorFromRequest, kv } = require("./_directorAuth");
 
 const TOKENS_KEY = "xero-oauth-tokens"; // { refreshToken, tenantId, tenantName, connectedAt }
 const TRACKED_SUPPLIERS_KEY = "cost-per-person-tracked-suppliers"; // { supplier, frequency, direction }[] — owned entirely by this site, exact supplier names as Xero has them, chosen from a real fetch so there's no risk of a typo silently breaking the match
+// The last successful bills-by-supplier result, keyed by year — genuinely
+// separate from Xero itself, this is just this site's own memory of what
+// it last saw. Without this, leaving the Profitability page and coming
+// back loses the checked figure entirely, since it only ever lived in
+// that page's own component state, gone the moment the component
+// unmounts. { [year]: { monthlyBySupplier, suppliers, checkedAt } }
+const CACHED_SPEND_KEY = "profitability-cached-spend";
 
 // Entries here started out as plain supplier-name strings, before billing
 // frequency existed at all — real, already-tracked suppliers (Atlas,
@@ -235,6 +242,17 @@ module.exports = async (req, res) => {
   if (req.query.action === "tracked-suppliers" && req.method === "GET") {
     const tracked = normalizeTracked(await kv.get(TRACKED_SUPPLIERS_KEY));
     return res.status(200).json({ tracked });
+  }
+  // The last real "Check spend" result for this year, if there's ever
+  // been one — never calls Xero itself, just reads this site's own
+  // memory of what it last saw there. Lets a page load with real,
+  // if possibly slightly stale, figures already showing, rather than
+  // forcing a fresh Xero call every single time someone visits.
+  if (req.query.action === "cached-spend" && req.method === "GET") {
+    const year = req.query.year ? parseInt(req.query.year, 10) : new Date().getUTCFullYear();
+    const allCached = (await kv.get(CACHED_SPEND_KEY)) || {};
+    const cached = allCached[year] || null;
+    return res.status(200).json({ year, cached });
   }
   if (req.query.action === "toggle-tracked-supplier" && req.method === "POST") {
     const { supplier } = req.body || {};
@@ -471,6 +489,11 @@ module.exports = async (req, res) => {
         }
       }
 
+      const checkedAt = new Date().toISOString();
+      const allCached = (await kv.get(CACHED_SPEND_KEY)) || {};
+      allCached[year] = { monthlyBySupplier, suppliers, checkedAt };
+      await kv.set(CACHED_SPEND_KEY, allCached);
+
       return res.status(200).json({
         year, tenantName,
         periodStart: fromDate, periodEnd: toDate,
@@ -478,6 +501,7 @@ module.exports = async (req, res) => {
         monthlyBySupplier,
         totalBillsFound: allBills.length,
         committedBillsCounted: committed.length,
+        checkedAt,
         note: "Every bill found for this period, grouped by the supplier's real name in Xero, excluding VAT. Only bills that are Authorised or Paid are counted — drafts and voided bills are excluded.",
       });
     } catch (e) {
