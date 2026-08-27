@@ -54,10 +54,10 @@ const TEAM_LEAD_NAMES = {
 };
 
 function emptyMonthEntry(monthKey) {
-  return { month: monthKey, calls: 0, callSeconds: 0, cvs: 0, interviews: 0, onsite: 0, offers: 0, placements: 0, placementRevenueGBP: 0 };
+  return { month: monthKey, calls: 0, callSeconds: 0, cvs: 0, interviews: 0, onsite: 0, offers: 0, placements: 0, placementRevenueGBP: 0, totalRevenueGBP: 0 };
 }
 function emptyYearTotal() {
-  return { calls: 0, callSeconds: 0, cvs: 0, interviews: 0, onsite: 0, offers: 0, placements: 0, placementRevenueGBP: 0 };
+  return { calls: 0, callSeconds: 0, cvs: 0, interviews: 0, onsite: 0, offers: 0, placements: 0, placementRevenueGBP: 0, totalRevenueGBP: 0 };
 }
 
 // --- Ported directly from company-overview.js, not re-derived, so GBP
@@ -225,38 +225,55 @@ module.exports = async (req, res) => {
     }
   }
 
-  // Placements — a genuine placement (a real linked candidate name, not an
-  // onsite fee), bucketed by when the DEAL was agreed (the fee's own
-  // feeDate, same "Date Signed" field Commission already shows), not the
-  // candidate's job start date. A candidate can start months after the
-  // deal was actually signed, notice periods being what they are, so
-  // start date would measure the wrong event entirely for "activity in
-  // this month." Counted regardless of currency or exchange rate
-  // availability, since this is a headcount of placements, not a revenue
-  // figure — a missing FX rate should never hide a real placement from
-  // this count.
+  // Revenue — every genuine fee record with this person's consultantId,
+  // bucketed by when the deal was actually agreed (the fee's own feeDate,
+  // same "Date Signed" field Commission already shows), not the
+  // candidate's job start date for placements. A candidate can start
+  // months after the deal was signed, notice periods being what they
+  // are, so start date would measure the wrong event entirely for
+  // "activity in this month."
+  //
+  // Two genuinely different figures, not one filtered view of the other:
+  // placementRevenueGBP counts genuine placements only, the same
+  // distinction Average Fee relies on to answer "what's a typical
+  // placement worth" — an onsite fee isn't a placement, mixing it in
+  // would answer a different question. totalRevenueGBP is the real
+  // question this profitability work is actually asking though: how
+  // much money did this person genuinely bring in, and an onsite fee is
+  // real money they brought in, excluding it would understate them.
+  //
+  // Placement COUNT is deliberately only ever incremented for genuine
+  // placements, regardless of currency or exchange rate availability,
+  // since it's a headcount of placements, not a revenue figure — a
+  // missing FX rate should never hide a real placement from that count.
+  // Revenue figures, in contrast, only add what can actually be
+  // converted — a record without a usable rate contributes nothing
+  // rather than a wrong number, so both totals always add up to a real,
+  // checkable figure.
   for (const r of records) {
     if (!r.consultantId || !perConsultant[r.consultantId]) continue;
     const placement = r.placementId ? placements[r.placementId] : null;
     const hasPlacementName = !!(placement && placement.candidateName);
-    if (!hasPlacementName) continue;
     const agreedDate = r.feeDate;
     if (!agreedDate || !agreedDate.startsWith(String(year))) continue;
     const monthKey = agreedDate.slice(0, 7);
     if (!perConsultant[r.consultantId].monthly[monthKey]) perConsultant[r.consultantId].monthly[monthKey] = emptyMonthEntry(monthKey);
-    perConsultant[r.consultantId].monthly[monthKey].placements += 1;
-    perConsultant[r.consultantId].yearTotal.placements += 1;
-    // GBP revenue for this same genuine placement — deliberately a plain
-    // computed figure, not one of the override-able KPI fields above.
-    // This is real financial data, already governed by its own separate
-    // correctness mechanisms (FX rates, manual per-deal overrides)
-    // elsewhere in the system, not something a director corrects here.
-    // A record without a usable FX rate contributes 0 rather than being
-    // silently dropped, so this always adds up to a real, checkable total.
+    const m = perConsultant[r.consultantId].monthly[monthKey];
+    const yt = perConsultant[r.consultantId].yearTotal;
+
+    if (hasPlacementName) {
+      m.placements += 1;
+      yt.placements += 1;
+    }
+
     const gbp = convertToGBP(r, fxRates);
     if (gbp !== null) {
-      perConsultant[r.consultantId].monthly[monthKey].placementRevenueGBP += gbp;
-      perConsultant[r.consultantId].yearTotal.placementRevenueGBP += gbp;
+      m.totalRevenueGBP += gbp;
+      yt.totalRevenueGBP += gbp;
+      if (hasPlacementName) {
+        m.placementRevenueGBP += gbp;
+        yt.placementRevenueGBP += gbp;
+      }
     }
   }
 
@@ -285,7 +302,7 @@ module.exports = async (req, res) => {
       // Not an override-able KPI field, carried through exactly as
       // computed — dropped entirely if left out of this object here,
       // since everything below is rebuilt fresh from OVERRIDE_FIELDS only.
-      finalMonthly[monthKey] = { month: monthKey, ...resolved, placementRevenueGBP: m.placementRevenueGBP, overrides: overrideFlags };
+      finalMonthly[monthKey] = { month: monthKey, ...resolved, placementRevenueGBP: m.placementRevenueGBP, totalRevenueGBP: m.totalRevenueGBP, overrides: overrideFlags };
     }
     c.monthly = finalMonthly;
     c.yearTotal = OVERRIDE_FIELDS.reduce((acc, field) => {
@@ -293,6 +310,7 @@ module.exports = async (req, res) => {
       return acc;
     }, {});
     c.yearTotal.placementRevenueGBP = Object.values(finalMonthly).reduce((s, m) => s + (Number(m.placementRevenueGBP) || 0), 0);
+    c.yearTotal.totalRevenueGBP = Object.values(finalMonthly).reduce((s, m) => s + (Number(m.totalRevenueGBP) || 0), 0);
   }
 
   const consultants = Object.values(perConsultant).map((c) => ({
