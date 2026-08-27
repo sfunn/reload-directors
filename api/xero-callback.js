@@ -84,20 +84,26 @@ async function handleConnect(req, res) {
   // callback — see the note in handleCallback below.)
   const state = Math.random().toString(36).slice(2) + Date.now().toString(36);
 
-  // Confirmed directly against this Xero app's own scope list (screenshot
-  // from developer.xero.com), not guessed — "accounting.reports.read"
-  // never existed as a real Xero scope at all, which is why every earlier
-  // attempt at this kept failing with invalid_scope, on both this site and
-  // the incentive site before it. Xero splits report access into specific
-  // report types instead. These two are scoped to exactly what Gross
-  // Profit (Profit and Loss) and Cash (Balance Sheet) actually need, not a
-  // broader grant than the feature requires.
+  // Originally scoped to exactly Gross Profit and Cash, nothing broader —
+  // that held true until the supplier bill lookup was added, which reads
+  // Xero's own Invoices endpoint, a genuinely different part of the API
+  // that report-only scopes can't touch. accounting.transactions.read is
+  // Xero's own documented scope for read access to Invoices (which is
+  // where Bills live), Credit Notes, and Bank Transactions — read only,
+  // nothing this site ever needs to write.
+  //
+  // Adding this scope here only changes what a NEW connection is granted
+  // going forward — it can't retroactively widen a refresh token that's
+  // already been issued under the old, narrower scope. Anyone who
+  // connected before this change needs to disconnect and reconnect once,
+  // to get a token that's actually allowed to read bills.
   const scopes = [
     "openid",
     "profile",
     "email",
     "accounting.reports.profitandloss.read",
     "accounting.reports.balancesheet.read",
+    "accounting.transactions.read",
     "offline_access",
   ].join(" ");
 
