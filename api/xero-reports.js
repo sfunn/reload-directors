@@ -236,6 +236,82 @@ module.exports = async (req, res) => {
     }
   }
 
+  // A genuinely different question from expense-breakdown above — that one
+  // shows what an ACCOUNT was coded to, this one shows what a SUPPLIER was
+  // actually paid, regardless of which account their bills happened to be
+  // coded against. Two different tools answering two different questions,
+  // not a more detailed version of the same one.
+  if (req.query.action === "bills-by-supplier") {
+    try {
+      const { fromDate, periodEndDate } = fiscalYearRange(year);
+      if (currentDateStr < fromDate) {
+        return res.status(400).json({ error: `That financial year hasn't started yet — it begins ${fromDate}.` });
+      }
+      const toDate = currentDateStr < periodEndDate ? currentDateStr : periodEndDate;
+
+      const [fy, fm, fd] = fromDate.split("-").map(Number);
+      const [ty, tm, td] = toDate.split("-").map(Number);
+      // ACCPAY is Xero's own type code for a bill received from a supplier
+      // (as opposed to ACCREC, an invoice sent out to a client) — Xero's
+      // own where-clause syntax, not a value we're inventing.
+      const whereClause = `Type=="ACCPAY"&&Date>=DateTime(${fy},${fm},${fd})&&Date<=DateTime(${ty},${tm},${td})`;
+
+      // Xero returns up to 100 bills per page on this endpoint — a real
+      // year of activity across every supplier can easily exceed that, so
+      // this has to keep asking for the next page until a page comes back
+      // with fewer than 100, the genuine signal that it was the last one.
+      // Capped at 50 pages (5,000 bills) purely as a safety net against an
+      // unexpected response shape looping forever, not a real limit anyone
+      // should ever hit in a single year.
+      let allBills = [];
+      let page = 1;
+      while (page <= 50) {
+        const billsRes = await fetch(
+          `https://api.xero.com/api.xro/2.0/Invoices?where=${encodeURIComponent(whereClause)}&page=${page}&order=Date`,
+          { headers: xeroHeaders }
+        );
+        if (!billsRes.ok) {
+          const body = await billsRes.text();
+          console.error("[xero-reports] bills-by-supplier fetch failed:", { page, status: billsRes.status, body });
+          return res.status(502).json({ error: "Xero rejected the bills request. Check the Vercel logs for the exact response." });
+        }
+        const billsData = await billsRes.json();
+        const invoices = billsData.Invoices || [];
+        allBills.push(...invoices);
+        if (invoices.length < 100) break;
+        page += 1;
+      }
+
+      // Draft and voided bills aren't real committed spend — only count
+      // what Reload actually authorised or paid.
+      const committed = allBills.filter((b) => b.Status === "AUTHORISED" || b.Status === "PAID");
+
+      const bySupplier = {};
+      for (const b of committed) {
+        const name = (b.Contact && b.Contact.Name) || "Unknown supplier";
+        // SubTotal, not Total — excluding VAT, so this is comparable to
+        // the P&L's own account figures, which are net of recoverable tax.
+        const amount = b.SubTotal !== undefined && b.SubTotal !== null ? b.SubTotal : b.Total;
+        if (!bySupplier[name]) bySupplier[name] = { supplier: name, total: 0, billCount: 0 };
+        bySupplier[name].total += amount || 0;
+        bySupplier[name].billCount += 1;
+      }
+      const suppliers = Object.values(bySupplier).sort((a, b) => b.total - a.total);
+
+      return res.status(200).json({
+        year, tenantName,
+        periodStart: fromDate, periodEnd: toDate,
+        suppliers,
+        totalBillsFound: allBills.length,
+        committedBillsCounted: committed.length,
+        note: "Every bill found for this period, grouped by the supplier's real name in Xero, excluding VAT. Only bills that are Authorised or Paid are counted — drafts and voided bills are excluded.",
+      });
+    } catch (e) {
+      console.error("[xero-reports] bills-by-supplier error:", e);
+      return res.status(500).json({ error: "Something went wrong pulling the bills. Check the Vercel logs for details." });
+    }
+  }
+
   try {
     const { fromDate, periodEndDate } = fiscalYearRange(year);
 
