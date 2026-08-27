@@ -1853,8 +1853,61 @@ function CompanyOverviewPage({ token }) {
           ),
           React.createElement("button", { onClick: saveGrossProfit, disabled: saving, style: { ...ghostStyle, padding: "9px 16px" } }, saving ? "Saving…" : "Save")
         )
-      )
+      ),
+      xeroStatus && xeroStatus.connected && React.createElement(ExpenseBreakdownPanel, { token, year })
     )
+  );
+}
+
+function ExpenseBreakdownPanel({ token, year }) {
+  const [lines, setLines] = useState(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [checked, setChecked] = useState(false);
+
+  async function check() {
+    setError(""); setLoading(true); setChecked(true);
+    try {
+      const res = await fetch(`/api/xero-reports?action=expense-breakdown&year=${year}`, { headers: { Authorization: `Bearer ${token}` } });
+      const body = await res.json();
+      if (!res.ok) { setError(body.error || "Couldn't pull the report."); return; }
+      setLines(body.lines);
+    } catch (e) {
+      setError("Couldn't reach the server.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Grouped by section purely for readability — Xero's own chart of
+  // accounts decides what the sections and their names actually are,
+  // nothing here assumes or invents a structure.
+  const bySection = {};
+  if (lines) {
+    for (const l of lines) {
+      const key = l.section || "Other";
+      if (!bySection[key]) bySection[key] = [];
+      bySection[key].push(l);
+    }
+  }
+
+  return React.createElement(Panel, null,
+    React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 } },
+      React.createElement(SectionTitle, { title: "What's in Xero" }),
+      React.createElement("button", { onClick: check, disabled: loading, style: { ...ghostStyle, padding: "7px 12px", fontSize: 12 } }, loading ? "Checking…" : "Check chart of accounts")
+    ),
+    React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Purely diagnostic — pulls every line item from this year's Profit and Loss report exactly as Xero names it, so you can see for real whether something like Atlas or LinkedIn has its own line, before building anything around a name that might not be right."),
+    error && React.createElement("div", { style: errorStyle }, error),
+    checked && !loading && !error && lines && lines.length === 0 && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "No line items came back for this year."),
+    lines && lines.length > 0 && Object.entries(bySection).map(([section, sectionLines]) => React.createElement("div", { key: section, style: { marginBottom: 16 } },
+      React.createElement("div", { style: { ...labelStyle, marginBottom: 6 } }, section),
+      sectionLines.map((l) => React.createElement("div", {
+        key: l.label, style: { display: "flex", alignItems: "baseline", gap: 4, padding: "4px 0", fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, color: INDIGO, borderBottom: `1px solid ${INDIGO_HAIRLINE}` }
+      },
+        React.createElement("span", { style: { width: 240, flexShrink: 0 } }, l.label),
+        React.createElement("span", { style: { color: INDIGO_MUTED } }, l.value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }))
+      ))
+    ))
   );
 }
 
