@@ -2071,12 +2071,16 @@ function CostPerPersonPanel({ token, year }) {
 
 function ProfitabilityPage({ token }) {
   const [year, setYear] = useState(new Date().getUTCFullYear());
+  const [viewMode, setViewMode] = useState("year"); // "year" | "overall"
   const [revenueData, setRevenueData] = useState(null);
   const [headcountMonthly, setHeadcountMonthly] = useState(null);
   const [salaryData, setSalaryData] = useState(null);
   const [commissionByConsultant, setCommissionByConsultant] = useState(null);
   const [spendMonthly, setSpendMonthly] = useState(null);
   const [spendCheckedAt, setSpendCheckedAt] = useState(null);
+  const [overallData, setOverallData] = useState(null);
+  const [overallLoading, setOverallLoading] = useState(false);
+  const [overallError, setOverallError] = useState("");
   const [error, setError] = useState("");
   const [spendError, setSpendError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -2147,6 +2151,92 @@ function ProfitabilityPage({ token }) {
   }, [token, year]);
 
   useEffect(() => { loadCheap(); }, [loadCheap]);
+
+  // The Overall view — genuinely different from the year view above, not
+  // just that view with the year filter removed. Revenue and salary are
+  // summed across every year on record, since neither needs a fresh Xero
+  // call. Commission is summed from each year's own correctly-computed
+  // total (bands and targets reset every year, so pooling every deal
+  // together under one year's bands would be wrong) via the all-time
+  // action built specifically for this. Overhead sums whatever's already
+  // been checked and cached for each year — years never checked are
+  // plainly reported as gaps, never silently treated as free.
+  const loadOverall = useCallback(async () => {
+    setOverallError(""); setOverallLoading(true);
+    try {
+      const [revResults, headResults, salResults, spendResults, ...commissionResults] = await Promise.all([
+        Promise.all(YEAR_OPTIONS.map((y) => fetch(`/api/consultant-stats?year=${y}`, { headers: { Authorization: `Bearer ${token}` } }))),
+        Promise.all(YEAR_OPTIONS.map((y) => fetch(`/api/headcount?action=monthly&year=${y}`, { headers: { Authorization: `Bearer ${token}` } }))),
+        Promise.all(YEAR_OPTIONS.map((y) => fetch(`/api/roster?action=monthly-salary&year=${y}`, { headers: { Authorization: `Bearer ${token}` } }))),
+        Promise.all(YEAR_OPTIONS.map((y) => fetch(`/api/xero-reports?action=cached-spend&year=${y}`, { headers: { Authorization: `Bearer ${token}` } }))),
+        ...STATS_CONSULTANTS.map((sc) => fetch(`/api/commission?consultantId=${sc.id}&action=all-time`, { headers: { Authorization: `Bearer ${token}` } })),
+      ]);
+
+      const revenueByConsultant = {};
+      const placementsByConsultant = {};
+      for (const r of revResults) {
+        if (!r.ok) continue;
+        const body = await r.json();
+        for (const c of body.consultants) {
+          revenueByConsultant[c.consultantId] = (revenueByConsultant[c.consultantId] || 0) + c.yearTotal.totalRevenueGBP;
+          placementsByConsultant[c.consultantId] = (placementsByConsultant[c.consultantId] || 0) + c.yearTotal.placements;
+        }
+      }
+
+      const salaryMonthsByConsultant = {};
+      for (const r of salResults) {
+        if (!r.ok) continue;
+        const body = await r.json();
+        for (const p of body.people) {
+          if (!salaryMonthsByConsultant[p.consultantId]) salaryMonthsByConsultant[p.consultantId] = [];
+          salaryMonthsByConsultant[p.consultantId].push(...p.monthly);
+        }
+      }
+
+      const headcountByMonth = {};
+      for (const r of headResults) {
+        if (!r.ok) continue;
+        const body = await r.json();
+        for (const m of body.monthly) headcountByMonth[m.month] = m.feeEarning;
+      }
+
+      const spendByMonth = {};
+      const checkedYears = [];
+      const uncheckedYears = [];
+      for (let i = 0; i < spendResults.length; i++) {
+        const y = YEAR_OPTIONS[i];
+        if (!spendResults[i].ok) { uncheckedYears.push(y); continue; }
+        const body = await spendResults[i].json();
+        if (!body.cached) { uncheckedYears.push(y); continue; }
+        checkedYears.push(y);
+        for (const supplier of Object.values(body.cached.monthlyBySupplier || {})) {
+          for (const [monthKey, amount] of Object.entries(supplier)) {
+            spendByMonth[monthKey] = (spendByMonth[monthKey] || 0) + amount;
+          }
+        }
+      }
+
+      const commissionByConsultantAllTime = {};
+      for (let i = 0; i < STATS_CONSULTANTS.length; i++) {
+        if (commissionResults[i].ok) {
+          const body = await commissionResults[i].json();
+          commissionByConsultantAllTime[STATS_CONSULTANTS[i].id] = body.totalCommission || 0;
+        }
+      }
+
+      setOverallData({
+        revenueByConsultant, placementsByConsultant, salaryMonthsByConsultant,
+        headcountByMonth, spendByMonth, checkedYears, uncheckedYears,
+        commissionByConsultantAllTime,
+      });
+    } catch (e) {
+      setOverallError("Couldn't reach the server.");
+    } finally {
+      setOverallLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => { if (viewMode === "overall" && !overallData) loadOverall(); }, [viewMode, overallData, loadOverall]);
 
   async function checkSpend() {
     setSpendError(""); setCheckingSpend(true);
@@ -2237,7 +2327,44 @@ function ProfitabilityPage({ token }) {
     };
   }
 
-  let rows = revenueData ? STATS_CONSULTANTS.map((sc) => buildConsultantYear(sc.id, sc.name)) : [];
+  // All-time equivalent of buildConsultantYear above — same return shape
+  // deliberately, so the table below can render either view without
+  // caring which one it's looking at. Salary-incomplete here is a
+  // coarser check than the yearly view's month-by-month one (real
+  // placements exist, but literally no salary was ever entered at all),
+  // since the aggregated overall data doesn't carry per-month revenue
+  // to cross-reference the same way the yearly view does.
+  function buildConsultantOverall(consultantId, consultantName) {
+    if (!overallData) return null;
+    const revenueGBP = overallData.revenueByConsultant[consultantId] || 0;
+    const placementCount = overallData.placementsByConsultant[consultantId] || 0;
+    const commissionGBP = overallData.commissionByConsultantAllTime[consultantId] || 0;
+
+    const salaryMonths = overallData.salaryMonthsByConsultant[consultantId] || [];
+    const salaryGBP = salaryMonths.reduce((s, m) => s + (m.monthlySalaryGBP || 0), 0);
+    const salaryIncomplete = placementCount > 0 && salaryGBP === 0;
+
+    let overheadShareGBP = 0;
+    for (const [monthKey, spend] of Object.entries(overallData.spendByMonth)) {
+      const headcount = overallData.headcountByMonth[monthKey];
+      if (headcount) overheadShareGBP += spend / headcount;
+    }
+
+    const profitGBP = revenueGBP - salaryGBP - commissionGBP - overheadShareGBP;
+
+    return {
+      consultantId, consultantName,
+      revenueGBP, salaryGBP, commissionGBP, overheadShareGBP,
+      profitGBP,
+      marginPercent: revenueGBP > 0 ? (profitGBP / revenueGBP) * 100 : null,
+      placementCount,
+      salaryIncomplete, overheadIncomplete: overallData.checkedYears.length === 0,
+    };
+  }
+
+  let rows = viewMode === "overall"
+    ? (overallData ? STATS_CONSULTANTS.map((sc) => buildConsultantOverall(sc.id, sc.name)) : [])
+    : (revenueData ? STATS_CONSULTANTS.map((sc) => buildConsultantYear(sc.id, sc.name)) : []);
   if (sortMode === "profit") rows = [...rows].sort((a, b) => b.profitGBP - a.profitGBP);
   else if (sortMode === "margin") rows = [...rows].sort((a, b) => (b.marginPercent ?? -Infinity) - (a.marginPercent ?? -Infinity));
 
@@ -2274,28 +2401,44 @@ function ProfitabilityPage({ token }) {
     React.createElement(Panel, null,
       React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 } },
         React.createElement(SectionTitle, { title: "Profitability" }),
-        React.createElement("div", { style: { display: "flex", gap: 10, alignItems: "center" } },
+        React.createElement("div", { style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" } },
           React.createElement("div", { style: { display: "flex", gap: 6 } },
+            React.createElement("button", {
+              onClick: () => setViewMode("year"),
+              style: { ...chipStyle, background: viewMode === "year" ? INDIGO : "rgba(46,64,91,0.06)", color: viewMode === "year" ? WHITE : INDIGO, fontWeight: viewMode === "year" ? 700 : 500 }
+            }, "This Year"),
+            React.createElement("button", {
+              onClick: () => setViewMode("overall"),
+              style: { ...chipStyle, background: viewMode === "overall" ? INDIGO : "rgba(46,64,91,0.06)", color: viewMode === "overall" ? WHITE : INDIGO, fontWeight: viewMode === "overall" ? 700 : 500 }
+            }, "Overall")
+          ),
+          viewMode === "year" && React.createElement("div", { style: { display: "flex", gap: 6 } },
             YEAR_OPTIONS.map((y) => React.createElement("button", {
               key: y, onClick: () => setYear(y),
               style: { ...chipStyle, background: year === y ? MELON : "rgba(255,176,140,0.14)", fontWeight: year === y ? 700 : 500 }
             }, y))
           ),
-          React.createElement("button", {
+          viewMode === "year" && React.createElement("button", {
             onClick: checkSpend, disabled: checkingSpend || !(xeroStatus && xeroStatus.connected),
             style: { ...ghostStyle, padding: "7px 12px", fontSize: 12, opacity: (xeroStatus && xeroStatus.connected) ? 1 : 0.4 }
           }, checkingSpend ? "Checking…" : "Check spend")
         )
       ),
-      React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginTop: 10 } }, "Revenue is genuine money brought in, placements and onsite fees both — the same real question this whole page exists to answer, not just the placements-only figure Average Fee uses. Commission is what was actually paid out on their own deals. Overhead is each tracked supplier's real monthly spend, split evenly across however many people were actually part of the team that month, summed across the year."),
-      xeroStatus && !xeroStatus.connected && React.createElement("div", { style: { fontSize: 12, color: MELON_LINK, marginTop: 6 } }, "Xero isn't connected yet — connect it from Company Overview first."),
-      spendChecked && spendCheckedAt && React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 6 } }, `Overhead last checked ${new Date(spendCheckedAt).toLocaleString("en-GB")} — click "Check spend" for a fresher figure any time.`),
-      !spendChecked && xeroStatus && xeroStatus.connected && React.createElement("div", { style: { fontSize: 12, color: MELON_LINK, marginTop: 6 } }, "Overhead has never been checked for this year yet — gross profit below excludes it until you click \"Check spend\"."),
-      spendError && React.createElement("div", { style: { ...errorStyle, marginTop: 6 } }, spendError)
+      React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginTop: 10 } },
+        viewMode === "overall"
+          ? "Every figure here is since each person actually started, not scoped to any one year. Revenue and salary need no fresh Xero call. Overhead sums whichever years you've already checked spend for on the This Year view — a year never checked simply isn't counted, not silently treated as free."
+          : "Revenue is genuine money brought in, placements and onsite fees both — the same real question this whole page exists to answer, not just the placements-only figure Average Fee uses. Commission is what was actually paid out on their own deals. Overhead is each tracked supplier's real monthly spend, split evenly across however many people were actually part of the team that month, summed across the year."
+      ),
+      viewMode === "year" && xeroStatus && !xeroStatus.connected && React.createElement("div", { style: { fontSize: 12, color: MELON_LINK, marginTop: 6 } }, "Xero isn't connected yet — connect it from Company Overview first."),
+      viewMode === "year" && spendChecked && spendCheckedAt && React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 6 } }, `Overhead last checked ${new Date(spendCheckedAt).toLocaleString("en-GB")} — click "Check spend" for a fresher figure any time.`),
+      viewMode === "year" && !spendChecked && xeroStatus && xeroStatus.connected && React.createElement("div", { style: { fontSize: 12, color: MELON_LINK, marginTop: 6 } }, "Overhead has never been checked for this year yet — gross profit below excludes it until you click \"Check spend\"."),
+      viewMode === "year" && spendError && React.createElement("div", { style: { ...errorStyle, marginTop: 6 } }, spendError),
+      viewMode === "overall" && overallData && overallData.uncheckedYears.length > 0 && React.createElement("div", { style: { fontSize: 12, color: MELON_LINK, marginTop: 6 } }, `Overhead is missing for ${overallData.uncheckedYears.join(", ")} — spend was never checked for ${overallData.uncheckedYears.length === 1 ? "that year" : "those years"} on the This Year view.`),
+      viewMode === "overall" && overallError && React.createElement("div", { style: { ...errorStyle, marginTop: 6 } }, overallError)
     ),
     error && React.createElement("div", { style: errorStyle }, error),
-    loading && React.createElement(Panel, null, React.createElement("div", { style: { padding: 20, textAlign: "center", color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif" } }, "Loading…")),
-    !loading && revenueData && React.createElement(Panel, null,
+    (viewMode === "year" ? loading : overallLoading) && React.createElement(Panel, null, React.createElement("div", { style: { padding: 20, textAlign: "center", color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif" } }, "Loading…")),
+    (viewMode === "year" ? (!loading && revenueData) : (!overallLoading && overallData)) && React.createElement(Panel, null,
       React.createElement("div", { style: { overflowX: "auto" } },
         React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
           React.createElement("span", { style: { width: 160, flexShrink: 0 } }, "Consultant"),
