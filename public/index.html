@@ -2296,6 +2296,17 @@ function ProfitabilityPage({ token }) {
     return true;
   }
 
+  // Salary carry-forward has no concept of the future — asked for
+  // December 2027's salary, it happily answers with whatever the latest
+  // known rate is, since that's a genuinely useful answer to "what would
+  // they be on right now," but wrong to sum as a real historical cost
+  // for a month that hasn't happened yet. A month only counts as real
+  // spend once it's actually arrived.
+  const CURRENT_MONTH_KEY = `${new Date().getUTCFullYear()}-${String(new Date().getUTCMonth() + 1).padStart(2, "0")}`;
+  function hasMonthHappenedYet(monthKey) {
+    return monthKey <= CURRENT_MONTH_KEY;
+  }
+
   // Builds one consultant's full year: revenue from consultant-stats
   // (placements plus onsites, genuine money they brought in), salary
   // summed from their own dated history, commission actually paid on
@@ -2319,14 +2330,15 @@ function ProfitabilityPage({ token }) {
     for (let m = 1; m <= 12; m++) {
       const monthKey = `${year}-${String(m).padStart(2, "0")}`;
       const monthSalary = sal ? sal.monthly.find((mm) => mm.month === monthKey) : null;
-      if (monthSalary && monthSalary.monthlySalaryGBP !== null) {
+      if (monthSalary && monthSalary.monthlySalaryGBP !== null && hasMonthHappenedYet(monthKey)) {
         salaryGBP += monthSalary.monthlySalaryGBP;
       } else {
         // A month with genuine revenue but no salary on record is worth
         // flagging — everything else is worth quietly skipping (nobody
-        // expects salary before someone's even started).
+        // expects salary before someone's even started, or after a month
+        // that genuinely hasn't happened yet).
         const monthRevenue = rev ? rev.monthly.find((mm) => mm.month === monthKey) : null;
-        if (monthRevenue && monthRevenue.totalRevenueGBP > 0) salaryIncomplete = true;
+        if (monthRevenue && monthRevenue.totalRevenueGBP > 0 && hasMonthHappenedYet(monthKey)) salaryIncomplete = true;
       }
 
       if (spendChecked && wasEmployedInMonth(sal, monthKey)) {
@@ -2365,7 +2377,7 @@ function ProfitabilityPage({ token }) {
     const commissionGBP = overallData.commissionByConsultantAllTime[consultantId] || 0;
 
     const salaryMonths = overallData.salaryMonthsByConsultant[consultantId] || [];
-    const salaryGBP = salaryMonths.reduce((s, m) => s + (m.monthlySalaryGBP || 0), 0);
+    const salaryGBP = salaryMonths.reduce((s, m) => s + (hasMonthHappenedYet(m.month) ? (m.monthlySalaryGBP || 0) : 0), 0);
     const salaryIncomplete = placementCount > 0 && salaryGBP === 0;
 
     let overheadShareGBP = 0;
