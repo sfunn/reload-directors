@@ -2225,12 +2225,14 @@ function ProfitabilityPage({ token }) {
     }
 
     const profitGBP = revenueGBP - salaryGBP - commissionGBP - overheadShareGBP;
+    const placementCount = rev ? rev.yearTotal.placements : 0;
 
     return {
       consultantId, consultantName,
       revenueGBP, salaryGBP, commissionGBP, overheadShareGBP,
       profitGBP,
       marginPercent: revenueGBP > 0 ? (profitGBP / revenueGBP) * 100 : null,
+      placementCount,
       salaryIncomplete, overheadIncomplete,
     };
   }
@@ -2238,6 +2240,35 @@ function ProfitabilityPage({ token }) {
   let rows = revenueData ? STATS_CONSULTANTS.map((sc) => buildConsultantYear(sc.id, sc.name)) : [];
   if (sortMode === "profit") rows = [...rows].sort((a, b) => b.profitGBP - a.profitGBP);
   else if (sortMode === "margin") rows = [...rows].sort((a, b) => (b.marginPercent ?? -Infinity) - (a.marginPercent ?? -Infinity));
+
+  // Every money figure here is a genuine sum — that's just total company
+  // activity across everyone. Margin is deliberately NOT recalculated
+  // from those pooled totals (total gross profit over total revenue) —
+  // it's the average of each person's own margin instead, the same
+  // "average, don't pool" principle already applied everywhere else a
+  // percentage gets summarised across multiple people on this site,
+  // since pooling would let whoever has the most revenue quietly
+  // dominate the figure rather than showing a fair average outcome.
+  const totalRow = rows.length > 0 ? {
+    revenueGBP: rows.reduce((s, r) => s + r.revenueGBP, 0),
+    salaryGBP: rows.reduce((s, r) => s + r.salaryGBP, 0),
+    commissionGBP: rows.reduce((s, r) => s + r.commissionGBP, 0),
+    overheadShareGBP: rows.reduce((s, r) => s + r.overheadShareGBP, 0),
+    profitGBP: rows.reduce((s, r) => s + r.profitGBP, 0),
+    marginPercent: (() => {
+      // Excluded here by whether they've closed a genuine placement yet,
+      // not by the sign of their own margin. Someone with a real
+      // placement stays in this average even if it turned out
+      // unprofitable — that's true and worth seeing. Someone with only
+      // onsite fees so far hasn't actually started producing the thing
+      // this page measures yet, so their margin is more an artifact of
+      // incidental income than a real reading on their performance.
+      const values = rows.filter((r) => r.placementCount > 0).map((r) => r.marginPercent).filter((v) => v !== null);
+      return values.length > 0 ? values.reduce((s, v) => s + v, 0) / values.length : null;
+    })(),
+    salaryIncomplete: rows.some((r) => r.salaryIncomplete),
+    overheadIncomplete: rows.some((r) => r.overheadIncomplete),
+  } : null;
 
   return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 20 } },
     React.createElement(Panel, null,
@@ -2298,9 +2329,30 @@ function ProfitabilityPage({ token }) {
             `£${Math.round(r.profitGBP).toLocaleString()}`
           ),
           React.createElement("span", { style: { width: 100, flexShrink: 0, color: INDIGO_MUTED } },
-            r.marginPercent === null ? "—" : `${r.marginPercent.toFixed(0)}%`
+            r.marginPercent === null ? "—" : `${r.marginPercent.toFixed(0)}%`,
+            r.marginPercent !== null && r.placementCount === 0 && React.createElement("span", { style: { color: MELON_LINK, fontSize: 10, marginLeft: 4 } }, "(onsites only)")
           )
-        ))
+        )),
+        totalRow && React.createElement("div", {
+          key: "total", style: { display: "flex", alignItems: "baseline", gap: 4, padding: "8px 0", marginTop: 4, borderTop: `1px solid ${INDIGO_HAIRLINE}`, fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, fontWeight: 700, color: INDIGO }
+        },
+          React.createElement("span", { style: { width: 160, flexShrink: 0 } }, "Total"),
+          React.createElement("span", { style: { width: 120, flexShrink: 0 } }, `£${Math.round(totalRow.revenueGBP).toLocaleString()}`),
+          React.createElement("span", { style: { width: 120, flexShrink: 0 } },
+            `£${Math.round(totalRow.salaryGBP).toLocaleString()}`,
+            totalRow.salaryIncomplete && React.createElement("span", { style: { color: MELON_LINK, fontSize: 10, marginLeft: 4, fontWeight: 400 } }, "(incomplete)")
+          ),
+          React.createElement("span", { style: { width: 120, flexShrink: 0 } }, `£${Math.round(totalRow.commissionGBP).toLocaleString()}`),
+          React.createElement("span", { style: { width: 130, flexShrink: 0 } },
+            totalRow.overheadIncomplete ? "—" : `£${Math.round(totalRow.overheadShareGBP).toLocaleString()}`
+          ),
+          React.createElement("span", { style: { width: 140, flexShrink: 0, color: totalRow.profitGBP >= 0 ? VERDIGRIS : "#c0392b" } },
+            `£${Math.round(totalRow.profitGBP).toLocaleString()}`
+          ),
+          React.createElement("span", { style: { width: 100, flexShrink: 0 } },
+            totalRow.marginPercent === null ? "—" : `${totalRow.marginPercent.toFixed(0)}%`
+          )
+        )
       )
     ),
     xeroStatus && xeroStatus.connected && React.createElement(CostPerPersonPanel, { token, year }),
