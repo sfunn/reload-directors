@@ -1979,25 +1979,33 @@ function CostPerPersonPanel({ token, year }) {
   const [tracked, setTracked] = useState([]);
   const [headcount, setHeadcount] = useState(null);
   const [spend, setSpend] = useState(null);
+  const [checkedAt, setCheckedAt] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [checked, setChecked] = useState(false);
 
-  // Headcount and the tracked list are both cheap — no Xero call involved,
-  // so these load automatically. The actual spend figures stay on-demand
-  // only, same as the supplier panel above, since that's the expensive
-  // Xero query this whole page is deliberately careful not to fire
-  // automatically.
+  // Headcount, the tracked list, and the last real spend check are all
+  // cheap — commission and spend both come from data that's either
+  // already computed or already sitting in this site's own memory, no
+  // fresh Xero call needed for either. Loading the cached spend here
+  // automatically is the actual fix for it disappearing every time this
+  // page was left and come back to, the same fix already proven on
+  // Profitability's own overhead figure.
   const loadCheap = useCallback(async () => {
     try {
-      const [trackedRes, headcountRes] = await Promise.all([
+      const [trackedRes, headcountRes, cachedSpendRes] = await Promise.all([
         fetch("/api/xero-reports?action=tracked-suppliers", { headers: { Authorization: `Bearer ${token}` } }),
         fetch("/api/headcount", { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`/api/xero-reports?action=cached-spend&year=${year}`, { headers: { Authorization: `Bearer ${token}` } }),
       ]);
       if (trackedRes.ok) { const body = await trackedRes.json(); setTracked(body.tracked); }
       if (headcountRes.ok) { const body = await headcountRes.json(); setHeadcount(body.currentFeeEarning); }
+      if (cachedSpendRes.ok) {
+        const body = await cachedSpendRes.json();
+        if (body.cached) { setSpend(body.cached.suppliers); setCheckedAt(body.cached.checkedAt); setChecked(true); }
+      }
     } catch (e) { /* non-critical on load — the check button still works */ }
-  }, [token]);
+  }, [token, year]);
 
   useEffect(() => { loadCheap(); }, [loadCheap]);
 
@@ -2008,6 +2016,7 @@ function CostPerPersonPanel({ token, year }) {
       const body = await res.json();
       if (!res.ok) { setError(body.error || "Couldn't pull the bills."); return; }
       setSpend(body.suppliers);
+      setCheckedAt(body.checkedAt);
     } catch (e) {
       setError("Couldn't reach the server.");
     } finally {
@@ -2025,7 +2034,8 @@ function CostPerPersonPanel({ token, year }) {
       React.createElement(SectionTitle, { title: "Cost per Person" }),
       React.createElement("button", { onClick: check, disabled: loading, style: { ...ghostStyle, padding: "7px 12px", fontSize: 12 } }, loading ? "Checking…" : "Check spend")
     ),
-    React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, `Headcount here is always live, ${headcount !== null ? `currently ${headcount} fee-earning staff` : "loading"} — spend only updates when you click Check, same reasoning as the supplier list above. Track a supplier from that list to have it show up here.`),
+    React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 6 } }, `Headcount here is always live, ${headcount !== null ? `currently ${headcount} fee-earning staff` : "loading"} — the last real spend check is remembered automatically, click "Check spend" any time for a fresher figure. Track a supplier from the list above to have it show up here.`),
+    checked && checkedAt && React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginBottom: 12 } }, `Spend last checked ${new Date(checkedAt).toLocaleString("en-GB")}.`),
     error && React.createElement("div", { style: errorStyle }, error),
     tracked.length === 0 && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Nothing tracked yet — check bills by supplier above and click \"track\" next to whoever you want followed here."),
     tracked.length > 0 && React.createElement(React.Fragment, null,
@@ -2071,7 +2081,7 @@ function ProfitabilityPage({ token }) {
   const [spendError, setSpendError] = useState("");
   const [loading, setLoading] = useState(false);
   const [checkingSpend, setCheckingSpend] = useState(false);
-  const [sortByProfit, setSortByProfit] = useState(false);
+  const [sortMode, setSortMode] = useState("profit");
   const [xeroStatus, setXeroStatus] = useState(null);
 
   // Same status check already proven on Company Overview — Cost per
@@ -2214,16 +2224,20 @@ function ProfitabilityPage({ token }) {
       }
     }
 
+    const profitGBP = revenueGBP - salaryGBP - commissionGBP - overheadShareGBP;
+
     return {
       consultantId, consultantName,
       revenueGBP, salaryGBP, commissionGBP, overheadShareGBP,
-      profitGBP: revenueGBP - salaryGBP - commissionGBP - overheadShareGBP,
+      profitGBP,
+      marginPercent: revenueGBP > 0 ? (profitGBP / revenueGBP) * 100 : null,
       salaryIncomplete, overheadIncomplete,
     };
   }
 
   let rows = revenueData ? STATS_CONSULTANTS.map((sc) => buildConsultantYear(sc.id, sc.name)) : [];
-  if (sortByProfit) rows = [...rows].sort((a, b) => b.profitGBP - a.profitGBP);
+  if (sortMode === "profit") rows = [...rows].sort((a, b) => b.profitGBP - a.profitGBP);
+  else if (sortMode === "margin") rows = [...rows].sort((a, b) => (b.marginPercent ?? -Infinity) - (a.marginPercent ?? -Infinity));
 
   return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 20 } },
     React.createElement(Panel, null,
@@ -2245,7 +2259,7 @@ function ProfitabilityPage({ token }) {
       React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginTop: 10 } }, "Revenue is genuine money brought in, placements and onsite fees both — the same real question this whole page exists to answer, not just the placements-only figure Average Fee uses. Commission is what was actually paid out on their own deals. Overhead is each tracked supplier's real monthly spend, split evenly across however many people were actually part of the team that month, summed across the year."),
       xeroStatus && !xeroStatus.connected && React.createElement("div", { style: { fontSize: 12, color: MELON_LINK, marginTop: 6 } }, "Xero isn't connected yet — connect it from Company Overview first."),
       spendChecked && spendCheckedAt && React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 6 } }, `Overhead last checked ${new Date(spendCheckedAt).toLocaleString("en-GB")} — click "Check spend" for a fresher figure any time.`),
-      !spendChecked && xeroStatus && xeroStatus.connected && React.createElement("div", { style: { fontSize: 12, color: MELON_LINK, marginTop: 6 } }, "Overhead has never been checked for this year yet — profit below excludes it until you click \"Check spend\"."),
+      !spendChecked && xeroStatus && xeroStatus.connected && React.createElement("div", { style: { fontSize: 12, color: MELON_LINK, marginTop: 6 } }, "Overhead has never been checked for this year yet — gross profit below excludes it until you click \"Check spend\"."),
       spendError && React.createElement("div", { style: { ...errorStyle, marginTop: 6 } }, spendError)
     ),
     error && React.createElement("div", { style: errorStyle }, error),
@@ -2259,9 +2273,13 @@ function ProfitabilityPage({ token }) {
           React.createElement("span", { style: { width: 120, flexShrink: 0 } }, "Commission"),
           React.createElement("span", { style: { width: 130, flexShrink: 0 } }, "Overhead share"),
           React.createElement("span", {
-            onClick: () => setSortByProfit(!sortByProfit),
-            style: { width: 140, flexShrink: 0, cursor: "pointer", textDecoration: "underline", color: sortByProfit ? INDIGO : INDIGO_MUTED }
-          }, sortByProfit ? "Profit ▾" : "Profit (sort)")
+            onClick: () => setSortMode("profit"),
+            style: { width: 140, flexShrink: 0, cursor: "pointer", textDecoration: "underline", color: sortMode === "profit" ? INDIGO : INDIGO_MUTED }
+          }, sortMode === "profit" ? "Gross Profit ▾" : "Gross Profit"),
+          React.createElement("span", {
+            onClick: () => setSortMode("margin"),
+            style: { width: 100, flexShrink: 0, cursor: "pointer", textDecoration: "underline", color: sortMode === "margin" ? INDIGO : INDIGO_MUTED }
+          }, sortMode === "margin" ? "Margin % ▾" : "Margin %")
         ),
         rows.map((r) => React.createElement("div", {
           key: r.consultantId, style: { display: "flex", alignItems: "baseline", gap: 4, padding: "6px 0", fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, color: INDIGO, borderBottom: `1px solid ${INDIGO_HAIRLINE}` }
@@ -2278,6 +2296,9 @@ function ProfitabilityPage({ token }) {
           ),
           React.createElement("span", { style: { width: 140, flexShrink: 0, fontWeight: 700, color: r.profitGBP >= 0 ? VERDIGRIS : "#c0392b" } },
             `£${Math.round(r.profitGBP).toLocaleString()}`
+          ),
+          React.createElement("span", { style: { width: 100, flexShrink: 0, color: INDIGO_MUTED } },
+            r.marginPercent === null ? "—" : `${r.marginPercent.toFixed(0)}%`
           )
         ))
       )
@@ -2291,10 +2312,10 @@ function MainShell({ token, email, onLogout }) {
   const [tab, setTab] = useState("overview");
   const tabs = [
     { id: "overview", label: "Company Overview" },
+    { id: "profitability", label: "Profitability" },
     { id: "deals", label: "Yearly Deal Table" },
     { id: "commission", label: "Commission" },
     { id: "stats", label: "Consultant Stats" },
-    { id: "profitability", label: "Profitability" },
     { id: "staff", label: "Staff Info" },
   ];
 
