@@ -90,7 +90,7 @@ module.exports = async (req, res) => {
           monthlySalaryGBP: annualSalaryGBP !== null ? annualSalaryGBP / 12 : null,
         });
       }
-      return { consultantId: id, consultantName: info.name, category: info.category, monthly };
+      return { consultantId: id, consultantName: info.name, category: info.category, startDate: emp.startDate || null, terminationDate: emp.terminationDate || null, monthly };
     });
     return res.status(200).json({ year, people });
   }
