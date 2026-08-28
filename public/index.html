@@ -2184,12 +2184,17 @@ function ProfitabilityPage({ token }) {
       }
 
       const salaryMonthsByConsultant = {};
+      const employmentByConsultant = {};
       for (const r of salResults) {
         if (!r.ok) continue;
         const body = await r.json();
         for (const p of body.people) {
           if (!salaryMonthsByConsultant[p.consultantId]) salaryMonthsByConsultant[p.consultantId] = [];
           salaryMonthsByConsultant[p.consultantId].push(...p.monthly);
+          // Identical every year this person appears in, since it's their
+          // own real employment record, not something that varies by
+          // which year's response happened to be read.
+          employmentByConsultant[p.consultantId] = { startDate: p.startDate, terminationDate: p.terminationDate };
         }
       }
 
@@ -2227,7 +2232,7 @@ function ProfitabilityPage({ token }) {
       setOverallData({
         revenueByConsultant, placementsByConsultant, salaryMonthsByConsultant,
         headcountByMonth, spendByMonth, checkedYears, uncheckedYears,
-        commissionByConsultantAllTime,
+        commissionByConsultantAllTime, employmentByConsultant,
       });
     } catch (e) {
       setOverallError("Couldn't reach the server.");
@@ -2273,14 +2278,33 @@ function ProfitabilityPage({ token }) {
 
   const spendChecked = spendMonthly !== null;
 
+  // Whether someone was genuinely part of the team in a given month —
+  // this is what the earlier version of this page got wrong. It divided
+  // each month's shared overhead by the whole company's headcount that
+  // month (correct), but then added that share to EVERY consultant's
+  // total for EVERY month of the year, including months before they'd
+  // even started, or after they'd left. The denominator was always
+  // right, the numerator was being handed to people who weren't there
+  // yet to share it. Fixed by checking their own real start and
+  // termination dates directly, not inferring employment from whether
+  // salary happens to be on record that month, which could have its own
+  // gaps unrelated to whether they were actually employed.
+  function wasEmployedInMonth(person, monthKey) {
+    if (!person || !person.startDate) return false;
+    if (monthKey < person.startDate.slice(0, 7)) return false;
+    if (person.terminationDate && monthKey > person.terminationDate.slice(0, 7)) return false;
+    return true;
+  }
+
   // Builds one consultant's full year: revenue from consultant-stats
   // (placements plus onsites, genuine money they brought in), salary
   // summed from their own dated history, commission actually paid on
   // their own deals, and their equal share of the shared overhead each
-  // month they were actually part of the headcount — a month with no
-  // salary on record is flagged incomplete rather than silently treated
-  // as free, since that would inflate apparent profit for a data gap
-  // rather than a real saving.
+  // month they were actually part of the team — never a month before
+  // they started or after they left. A month with no salary on record
+  // is flagged incomplete rather than silently treated as free, since
+  // that would inflate apparent profit for a data gap rather than a
+  // real saving.
   function buildConsultantYear(consultantId, consultantName) {
     const rev = revenueData ? revenueData.consultants.find((c) => c.consultantId === consultantId) : null;
     const sal = salaryData ? salaryData.find((p) => p.consultantId === consultantId) : null;
@@ -2305,7 +2329,7 @@ function ProfitabilityPage({ token }) {
         if (monthRevenue && monthRevenue.totalRevenueGBP > 0) salaryIncomplete = true;
       }
 
-      if (spendChecked) {
+      if (spendChecked && wasEmployedInMonth(sal, monthKey)) {
         const monthSpend = totalTrackedSpendForMonth(monthKey);
         const monthHeadcount = headcountByMonth[monthKey];
         if (monthSpend !== null && monthHeadcount) {
@@ -2345,7 +2369,9 @@ function ProfitabilityPage({ token }) {
     const salaryIncomplete = placementCount > 0 && salaryGBP === 0;
 
     let overheadShareGBP = 0;
+    const employment = overallData.employmentByConsultant[consultantId];
     for (const [monthKey, spend] of Object.entries(overallData.spendByMonth)) {
+      if (!wasEmployedInMonth(employment, monthKey)) continue;
       const headcount = overallData.headcountByMonth[monthKey];
       if (headcount) overheadShareGBP += spend / headcount;
     }
