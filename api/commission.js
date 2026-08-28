@@ -205,27 +205,16 @@ function carryForwardValue(byYear, year) {
   return priorYears.length ? byYear[priorYears[0]] : null;
 }
 
-module.exports = async (req, res) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  if (req.method === "OPTIONS") return res.status(200).end();
-
-  if (req.method !== "GET") {
-    return res.status(405).json({ error: "This endpoint is read-only. Bands, targets, and flat rates are set on the incentive site." });
-  }
-
-  const director = await getDirectorFromRequest(req);
-  if (!director) return res.status(401).json({ error: "Director access required." });
-
-  const consultantId = req.query.consultantId;
-  const year = req.query.year ? parseInt(req.query.year, 10) : new Date().getUTCFullYear();
-  if (!consultantId) return res.status(400).json({ error: "consultantId is required." });
-
-  const allRecords = (await kv.get(RECORDS_KEY)) || [];
-  const allRates = (await kv.get(FX_KEY)) || {};
-  const placements = (await kv.get(PLACEMENTS_KEY)) || {};
-  const allSettings = (await kv.get(SETTINGS_KEY)) || {};
+// Computes one consultant's commission for exactly one year — extracted
+// so the exact same logic serves both the existing single-year view
+// (unchanged) and an all-time total, built below by calling this once
+// per year and summing. Never recomputes anything by pooling multiple
+// years together — bands and targets genuinely reset every year, that's
+// the whole point of bracket commission, so an all-time figure has to
+// be the sum of each year's own correctly-computed total, never one
+// calculation run across every deal under whichever year's bands
+// happen to apply.
+function computeCommissionForYear(consultantId, year, allRecords, allRates, placements, allSettings) {
   const personSettings = allSettings[consultantId] || {};
 
   if (COORDINATOR_IDS.has(consultantId)) {
@@ -255,11 +244,11 @@ module.exports = async (req, res) => {
       onsiteFees: { count: lines.filter((l) => !l.hasPlacementName).length, totalCommission: lines.filter((l) => !l.hasPlacementName).reduce((s, l) => s + l.commission, 0) },
     };
 
-    return res.status(200).json({
+    return {
       consultantId, year, isCoordinator: true, flatRate, dealCount: lines.length, totalCommission,
       target: (personSettings.targets && personSettings.targets[year]) || null,
       lines: linesWithSchedule, heldBackCount: 0, placementBreakdown,
-    });
+    };
   }
 
   const bands = carryForwardValue(personSettings.bandsByYear, year) || STANDARD_BANDS;
@@ -305,8 +294,51 @@ module.exports = async (req, res) => {
     onsiteFees: { count: new Set(onsiteLines.map(dealKey)).size, totalCommission: onsiteLines.reduce((s, l) => s + l.commission, 0) },
   };
 
-  return res.status(200).json({
+  return {
     consultantId, year, isCoordinator: false, bands, target, totalGBP, totalCommission,
     lines: linesWithSchedule, heldBackCount: heldBack, placementBreakdown,
-  });
+  };
+}
+
+module.exports = async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  if (req.method === "OPTIONS") return res.status(200).end();
+
+  if (req.method !== "GET") {
+    return res.status(405).json({ error: "This endpoint is read-only. Bands, targets, and flat rates are set on the incentive site." });
+  }
+
+  const director = await getDirectorFromRequest(req);
+  if (!director) return res.status(401).json({ error: "Director access required." });
+
+  const consultantId = req.query.consultantId;
+  if (!consultantId) return res.status(400).json({ error: "consultantId is required." });
+
+  const allRecords = (await kv.get(RECORDS_KEY)) || [];
+  const allRates = (await kv.get(FX_KEY)) || {};
+  const placements = (await kv.get(PLACEMENTS_KEY)) || {};
+  const allSettings = (await kv.get(SETTINGS_KEY)) || {};
+
+  // All-time total, for the Profitability page's "since they started"
+  // view — genuinely different from just removing the year filter, this
+  // calls the exact same per-year function once for every year on
+  // record and sums the results, so each year's own bands and target
+  // still apply correctly to that year's own deals.
+  if (req.query.action === "all-time") {
+    const currentYear = new Date().getUTCFullYear();
+    let totalCommission = 0;
+    let isCoordinator = false;
+    for (let y = 2019; y <= currentYear; y++) {
+      const result = computeCommissionForYear(consultantId, y, allRecords, allRates, placements, allSettings);
+      totalCommission += result.totalCommission;
+      isCoordinator = result.isCoordinator;
+    }
+    return res.status(200).json({ consultantId, isCoordinator, totalCommission });
+  }
+
+  const year = req.query.year ? parseInt(req.query.year, 10) : new Date().getUTCFullYear();
+  const result = computeCommissionForYear(consultantId, year, allRecords, allRates, placements, allSettings);
+  return res.status(200).json(result);
 };
