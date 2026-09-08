@@ -2296,15 +2296,21 @@ function ProfitabilityPage({ token }) {
     return true;
   }
 
-  // Salary carry-forward has no concept of the future — asked for
-  // December 2027's salary, it happily answers with whatever the latest
-  // known rate is, since that's a genuinely useful answer to "what would
-  // they be on right now," but wrong to sum as a real historical cost
-  // for a month that hasn't happened yet. A month only counts as real
-  // spend once it's actually arrived.
-  const CURRENT_MONTH_KEY = `${new Date().getUTCFullYear()}-${String(new Date().getUTCMonth() + 1).padStart(2, "0")}`;
-  function hasMonthHappenedYet(monthKey) {
-    return monthKey <= CURRENT_MONTH_KEY;
+  // Salary carry-forward has no concept of a year that hasn't started
+  // at all — asked about 2027 while still in 2026, it happily projects
+  // the latest known rate forward regardless, the same way it has no
+  // concept of a month that hasn't happened. But within a year that's
+  // already genuinely underway, salary should count for the whole year,
+  // the same way a deal signed today can still show its revenue
+  // anywhere later in December — a placement doesn't need "today" to
+  // have reached that month, it just needs the year to have begun. Only
+  // an entire year with no possible activity yet gets excluded here;
+  // someone's own termination date is what actually cuts their salary
+  // off partway through a year, handled by wasEmployedInMonth below, not
+  // by this.
+  const CURRENT_YEAR = new Date().getUTCFullYear();
+  function yearHasStarted(monthKey) {
+    return parseInt(monthKey.slice(0, 4), 10) <= CURRENT_YEAR;
   }
 
   // Builds one consultant's full year: revenue from consultant-stats
@@ -2330,15 +2336,15 @@ function ProfitabilityPage({ token }) {
     for (let m = 1; m <= 12; m++) {
       const monthKey = `${year}-${String(m).padStart(2, "0")}`;
       const monthSalary = sal ? sal.monthly.find((mm) => mm.month === monthKey) : null;
-      if (monthSalary && monthSalary.monthlySalaryGBP !== null && hasMonthHappenedYet(monthKey)) {
+      if (monthSalary && monthSalary.monthlySalaryGBP !== null && yearHasStarted(monthKey) && wasEmployedInMonth(sal, monthKey)) {
         salaryGBP += monthSalary.monthlySalaryGBP;
       } else {
         // A month with genuine revenue but no salary on record is worth
         // flagging — everything else is worth quietly skipping (nobody
-        // expects salary before someone's even started, or after a month
-        // that genuinely hasn't happened yet).
+        // expects salary before someone's even started, after they've
+        // left, or for a year that genuinely hasn't begun yet).
         const monthRevenue = rev ? rev.monthly.find((mm) => mm.month === monthKey) : null;
-        if (monthRevenue && monthRevenue.totalRevenueGBP > 0 && hasMonthHappenedYet(monthKey)) salaryIncomplete = true;
+        if (monthRevenue && monthRevenue.totalRevenueGBP > 0 && yearHasStarted(monthKey)) salaryIncomplete = true;
       }
 
       if (spendChecked && wasEmployedInMonth(sal, monthKey)) {
@@ -2375,13 +2381,14 @@ function ProfitabilityPage({ token }) {
     const revenueGBP = overallData.revenueByConsultant[consultantId] || 0;
     const placementCount = overallData.placementsByConsultant[consultantId] || 0;
     const commissionGBP = overallData.commissionByConsultantAllTime[consultantId] || 0;
+    const employment = overallData.employmentByConsultant[consultantId];
 
     const salaryMonths = overallData.salaryMonthsByConsultant[consultantId] || [];
-    const salaryGBP = salaryMonths.reduce((s, m) => s + (hasMonthHappenedYet(m.month) ? (m.monthlySalaryGBP || 0) : 0), 0);
+    const salaryGBP = salaryMonths.reduce((s, m) =>
+      s + (yearHasStarted(m.month) && wasEmployedInMonth(employment, m.month) ? (m.monthlySalaryGBP || 0) : 0), 0);
     const salaryIncomplete = placementCount > 0 && salaryGBP === 0;
 
     let overheadShareGBP = 0;
-    const employment = overallData.employmentByConsultant[consultantId];
     for (const [monthKey, spend] of Object.entries(overallData.spendByMonth)) {
       if (!wasEmployedInMonth(employment, monthKey)) continue;
       const headcount = overallData.headcountByMonth[monthKey];
@@ -2541,6 +2548,61 @@ function ProfitabilityPage({ token }) {
   );
 }
 
+function AskAQuestionPage({ token }) {
+  const [question, setQuestion] = useState("");
+  const [answer, setAnswer] = useState(null);
+  const [askedQuestion, setAskedQuestion] = useState(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function submitQuestion() {
+    if (!question.trim() || loading) return;
+    setError(""); setLoading(true);
+    const thisQuestion = question.trim();
+    try {
+      const res = await fetch("/api/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ question: thisQuestion }),
+      });
+      const body = await res.json();
+      if (!res.ok) { setError(body.error || "Something went wrong."); return; }
+      setAnswer(body.answer);
+      setAskedQuestion(thisQuestion);
+      setQuestion("");
+    } catch (e) {
+      setError("Couldn't reach the server.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 20 } },
+    React.createElement(Panel, null,
+      React.createElement(SectionTitle, { title: "Ask a Question" }),
+      React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Ask anything about Reload's real placement and staff data, deals, revenue, clients, consultants, roster history. It only knows what's actually tracked here, real fee records and real staff dates, so it can't answer things this system never captured, role type, seniority, candidate location, technology or skill tags, whether a placed candidate stayed at the client, or what kind of firm a client is. It'll say so plainly rather than guess."),
+      React.createElement("textarea", {
+        value: question,
+        onChange: (e) => setQuestion(e.target.value),
+        onKeyDown: (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submitQuestion(); },
+        placeholder: "e.g. How much revenue has Natasha brought in this year? Which client has James placed the most people with?",
+        style: { ...inputStyle, width: "100%", minHeight: 80, fontFamily: "'Work Sans', sans-serif", resize: "vertical", marginBottom: 8 },
+      }),
+      React.createElement("button", {
+        onClick: submitQuestion, disabled: loading || !question.trim(),
+        style: { ...ghostStyle, padding: "9px 16px", opacity: (loading || !question.trim()) ? 0.5 : 1 }
+      }, loading ? "Asking…" : "Ask"),
+      error && React.createElement("div", { style: { ...errorStyle, marginTop: 10 } }, error)
+    ),
+    answer && React.createElement(Panel, null,
+      React.createElement("div", { style: { ...labelStyle, marginBottom: 6 } }, "You asked"),
+      React.createElement("div", { style: { fontFamily: "'Work Sans', sans-serif", fontSize: 14, color: INDIGO_MUTED, marginBottom: 16, fontStyle: "italic" } }, askedQuestion),
+      React.createElement("div", { style: { ...labelStyle, marginBottom: 6 } }, "Answer"),
+      React.createElement("div", { style: { fontFamily: "'Work Sans', sans-serif", fontSize: 14.5, color: INDIGO, whiteSpace: "pre-wrap", lineHeight: 1.6 } }, answer)
+    )
+  );
+}
+
 function MainShell({ token, email, onLogout }) {
   const [tab, setTab] = useState("overview");
   const tabs = [
@@ -2550,6 +2612,7 @@ function MainShell({ token, email, onLogout }) {
     { id: "commission", label: "Commission" },
     { id: "stats", label: "Consultant Stats" },
     { id: "staff", label: "Staff Info" },
+    { id: "ask", label: "Ask a Question" },
   ];
 
   return React.createElement("div", { style: { minHeight: "100vh", background: IVORY, color: INDIGO, fontFamily: "'Work Sans', sans-serif" } },
@@ -2581,7 +2644,8 @@ function MainShell({ token, email, onLogout }) {
       tab === "stats" && React.createElement(ConsultantStatsPage, { token }),
       tab === "profitability" && React.createElement(ProfitabilityPage, { token }),
       tab === "overview" && React.createElement(CompanyOverviewPage, { token }),
-      tab === "staff" && React.createElement(StaffInfoPage, { token })
+      tab === "staff" && React.createElement(StaffInfoPage, { token }),
+      tab === "ask" && React.createElement(AskAQuestionPage, { token })
     )
   );
 }
