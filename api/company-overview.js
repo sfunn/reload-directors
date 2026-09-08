@@ -220,6 +220,25 @@ module.exports = async (req, res) => {
     const cashCurrency = manual.cashCurrency || null;
     const totalExpensesAmount = manual.totalExpensesAmount ?? null;
     const totalExpensesCurrency = manual.totalExpensesCurrency || null;
+    const depreciationAmortisationAmount = manual.depreciationAmortisationAmount ?? null;
+    const depreciationAmortisationCurrency = manual.depreciationAmortisationCurrency || null;
+    const interestAmount = manual.interestAmount ?? null;
+    const interestCurrency = manual.interestCurrency || null;
+    const taxAmount = manual.taxAmount ?? null;
+    const taxCurrency = manual.taxCurrency || null;
+
+    // EBITDA = operating profit (Gross Profit minus Total Expenses) with
+    // Depreciation & Amortisation added back, since that's an operating
+    // cost virtually always counted inside Total Expenses. Interest and
+    // Tax default to zero if never entered — on a standard P&L they
+    // typically sit BELOW operating profit already, not inside Total
+    // Expenses, so there'd genuinely be nothing to add back for them.
+    // If a specific chart of accounts is set up differently, entering
+    // real figures there corrects for it; leaving them blank assumes the
+    // standard structure applies.
+    const ebitdaAmount = (grossProfitAmount !== null && totalExpensesAmount !== null && depreciationAmortisationAmount !== null)
+      ? (grossProfitAmount - totalExpensesAmount) + depreciationAmortisationAmount + (interestAmount || 0) + (taxAmount || 0)
+      : null;
 
     // Revenue per head — genuinely derived from the roster's real dates,
     // never faked. For any year that ends before the very first tracked
@@ -263,11 +282,28 @@ module.exports = async (req, res) => {
       totalExpensesCurrency,
       totalExpensesUSDEquivalent: await usdEquivalentFor(totalExpensesAmount, totalExpensesCurrency),
       totalExpensesNotes: manual.totalExpensesNotes || null,
+      depreciationAmortisationAmount,
+      depreciationAmortisationCurrency,
+      depreciationAmortisationNotes: manual.depreciationAmortisationNotes || null,
+      interestAmount,
+      interestCurrency,
+      interestNotes: manual.interestNotes || null,
+      taxAmount,
+      taxCurrency,
+      taxNotes: manual.taxNotes || null,
+      ebitdaAmount,
+      ebitdaUSDEquivalent: await usdEquivalentFor(ebitdaAmount, "GBP"),
     });
   }
 
   if (req.method === "POST" && action === "set-manual-metric") {
-    const { year, grossProfitAmount, grossProfitCurrency, notes, cashAmount, cashCurrency, cashNotes, totalExpensesAmount, totalExpensesCurrency, totalExpensesNotes } = req.body || {};
+    const {
+      year, grossProfitAmount, grossProfitCurrency, notes, cashAmount, cashCurrency, cashNotes,
+      totalExpensesAmount, totalExpensesCurrency, totalExpensesNotes,
+      depreciationAmortisationAmount, depreciationAmortisationCurrency, depreciationAmortisationNotes,
+      interestAmount, interestCurrency, interestNotes,
+      taxAmount, taxCurrency, taxNotes,
+    } = req.body || {};
     const y = parseInt(year, 10);
     if (!y) return res.status(400).json({ error: "A valid year is required." });
     const all = (await kv.get(MANUAL_METRICS_KEY)) || {};
@@ -290,6 +326,18 @@ module.exports = async (req, res) => {
       totalExpensesAmount: totalExpensesAmount === "" || totalExpensesAmount === undefined ? (all[y] && all[y].totalExpensesAmount) || null : Number(totalExpensesAmount),
       totalExpensesCurrency: totalExpensesCurrency !== undefined ? totalExpensesCurrency : (all[y] && all[y].totalExpensesCurrency) || null,
       totalExpensesNotes: totalExpensesNotes !== undefined ? totalExpensesNotes : (all[y] && all[y].totalExpensesNotes) || null,
+      // The three pieces needed to reconstruct EBITDA from Gross Profit
+      // and Total Expenses above — same currency-preserving reasoning
+      // throughout.
+      depreciationAmortisationAmount: depreciationAmortisationAmount === "" || depreciationAmortisationAmount === undefined ? (all[y] && all[y].depreciationAmortisationAmount) || null : Number(depreciationAmortisationAmount),
+      depreciationAmortisationCurrency: depreciationAmortisationCurrency !== undefined ? depreciationAmortisationCurrency : (all[y] && all[y].depreciationAmortisationCurrency) || null,
+      depreciationAmortisationNotes: depreciationAmortisationNotes !== undefined ? depreciationAmortisationNotes : (all[y] && all[y].depreciationAmortisationNotes) || null,
+      interestAmount: interestAmount === "" || interestAmount === undefined ? (all[y] && all[y].interestAmount) || null : Number(interestAmount),
+      interestCurrency: interestCurrency !== undefined ? interestCurrency : (all[y] && all[y].interestCurrency) || null,
+      interestNotes: interestNotes !== undefined ? interestNotes : (all[y] && all[y].interestNotes) || null,
+      taxAmount: taxAmount === "" || taxAmount === undefined ? (all[y] && all[y].taxAmount) || null : Number(taxAmount),
+      taxCurrency: taxCurrency !== undefined ? taxCurrency : (all[y] && all[y].taxCurrency) || null,
+      taxNotes: taxNotes !== undefined ? taxNotes : (all[y] && all[y].taxNotes) || null,
     };
     await kv.set(MANUAL_METRICS_KEY, all);
     return res.status(200).json({ ok: true, year: y, metrics: all[y] });
