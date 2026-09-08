@@ -5,6 +5,7 @@ const { ROSTER, EMPLOYMENT_KEY } = require("./roster");
 const RECORDS_KEY = "atlas-fee-records";
 const PLACEMENTS_KEY = "atlas-placements";
 const FX_KEY = "atlas-fx-rates";
+const MANUAL_METRICS_KEY = "company-manual-metrics";
 
 // A genuinely different kind of feature from everything else on this
 // site — every other page answers one specific, pre-built question.
@@ -41,12 +42,13 @@ module.exports = async (req, res) => {
     return res.status(400).json({ error: "No Anthropic API key is configured yet. Add ANTHROPIC_API_KEY to this project's environment variables in Vercel, then redeploy." });
   }
 
-  const [records, placements, fxRates, overrides, employment] = await Promise.all([
+  const [records, placements, fxRates, overrides, employment, manualMetrics] = await Promise.all([
     kv.get(RECORDS_KEY).then((v) => v || []),
     kv.get(PLACEMENTS_KEY).then((v) => v || {}),
     kv.get(FX_KEY).then((v) => v || {}),
     getOverrides(),
     kv.get(EMPLOYMENT_KEY).then((v) => v || {}),
+    kv.get(MANUAL_METRICS_KEY).then((v) => v || {}),
   ]);
 
   const currentYear = new Date().getUTCFullYear();
@@ -90,17 +92,37 @@ module.exports = async (req, res) => {
     };
   });
 
-  const systemPrompt = `You are answering a director's question about Reload Search's own real recruitment placement and staff data, provided below as JSON. Answer using ONLY this data — never estimate, assume, or invent a figure that isn't directly computable from what's here.
+  // Gross Profit, Cash, and Total Expenses — the same figures shown at
+  // the top of Company Overview, entered there by a director, usually
+  // sourced from Xero's own Profit & Loss and Balance Sheet reports.
+  // Genuinely different from the deal/staff data above — this is
+  // company-wide financial reporting, not derived from individual deals.
+  const financials = Object.entries(manualMetrics).map(([year, m]) => ({
+    year: parseInt(year, 10),
+    grossProfitAmount: m.grossProfitAmount ?? m.grossProfitUSD ?? null,
+    grossProfitCurrency: m.grossProfitCurrency || (m.grossProfitUSD != null ? "USD" : null),
+    cashAmount: m.cashAmount ?? null,
+    cashCurrency: m.cashCurrency || null,
+    totalExpensesAmount: m.totalExpensesAmount ?? null,
+    totalExpensesCurrency: m.totalExpensesCurrency || null,
+  }));
+
+  const systemPrompt = `You are answering a director's question about Reload Search's own real recruitment placement, staff, and company financial data, provided below as JSON. Answer using ONLY this data — never estimate, assume, or invent a figure that isn't directly computable from what's here.
 
 Critically: this data does NOT include role type, seniority level, candidate location, technology or skill tags, client firm type/category (hedge fund vs market maker vs prop shop, etc.), or whether a placed candidate stayed at the client afterward. If the question asks for anything along those lines, say plainly that it isn't tracked in this data rather than guessing, approximating, or inferring it from a client or candidate name.
 
-"Revenue" figures are already correctly computed in GBP, uplifts and manual corrections already applied — use them directly, don't try to recompute or re-derive them from anything else. A deal with isGenuinePlacement false is an onsite fee, not a placement — be clear about that distinction if it matters to the question asked.
+"Revenue" figures on deals are already correctly computed in GBP, uplifts and manual corrections already applied — use them directly, don't try to recompute or re-derive them from anything else. A deal with isGenuinePlacement false is an onsite fee, not a placement — be clear about that distinction if it matters to the question asked.
+
+FINANCIALS below is company-wide, not derived from individual deals — Gross Profit and Total Expenses come straight from Xero's own Profit & Loss report as single summary lines, entered here by a director. Total Expenses is one lump figure, not broken out into interest, tax, depreciation, or amortisation separately. This means Revenue minus Total Expenses is a genuine, real approximation of pre-tax operating profit, but it is NOT the same thing as EBITDA — a true EBITDA figure would need interest, tax, depreciation, and amortisation broken out as their own separate amounts, which this data does not contain. If asked for EBITDA specifically, say plainly that only an approximate operating profit figure can be computed from what's here, show that figure, and be explicit about what's missing to make it a true EBITDA.
 
 DEALS (every real fee record):
 ${JSON.stringify(deals)}
 
 STAFF (Reload's own roster, not candidates placed):
 ${JSON.stringify(staff)}
+
+FINANCIALS (company-wide, from Xero, by year):
+${JSON.stringify(financials)}
 
 Today's date is ${new Date().toISOString().slice(0, 10)}.`;
 
