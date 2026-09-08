@@ -1525,6 +1525,8 @@ function CompanyOverviewPage({ token }) {
   const [notesInput, setNotesInput] = useState("");
   const [cashInput, setCashInput] = useState("");
   const [cashNotesInput, setCashNotesInput] = useState("");
+  const [totalExpensesInput, setTotalExpensesInput] = useState("");
+  const [totalExpensesNotesInput, setTotalExpensesNotesInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
   const [xeroStatus, setXeroStatus] = useState(null);
@@ -1574,6 +1576,8 @@ function CompanyOverviewPage({ token }) {
       setNotesInput(body.grossProfitNotes || "");
       setCashInput(body.cashAmount !== null && body.cashAmount !== undefined ? String(body.cashAmount) : "");
       setCashNotesInput(body.cashNotes || "");
+      setTotalExpensesInput(body.totalExpensesAmount !== null && body.totalExpensesAmount !== undefined ? String(body.totalExpensesAmount) : "");
+      setTotalExpensesNotesInput(body.totalExpensesNotes || "");
     } catch (e) {
       setError("Couldn't reach the server.");
     } finally {
@@ -1594,6 +1598,7 @@ function CompanyOverviewPage({ token }) {
           // currency, per Scott's explicit confirmation, not guessed.
           year, grossProfitAmount: grossProfitInput, grossProfitCurrency: "GBP", notes: notesInput,
           cashAmount: cashInput, cashCurrency: "GBP", cashNotes: cashNotesInput,
+          totalExpensesAmount: totalExpensesInput, totalExpensesCurrency: "GBP", totalExpensesNotes: totalExpensesNotesInput,
         }),
       });
       if (!res.ok) { const body = await res.json(); setSaveError(body.error || "Couldn't save."); return; }
@@ -1695,6 +1700,15 @@ function CompanyOverviewPage({ token }) {
               ? React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" } },
                   React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: VERDIGRIS } }, `£${Math.round(data.cashAmount).toLocaleString()}`),
                   data.cashUSDEquivalent !== null && data.cashCurrency !== "USD" && React.createElement("div", { style: { fontSize: 13, color: INDIGO_MUTED } }, `$${Math.round(data.cashUSDEquivalent).toLocaleString()}`)
+                )
+              : React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO_MUTED } }, "Not set")
+          ),
+          React.createElement("div", { style: { flex: 1, minWidth: 160 } },
+            React.createElement("div", { style: labelStyle }, "Total Expenses"),
+            data.totalExpensesAmount !== null
+              ? React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" } },
+                  React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: MELON } }, `£${Math.round(data.totalExpensesAmount).toLocaleString()}`),
+                  data.totalExpensesUSDEquivalent !== null && data.totalExpensesCurrency !== "USD" && React.createElement("div", { style: { fontSize: 13, color: INDIGO_MUTED } }, `$${Math.round(data.totalExpensesUSDEquivalent).toLocaleString()}`)
                 )
               : React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO_MUTED } }, "Not set")
           )
@@ -1836,7 +1850,16 @@ function CompanyOverviewPage({ token }) {
                   style: { color: VERDIGRIS, textDecoration: "underline", cursor: "pointer" }
                 }, "use")
               )
-            : React.createElement("span", { style: { color: MELON_LINK } }, "No Cash line found")
+            : React.createElement("span", { style: { color: MELON_LINK } }, "No Cash line found"),
+          xeroPull.totalExpenses !== null
+            ? React.createElement("span", null,
+                `Total Expenses ${Math.round(xeroPull.totalExpenses).toLocaleString()} `,
+                React.createElement("span", {
+                  onClick: () => { setTotalExpensesInput(String(Math.round(xeroPull.totalExpenses))); setTotalExpensesNotesInput(`Pulled from Xero P&L, ${xeroPull.periodStart} to ${xeroPull.periodEnd}`); },
+                  style: { color: VERDIGRIS, textDecoration: "underline", cursor: "pointer" }
+                }, "use")
+              )
+            : React.createElement("span", { style: { color: MELON_LINK } }, "No Total Expenses line found")
         ),
         saveError && React.createElement("div", { style: errorStyle }, saveError),
         React.createElement("div", { style: { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 10 } },
@@ -1849,7 +1872,7 @@ function CompanyOverviewPage({ token }) {
             React.createElement("input", { type: "text", value: notesInput, onChange: e => setNotesInput(e.target.value), placeholder: "e.g. From Xero, Q3 export", style: { ...inputStyle, width: "100%", marginBottom: 0 } })
           )
         ),
-        React.createElement("div", { style: { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" } },
+        React.createElement("div", { style: { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 10 } },
           React.createElement("div", null,
             React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Cash (GBP)"),
             React.createElement("input", { type: "number", value: cashInput, onChange: e => setCashInput(e.target.value), placeholder: "e.g. 75000", style: { ...inputStyle, width: 150, marginBottom: 0 } })
@@ -1857,6 +1880,16 @@ function CompanyOverviewPage({ token }) {
           React.createElement("div", { style: { flex: 1, minWidth: 160 } },
             React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Notes"),
             React.createElement("input", { type: "text", value: cashNotesInput, onChange: e => setCashNotesInput(e.target.value), placeholder: "e.g. From Xero Balance Sheet", style: { ...inputStyle, width: "100%", marginBottom: 0 } })
+          )
+        ),
+        React.createElement("div", { style: { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end" } },
+          React.createElement("div", null,
+            React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Total Expenses (GBP)"),
+            React.createElement("input", { type: "number", value: totalExpensesInput, onChange: e => setTotalExpensesInput(e.target.value), placeholder: "e.g. 180000", style: { ...inputStyle, width: 150, marginBottom: 0 } })
+          ),
+          React.createElement("div", { style: { flex: 1, minWidth: 160 } },
+            React.createElement("div", { style: { ...labelStyle, marginBottom: 4 } }, "Notes"),
+            React.createElement("input", { type: "text", value: totalExpensesNotesInput, onChange: e => setTotalExpensesNotesInput(e.target.value), placeholder: "e.g. From Xero P&L, Total Expenses line", style: { ...inputStyle, width: "100%", marginBottom: 0 } })
           ),
           React.createElement("button", { onClick: saveGrossProfit, disabled: saving, style: { ...ghostStyle, padding: "9px 16px" } }, saving ? "Saving…" : "Save")
         )
