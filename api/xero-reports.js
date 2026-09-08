@@ -553,12 +553,22 @@ module.exports = async (req, res) => {
     // splitting the range doesn't compromise the figure's accuracy.
     let grossProfitTotal = null;
     let matchedLabel = null;
+    let totalExpensesTotal = null;
+    let expensesMatchedLabel = null;
     for (const plData of plDataChunks) {
       const plReport = plData.Reports && plData.Reports[0];
       const row = plReport ? findRowByLabel(plReport.Rows, ["Gross Profit"]) : null;
       if (row) {
         grossProfitTotal = (grossProfitTotal || 0) + row.value;
         matchedLabel = row.label;
+      }
+      // Same reasoning, same report, same chunking — Total Expenses is
+      // read from the identical P&L data already pulled for Gross
+      // Profit above, not a separate Xero call.
+      const expenseRow = plReport ? findRowByLabel(plReport.Rows, ["Total Expenses", "Total Operating Expenses"]) : null;
+      if (expenseRow) {
+        totalExpensesTotal = (totalExpensesTotal || 0) + expenseRow.value;
+        expensesMatchedLabel = expenseRow.label;
       }
     }
 
@@ -577,6 +587,8 @@ module.exports = async (req, res) => {
       periodsCombined: plChunks.length,
       grossProfit: grossProfitTotal,
       grossProfitMatchedLabel: matchedLabel,
+      totalExpenses: totalExpensesTotal,
+      totalExpensesMatchedLabel: expensesMatchedLabel,
       cash: cashRow ? cashRow.value : null,
       cashMatchedLabel: cashRow ? cashRow.label : null,
       note: "Figures are in your Xero organisation's own reporting currency — not converted to USD.",
