@@ -124,7 +124,12 @@ Today's date is ${new Date().toISOString().slice(0, 10)}.`;
       headers: anthropicHeaders,
       body: JSON.stringify({
         model: "claude-sonnet-5",
-        max_tokens: 4096,
+        max_tokens: 8192,
+        // Explicitly off — this needs a direct, visible answer to a
+        // director's question, not an open-ended reasoning budget that
+        // could consume the whole response before producing any actual
+        // text, which is exactly what happened with a smaller budget.
+        thinking: { type: "disabled" },
         system: systemPrompt,
         messages: [{ role: "user", content: question }],
       }),
