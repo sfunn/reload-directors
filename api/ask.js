@@ -124,7 +124,7 @@ Today's date is ${new Date().toISOString().slice(0, 10)}.`;
       headers: anthropicHeaders,
       body: JSON.stringify({
         model: "claude-sonnet-5",
-        max_tokens: 1500,
+        max_tokens: 4096,
         system: systemPrompt,
         messages: [{ role: "user", content: question }],
       }),
@@ -141,6 +141,16 @@ Today's date is ${new Date().toISOString().slice(0, 10)}.`;
       .map((block) => (block.type === "text" ? block.text : ""))
       .filter(Boolean)
       .join("\n");
+
+    if (!answer) {
+      // A successful call with nothing usable in it — most likely the
+      // token budget ran out on internal reasoning before any visible
+      // answer was produced, but logged in full either way so this is
+      // genuinely diagnosable rather than a silent, empty response with
+      // no way to tell what actually happened.
+      console.error("[ask] Empty answer despite a successful call. stop_reason:", data.stop_reason, "full response:", JSON.stringify(data));
+      return res.status(502).json({ error: `Claude didn't return a visible answer that time (stop reason: ${data.stop_reason || "unknown"}). Try a shorter or more specific question, or try again.` });
+    }
 
     return res.status(200).json({ answer, dealCount: deals.length, staffCount: staff.length });
   } catch (e) {
