@@ -105,13 +105,23 @@ ${JSON.stringify(staff)}
 Today's date is ${new Date().toISOString().slice(0, 10)}.`;
 
   try {
+    // Some API keys are scoped to one specific workspace already and
+    // never need this at all. Others are created at the organisation
+    // level and require being told explicitly which workspace to bill
+    // against — added here only if that's actually been configured, so
+    // this stays correct regardless of which kind of key ends up in use.
+    const anthropicHeaders = {
+      "Content-Type": "application/json",
+      "x-api-key": process.env.ANTHROPIC_API_KEY,
+      "anthropic-version": "2023-06-01",
+    };
+    if (process.env.ANTHROPIC_WORKSPACE_ID) {
+      anthropicHeaders["anthropic-workspace-id"] = process.env.ANTHROPIC_WORKSPACE_ID;
+    }
+
     const response = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": process.env.ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-      },
+      headers: anthropicHeaders,
       body: JSON.stringify({
         model: "claude-sonnet-5",
         max_tokens: 1500,
