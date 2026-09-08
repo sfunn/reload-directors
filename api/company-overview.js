@@ -218,6 +218,8 @@ module.exports = async (req, res) => {
     const grossProfitCurrency = manual.grossProfitCurrency || (manual.grossProfitUSD != null ? "USD" : null);
     const cashAmount = manual.cashAmount ?? null;
     const cashCurrency = manual.cashCurrency || null;
+    const totalExpensesAmount = manual.totalExpensesAmount ?? null;
+    const totalExpensesCurrency = manual.totalExpensesCurrency || null;
 
     // Revenue per head — genuinely derived from the roster's real dates,
     // never faked. For any year that ends before the very first tracked
@@ -254,11 +256,18 @@ module.exports = async (req, res) => {
       cashCurrency,
       cashUSDEquivalent: await usdEquivalentFor(cashAmount, cashCurrency),
       cashNotes: manual.cashNotes || null,
+      // Total Expenses — same currency-preserving reasoning as Gross
+      // Profit and Cash, since it's pulled straight from the same P&L
+      // report Gross Profit already comes from.
+      totalExpensesAmount,
+      totalExpensesCurrency,
+      totalExpensesUSDEquivalent: await usdEquivalentFor(totalExpensesAmount, totalExpensesCurrency),
+      totalExpensesNotes: manual.totalExpensesNotes || null,
     });
   }
 
   if (req.method === "POST" && action === "set-manual-metric") {
-    const { year, grossProfitAmount, grossProfitCurrency, notes, cashAmount, cashCurrency, cashNotes } = req.body || {};
+    const { year, grossProfitAmount, grossProfitCurrency, notes, cashAmount, cashCurrency, cashNotes, totalExpensesAmount, totalExpensesCurrency, totalExpensesNotes } = req.body || {};
     const y = parseInt(year, 10);
     if (!y) return res.status(400).json({ error: "A valid year is required." });
     const all = (await kv.get(MANUAL_METRICS_KEY)) || {};
@@ -276,6 +285,11 @@ module.exports = async (req, res) => {
       cashAmount: cashAmount === "" || cashAmount === undefined ? (all[y] && all[y].cashAmount) || null : Number(cashAmount),
       cashCurrency: cashCurrency !== undefined ? cashCurrency : (all[y] && all[y].cashCurrency) || null,
       cashNotes: cashNotes !== undefined ? cashNotes : (all[y] && all[y].cashNotes) || null,
+      // Total Expenses — same reasoning again, kept in whatever currency
+      // it was entered in.
+      totalExpensesAmount: totalExpensesAmount === "" || totalExpensesAmount === undefined ? (all[y] && all[y].totalExpensesAmount) || null : Number(totalExpensesAmount),
+      totalExpensesCurrency: totalExpensesCurrency !== undefined ? totalExpensesCurrency : (all[y] && all[y].totalExpensesCurrency) || null,
+      totalExpensesNotes: totalExpensesNotes !== undefined ? totalExpensesNotes : (all[y] && all[y].totalExpensesNotes) || null,
     };
     await kv.set(MANUAL_METRICS_KEY, all);
     return res.status(200).json({ ok: true, year: y, metrics: all[y] });
