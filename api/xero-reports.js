@@ -555,6 +555,12 @@ module.exports = async (req, res) => {
     let matchedLabel = null;
     let totalExpensesTotal = null;
     let expensesMatchedLabel = null;
+    let depreciationAmortisationTotal = null;
+    let depreciationAmortisationMatchedLabel = null;
+    let interestTotal = null;
+    let interestMatchedLabel = null;
+    let taxTotal = null;
+    let taxMatchedLabel = null;
     for (const plData of plDataChunks) {
       const plReport = plData.Reports && plData.Reports[0];
       const row = plReport ? findRowByLabel(plReport.Rows, ["Gross Profit"]) : null;
@@ -569,6 +575,24 @@ module.exports = async (req, res) => {
       if (expenseRow) {
         totalExpensesTotal = (totalExpensesTotal || 0) + expenseRow.value;
         expensesMatchedLabel = expenseRow.label;
+      }
+      // These three exist specifically to reconstruct EBITDA — they are
+      // NOT part of the headline figures above, they're the pieces
+      // someone reconciling toward EBITDA needs pulled out on their own.
+      const daRow = plReport ? findRowByLabel(plReport.Rows, ["Depreciation and Amortisation", "Depreciation & Amortisation", "Depreciation and Amortization", "Depreciation"]) : null;
+      if (daRow) {
+        depreciationAmortisationTotal = (depreciationAmortisationTotal || 0) + daRow.value;
+        depreciationAmortisationMatchedLabel = daRow.label;
+      }
+      const interestRow = plReport ? findRowByLabel(plReport.Rows, ["Interest Expense", "Interest", "Finance Costs", "Finance Expense"]) : null;
+      if (interestRow) {
+        interestTotal = (interestTotal || 0) + interestRow.value;
+        interestMatchedLabel = interestRow.label;
+      }
+      const taxRow = plReport ? findRowByLabel(plReport.Rows, ["Income Tax Expense", "Tax", "Taxation", "Corporation Tax"]) : null;
+      if (taxRow) {
+        taxTotal = (taxTotal || 0) + taxRow.value;
+        taxMatchedLabel = taxRow.label;
       }
     }
 
@@ -589,6 +613,12 @@ module.exports = async (req, res) => {
       grossProfitMatchedLabel: matchedLabel,
       totalExpenses: totalExpensesTotal,
       totalExpensesMatchedLabel: expensesMatchedLabel,
+      depreciationAmortisation: depreciationAmortisationTotal,
+      depreciationAmortisationMatchedLabel,
+      interest: interestTotal,
+      interestMatchedLabel,
+      tax: taxTotal,
+      taxMatchedLabel,
       cash: cashRow ? cashRow.value : null,
       cashMatchedLabel: cashRow ? cashRow.label : null,
       note: "Figures are in your Xero organisation's own reporting currency — not converted to USD.",
