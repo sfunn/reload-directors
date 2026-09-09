@@ -90,21 +90,12 @@ function monthKeyFromDate(d) {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
-module.exports = async (req, res) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  if (req.method === "OPTIONS") return res.status(200).end();
-
-  if (req.method !== "GET") {
-    return res.status(405).json({ error: "This endpoint is read-only." });
-  }
-
-  const director = await getDirectorFromRequest(req);
-  if (!director) return res.status(401).json({ error: "Director access required." });
-
-  const year = req.query.year ? parseInt(req.query.year, 10) : new Date().getUTCFullYear();
-
+// The entire computation, extracted so it can be called both by this
+// file's own HTTP handler (unchanged) and directly by other files that
+// need the same real activity and revenue data — Ask a Question, for
+// one — without duplicating this logic a second time, which is exactly
+// how earlier bugs in this codebase have happened before.
+async function computeConsultantStatsForYear(year) {
   const [weeks, teamOverrides, records, placements, ringover, kpiOverrides, fxRates, revenueUpliftOverrides] = await Promise.all([
     kv.get(WEEKS_KEY).then((v) => v || []),
     kv.get(TEAMS_KEY).then((v) => v || {}),
@@ -321,8 +312,27 @@ function revenueDateFor(record, placement) {
     yearTotal: c.yearTotal,
   }));
 
-  return res.status(200).json({ year, consultants });
+  return { year, consultants };
+}
+
+module.exports = async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  if (req.method === "OPTIONS") return res.status(200).end();
+
+  if (req.method !== "GET") {
+    return res.status(405).json({ error: "This endpoint is read-only." });
+  }
+
+  const director = await getDirectorFromRequest(req);
+  if (!director) return res.status(401).json({ error: "Director access required." });
+
+  const year = req.query.year ? parseInt(req.query.year, 10) : new Date().getUTCFullYear();
+  const result = await computeConsultantStatsForYear(year);
+  return res.status(200).json(result);
 };
 
 module.exports.isoWeekToSunday = isoWeekToSunday;
 module.exports.kpiOverrideValue = kpiOverrideValue;
+module.exports.computeConsultantStatsForYear = computeConsultantStatsForYear;
