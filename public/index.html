@@ -2681,6 +2681,21 @@ function AskAQuestionPage({ token }) {
   const [messages, setMessages] = useState([]); // [{ role: "user"|"assistant", content }]
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
+
+  // The real saved conversation, loaded automatically — without this,
+  // leaving this tab and coming back loses everything said so far, the
+  // same way Cost per Person's own spend check used to before that got
+  // fixed the same way this does.
+  const loadSavedConversation = useCallback(async () => {
+    try {
+      const res = await fetch("/api/ask", { headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) { const body = await res.json(); setMessages(body.messages || []); }
+    } catch (e) { /* non-critical — a fresh conversation still works fine */ }
+    finally { setHistoryLoaded(true); }
+  }, [token]);
+
+  useEffect(() => { loadSavedConversation(); }, [loadSavedConversation]);
 
   async function submitQuestion() {
     if (!question.trim() || loading) return;
@@ -2707,6 +2722,7 @@ function AskAQuestionPage({ token }) {
 
   function startNewConversation() {
     setMessages([]); setQuestion(""); setError("");
+    fetch("/api/ask", { method: "DELETE", headers: { Authorization: `Bearer ${token}` } }).catch(() => {});
   }
 
   return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 20 } },
