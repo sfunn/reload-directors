@@ -12,6 +12,12 @@ const MANUAL_METRICS_KEY = "company-manual-metrics";
 const COMMISSION_SETTINGS_KEY = "commission-settings";
 const CACHED_SPEND_KEY = "profitability-cached-spend"; // same cache Profitability's own Cost per Person reads from — never a fresh Xero call from here
 const EARLIEST_YEAR = 2019;
+// The conversation itself only ever lived in the browser's own memory
+// for that one page visit before this — leaving the tab and coming back
+// genuinely lost it, the same way "Check spend" used to before that got
+// fixed the same way this does: saved here, per director, so it
+// survives navigating away and back. { [directorEmail]: [{role, content}] }
+const CONVERSATIONS_KEY = "ask-conversations";
 
 // A genuinely different kind of feature from everything else on this
 // site — every other page answers one specific, pre-built question.
@@ -28,16 +34,34 @@ const EARLIEST_YEAR = 2019;
 // until the numbers didn't match everywhere else.
 module.exports = async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   if (req.method === "OPTIONS") return res.status(200).end();
+
+  const director = await getDirectorFromRequest(req);
+  if (!director) return res.status(401).json({ error: "Director access required." });
+
+  // The saved conversation, loaded once when the page opens — cheap,
+  // no Xero or Claude call involved, just reading back whatever this
+  // director last had going.
+  if (req.method === "GET") {
+    const allConversations = (await kv.get(CONVERSATIONS_KEY)) || {};
+    return res.status(200).json({ messages: allConversations[director.email] || [] });
+  }
+
+  // Starting fresh clears the real saved copy too, not just whatever's
+  // showing in the browser right now — otherwise it would quietly come
+  // back the next time this director opened the page.
+  if (req.method === "DELETE") {
+    const allConversations = (await kv.get(CONVERSATIONS_KEY)) || {};
+    delete allConversations[director.email];
+    await kv.set(CONVERSATIONS_KEY, allConversations);
+    return res.status(200).json({ ok: true });
+  }
 
   if (req.method !== "POST") {
     return res.status(405).json({ error: "Send your question as a POST request." });
   }
-
-  const director = await getDirectorFromRequest(req);
-  if (!director) return res.status(401).json({ error: "Director access required." });
 
   const question = req.body && req.body.question;
   if (!question || typeof question !== "string" || !question.trim()) {
@@ -261,6 +285,13 @@ Today's date is ${new Date().toISOString().slice(0, 10)}.`;
       console.error("[ask] Empty answer despite a successful call. stop_reason:", data.stop_reason, "full response:", JSON.stringify(data));
       return res.status(502).json({ error: `Claude didn't return a visible answer that time (stop reason: ${data.stop_reason || "unknown"}). Try a shorter or more specific question, or try again.` });
     }
+
+    // Saved here, per director, so this exact exchange is still there
+    // the next time this page opens, not just for the rest of this one
+    // visit.
+    const allConversations = (await kv.get(CONVERSATIONS_KEY)) || {};
+    allConversations[director.email] = [...validHistory, { role: "user", content: question }, { role: "assistant", content: answer }];
+    await kv.set(CONVERSATIONS_KEY, allConversations);
 
     return res.status(200).json({ answer, dealCount: deals.length, staffCount: staff.length });
   } catch (e) {
