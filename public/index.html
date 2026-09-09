@@ -1738,14 +1738,15 @@ function CompanyOverviewPage({ token }) {
                     data.ebitdaUSDEquivalent !== null && React.createElement("div", { style: { fontSize: 13, color: INDIGO_MUTED } }, `$${Math.round(data.ebitdaUSDEquivalent).toLocaleString()}`)
                   ),
                   React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 4 } },
-                    `Gross Profit ${Math.round(data.grossProfitAmount).toLocaleString()} − Total Expenses ${Math.round(data.totalExpensesAmount).toLocaleString()} + D&A ${Math.round(data.depreciationAmortisationAmount).toLocaleString()}` +
+                    `Gross Profit ${Math.round(data.grossProfitAmount).toLocaleString()} − Total Expenses ${Math.round(data.totalExpensesAmount).toLocaleString()}` +
+                    (data.depreciationAmortisationAmount ? ` + D&A ${Math.round(data.depreciationAmortisationAmount).toLocaleString()}` : "") +
                     (data.interestAmount ? ` + Interest ${Math.round(data.interestAmount).toLocaleString()}` : "") +
                     (data.taxAmount ? ` + Tax ${Math.round(data.taxAmount).toLocaleString()}` : "")
                   )
                 )
               : React.createElement("div", null,
                   React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO_MUTED } }, "Not available"),
-                  React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 4 } }, "Needs Gross Profit, Total Expenses, and Depreciation & Amortisation all entered below.")
+                  React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 4 } }, "Needs Gross Profit and Total Expenses entered below.")
                 )
           )
         )
