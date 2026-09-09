@@ -342,3 +342,5 @@ module.exports = async (req, res) => {
   const result = computeCommissionForYear(consultantId, year, allRecords, allRates, placements, allSettings);
   return res.status(200).json(result);
 };
+
+module.exports.computeCommissionForYear = computeCommissionForYear;
