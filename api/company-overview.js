@@ -228,16 +228,19 @@ module.exports = async (req, res) => {
     const taxCurrency = manual.taxCurrency || null;
 
     // EBITDA = operating profit (Gross Profit minus Total Expenses) with
-    // Depreciation & Amortisation added back, since that's an operating
-    // cost virtually always counted inside Total Expenses. Interest and
-    // Tax default to zero if never entered — on a standard P&L they
-    // typically sit BELOW operating profit already, not inside Total
-    // Expenses, so there'd genuinely be nothing to add back for them.
-    // If a specific chart of accounts is set up differently, entering
-    // real figures there corrects for it; leaving them blank assumes the
-    // standard structure applies.
-    const ebitdaAmount = (grossProfitAmount !== null && totalExpensesAmount !== null && depreciationAmortisationAmount !== null)
-      ? (grossProfitAmount - totalExpensesAmount) + depreciationAmortisationAmount + (interestAmount || 0) + (taxAmount || 0)
+    // Depreciation & Amortisation, Interest, and Tax all added back —
+    // but only Gross Profit and Total Expenses are genuinely required
+    // for this to compute at all. The other three default to zero if
+    // never entered, since plenty of real businesses, Reload included,
+    // genuinely carry none of them: no debt means no interest, and no
+    // significant depreciable assets means no depreciation either.
+    // Requiring an explicit zero typed into a field that will likely
+    // never hold anything else isn't a safeguard, it's just friction.
+    // If a specific chart of accounts does carry a real, non-zero
+    // figure for one of these, entering it corrects the calculation;
+    // leaving it blank simply assumes there's nothing to add back.
+    const ebitdaAmount = (grossProfitAmount !== null && totalExpensesAmount !== null)
+      ? (grossProfitAmount - totalExpensesAmount) + (depreciationAmortisationAmount || 0) + (interestAmount || 0) + (taxAmount || 0)
       : null;
 
     // Revenue per head — genuinely derived from the roster's real dates,
