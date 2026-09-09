@@ -2678,8 +2678,7 @@ function ProfitabilityPage({ token }) {
 
 function AskAQuestionPage({ token }) {
   const [question, setQuestion] = useState("");
-  const [answer, setAnswer] = useState(null);
-  const [askedQuestion, setAskedQuestion] = useState(null);
+  const [messages, setMessages] = useState([]); // [{ role: "user"|"assistant", content }]
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -2687,17 +2686,18 @@ function AskAQuestionPage({ token }) {
     if (!question.trim() || loading) return;
     setError(""); setLoading(true);
     const thisQuestion = question.trim();
+    const priorHistory = messages; // everything said so far, before this new question
+    setMessages([...priorHistory, { role: "user", content: thisQuestion }]);
+    setQuestion("");
     try {
       const res = await fetch("/api/ask", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ question: thisQuestion }),
+        body: JSON.stringify({ question: thisQuestion, history: priorHistory }),
       });
       const body = await res.json();
       if (!res.ok) { setError(body.error || "Something went wrong."); return; }
-      setAnswer(body.answer);
-      setAskedQuestion(thisQuestion);
-      setQuestion("");
+      setMessages([...priorHistory, { role: "user", content: thisQuestion }, { role: "assistant", content: body.answer }]);
     } catch (e) {
       setError("Couldn't reach the server.");
     } finally {
@@ -2705,28 +2705,42 @@ function AskAQuestionPage({ token }) {
     }
   }
 
+  function startNewConversation() {
+    setMessages([]); setQuestion(""); setError("");
+  }
+
   return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 20 } },
     React.createElement(Panel, null,
-      React.createElement(SectionTitle, { title: "Ask a Question" }),
-      React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Ask anything about Reload's real placement and staff data, deals, revenue, clients, consultants, roster history. It only knows what's actually tracked here, real fee records and real staff dates, so it can't answer things this system never captured, role type, seniority, candidate location, technology or skill tags, whether a placed candidate stayed at the client, or what kind of firm a client is. It'll say so plainly rather than guess."),
+      React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 } },
+        React.createElement(SectionTitle, { title: "Ask a Question" }),
+        messages.length > 0 && React.createElement("button", { onClick: startNewConversation, style: { ...ghostStyle, padding: "7px 12px", fontSize: 12 } }, "Start new conversation")
+      ),
+      React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Ask anything about Reload's real data, deals and revenue, staff and salary, commission, activity, tenure, tracked supplier spend, and company financials. It only knows what's actually tracked here, so it can't answer things this system never captured, role type, seniority, candidate location, technology or skill tags, whether a placed candidate stayed at the client, or what kind of firm a client is. It'll say so plainly rather than guess. A follow-up question continues this same conversation, so feel free to dig deeper into an answer rather than starting fresh each time."),
       React.createElement("textarea", {
         value: question,
         onChange: (e) => setQuestion(e.target.value),
         onKeyDown: (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submitQuestion(); },
-        placeholder: "e.g. How much revenue has Natasha brought in this year? Which client has James placed the most people with?",
+        placeholder: messages.length > 0 ? "Ask a follow-up…" : "e.g. How much revenue has Natasha brought in this year? Which client has James placed the most people with?",
         style: { ...inputStyle, width: "100%", minHeight: 80, fontFamily: "'Work Sans', sans-serif", resize: "vertical", marginBottom: 8 },
       }),
       React.createElement("button", {
         onClick: submitQuestion, disabled: loading || !question.trim(),
         style: { ...ghostStyle, padding: "9px 16px", opacity: (loading || !question.trim()) ? 0.5 : 1 }
-      }, loading ? "Asking…" : "Ask"),
+      }, loading ? "Asking…" : (messages.length > 0 ? "Ask follow-up" : "Ask")),
       error && React.createElement("div", { style: { ...errorStyle, marginTop: 10 } }, error)
     ),
-    answer && React.createElement(Panel, null,
-      React.createElement("div", { style: { ...labelStyle, marginBottom: 6 } }, "You asked"),
-      React.createElement("div", { style: { fontFamily: "'Work Sans', sans-serif", fontSize: 14, color: INDIGO_MUTED, marginBottom: 16, fontStyle: "italic" } }, askedQuestion),
-      React.createElement("div", { style: { ...labelStyle, marginBottom: 6 } }, "Answer"),
-      React.createElement("div", { style: { fontFamily: "'Work Sans', sans-serif", fontSize: 14.5, color: INDIGO, whiteSpace: "pre-wrap", lineHeight: 1.6 } }, answer)
+    messages.length > 0 && React.createElement(Panel, null,
+      messages.map((m, i) => React.createElement("div", { key: i, style: { marginBottom: i < messages.length - 1 ? 20 : 0 } },
+        m.role === "user"
+          ? React.createElement(React.Fragment, null,
+              React.createElement("div", { style: { ...labelStyle, marginBottom: 6 } }, "You asked"),
+              React.createElement("div", { style: { fontFamily: "'Work Sans', sans-serif", fontSize: 14, color: INDIGO_MUTED, fontStyle: "italic" } }, m.content)
+            )
+          : React.createElement(React.Fragment, null,
+              React.createElement("div", { style: { ...labelStyle, marginTop: 10, marginBottom: 6 } }, "Answer"),
+              React.createElement("div", { style: { fontFamily: "'Work Sans', sans-serif", fontSize: 14.5, color: INDIGO, whiteSpace: "pre-wrap", lineHeight: 1.6 } }, m.content)
+            )
+      ))
     )
   );
 }
