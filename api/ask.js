@@ -1,11 +1,17 @@
 const { getDirectorFromRequest, kv } = require("./_directorAuth");
 const { resolvedRevenueGBP, getOverrides } = require("./_dealRevenueUplift");
 const { ROSTER, EMPLOYMENT_KEY } = require("./roster");
+const { computeCommissionForYear } = require("./commission");
+const { computeConsultantStatsForYear } = require("./consultant-stats");
+const { averageTenureOfCurrent, averageTenureOfDeparted } = require("./retention");
 
 const RECORDS_KEY = "atlas-fee-records";
 const PLACEMENTS_KEY = "atlas-placements";
 const FX_KEY = "atlas-fx-rates";
 const MANUAL_METRICS_KEY = "company-manual-metrics";
+const COMMISSION_SETTINGS_KEY = "commission-settings";
+const CACHED_SPEND_KEY = "profitability-cached-spend"; // same cache Profitability's own Cost per Person reads from — never a fresh Xero call from here
+const EARLIEST_YEAR = 2019;
 
 // A genuinely different kind of feature from everything else on this
 // site — every other page answers one specific, pre-built question.
@@ -38,20 +44,34 @@ module.exports = async (req, res) => {
     return res.status(400).json({ error: "A question is required." });
   }
 
+  // A follow-up question continues the same real conversation, not a
+  // fresh one each time — the frontend sends back everything said so
+  // far, and this just adds the new question onto the end of it.
+  // Genuinely different from the data above though: every request still
+  // gathers a fresh copy of that, so a follow-up asked minutes later
+  // still reasons from current figures, never a stale snapshot from
+  // when the conversation started.
+  const history = Array.isArray(req.body && req.body.history) ? req.body.history : [];
+  const validHistory = history.filter((m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string");
+
   if (!process.env.ANTHROPIC_API_KEY) {
     return res.status(400).json({ error: "No Anthropic API key is configured yet. Add ANTHROPIC_API_KEY to this project's environment variables in Vercel, then redeploy." });
   }
 
-  const [records, placements, fxRates, overrides, employment, manualMetrics] = await Promise.all([
+  const [records, placements, fxRates, overrides, employment, manualMetrics, commissionSettings, cachedSpend] = await Promise.all([
     kv.get(RECORDS_KEY).then((v) => v || []),
     kv.get(PLACEMENTS_KEY).then((v) => v || {}),
     kv.get(FX_KEY).then((v) => v || {}),
     getOverrides(),
     kv.get(EMPLOYMENT_KEY).then((v) => v || {}),
     kv.get(MANUAL_METRICS_KEY).then((v) => v || {}),
+    kv.get(COMMISSION_SETTINGS_KEY).then((v) => v || {}),
+    kv.get(CACHED_SPEND_KEY).then((v) => v || {}),
   ]);
 
   const currentYear = new Date().getUTCFullYear();
+  const allYears = [];
+  for (let y = EARLIEST_YEAR; y <= currentYear; y++) allYears.push(y);
 
   // Every real deal, enriched with the correctly-resolved figures other
   // pages already show — never raw currency amounts Claude would have
@@ -107,6 +127,49 @@ module.exports = async (req, res) => {
     totalExpensesCurrency: m.totalExpensesCurrency || null,
   }));
 
+  // Commission — every fee-earning consultant and coordinator, every
+  // year since bands/targets have existed. Computed one real year at a
+  // time using the exact same function Commission's own page calls,
+  // since bands and targets reset annually and pooling every deal
+  // together under one year's rules would silently misstate this.
+  const commissionByConsultant = {};
+  for (const [id, info] of Object.entries(ROSTER)) {
+    commissionByConsultant[id] = allYears.map((y) => {
+      const result = computeCommissionForYear(id, y, records, fxRates, placements, commissionSettings);
+      return { year: y, totalCommission: result.totalCommission };
+    }).filter((r) => r.totalCommission !== 0);
+  }
+
+  // Activity — CVs sent, interviews, onsite visits, offers, calls, phone
+  // hours, month by month, every real year. Uses the exact same
+  // computation Consultant Stats itself calls, manual KPI corrections
+  // and the Deals Agreed methodology already correctly applied.
+  const activityByYear = {};
+  for (const y of allYears) {
+    const result = await computeConsultantStatsForYear(y);
+    if (result.consultants.some((c) => c.monthly.length > 0)) activityByYear[y] = result.consultants;
+  }
+
+  // Supplier-level costs — whichever years have actually been checked
+  // on Profitability's own "Check spend" button, read from that same
+  // cache, never a fresh Xero call triggered from here. A year that's
+  // never been checked simply isn't included, not silently treated as
+  // having no costs at all.
+  const supplierCostsByYear = Object.entries(cachedSpend).map(([year, c]) => ({
+    year: parseInt(year, 10),
+    checkedAt: c.checkedAt,
+    suppliers: c.suppliers,
+  }));
+
+  // Tenure — reusing Retention's own real calculations directly, not a
+  // re-derived approximation.
+  const tenure = {
+    averageTenureYearsCurrentFeeEarning: averageTenureOfCurrent(employment, "feeEarning"),
+    averageTenureYearsCurrentCoordinators: averageTenureOfCurrent(employment, "coordinator"),
+    averageTenureYearsDepartedFeeEarning: averageTenureOfDeparted(employment, "feeEarning"),
+    averageTenureYearsDepartedCoordinators: averageTenureOfDeparted(employment, "coordinator"),
+  };
+
   const systemPrompt = `You are answering a director's question about Reload Search's own real recruitment placement, staff, and company financial data, provided below as JSON. Answer using ONLY this data — never estimate, assume, or invent a figure that isn't directly computable from what's here.
 
 Critically: this data does NOT include role type, seniority level, candidate location, technology or skill tags, client firm type/category (hedge fund vs market maker vs prop shop, etc.), or whether a placed candidate stayed at the client afterward. If the question asks for anything along those lines, say plainly that it isn't tracked in this data rather than guessing, approximating, or inferring it from a client or candidate name.
@@ -114,6 +177,14 @@ Critically: this data does NOT include role type, seniority level, candidate loc
 "Revenue" figures on deals are already correctly computed in GBP, uplifts and manual corrections already applied — use them directly, don't try to recompute or re-derive them from anything else. A deal with isGenuinePlacement false is an onsite fee, not a placement — be clear about that distinction if it matters to the question asked.
 
 FINANCIALS below is company-wide, not derived from individual deals — Gross Profit and Total Expenses come straight from Xero's own Profit & Loss report as single summary lines, entered here by a director. Total Expenses is one lump figure, not broken out into interest, tax, depreciation, or amortisation separately. This means Revenue minus Total Expenses is a genuine, real approximation of pre-tax operating profit, but it is NOT the same thing as EBITDA — a true EBITDA figure would need interest, tax, depreciation, and amortisation broken out as their own separate amounts, which this data does not contain. If asked for EBITDA specifically, say plainly that only an approximate operating profit figure can be computed from what's here, show that figure, and be explicit about what's missing to make it a true EBITDA.
+
+COMMISSION is what was actually paid out to a consultant or coordinator on their own deals, computed separately for each real year since bands and targets reset annually — never sum figures from different years together as if they were computed under one shared bracket, they weren't.
+
+ACTIVITY is month-by-month CVs sent, interviews, onsite visits, offers, calls, and phone hours per consultant — a different question from revenue or placements above, this is funnel activity, not money.
+
+SUPPLIER_COSTS is Reload's own overhead spend by supplier (Atlas, LinkedIn, and so on), only for years a director has actually pulled fresh figures from Xero — a year missing from this list was simply never checked, it is NOT the same as that year having zero costs, say so plainly if asked about a year that isn't here.
+
+TENURE is average real tenure in years, computed the same way Retention's own page shows it, separately for current staff (still employed) and departed staff, and separately for fee-earning consultants versus coordinators.
 
 DEALS (every real fee record):
 ${JSON.stringify(deals)}
@@ -123,6 +194,18 @@ ${JSON.stringify(staff)}
 
 FINANCIALS (company-wide, from Xero, by year):
 ${JSON.stringify(financials)}
+
+COMMISSION (by consultant, by year):
+${JSON.stringify(commissionByConsultant)}
+
+ACTIVITY (by year, by consultant, by month):
+${JSON.stringify(activityByYear)}
+
+SUPPLIER_COSTS (by year, only years actually checked):
+${JSON.stringify(supplierCostsByYear)}
+
+TENURE:
+${JSON.stringify(tenure)}
 
 Today's date is ${new Date().toISOString().slice(0, 10)}.`;
 
@@ -153,7 +236,7 @@ Today's date is ${new Date().toISOString().slice(0, 10)}.`;
         // text, which is exactly what happened with a smaller budget.
         thinking: { type: "disabled" },
         system: systemPrompt,
-        messages: [{ role: "user", content: question }],
+        messages: [...validHistory, { role: "user", content: question }],
       }),
     });
 
