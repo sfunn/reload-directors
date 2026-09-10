@@ -11,6 +11,18 @@ const FX_KEY = "atlas-fx-rates";
 // codebase entirely when the two sites split. Nothing else touches it.
 const MANUAL_METRICS_KEY = "company-manual-metrics"; // { [year]: { grossProfitUSD, notes } }
 
+// EBITDA = operating profit (Gross Profit minus Total Expenses) with
+// Depreciation & Amortisation, Interest, and Tax all added back — only
+// Gross Profit and Total Expenses are genuinely required for this to
+// compute at all, the other three default to zero if never entered,
+// since plenty of real businesses genuinely carry none of them. Exported
+// so anywhere else that needs an EBITDA figure — Ask a Question, for
+// one — uses this exact same calculation, not a second copy of it.
+function computeEBITDA(grossProfitAmount, totalExpensesAmount, depreciationAmortisationAmount, interestAmount, taxAmount) {
+  if (grossProfitAmount === null || grossProfitAmount === undefined || totalExpensesAmount === null || totalExpensesAmount === undefined) return null;
+  return (grossProfitAmount - totalExpensesAmount) + (depreciationAmortisationAmount || 0) + (interestAmount || 0) + (taxAmount || 0);
+}
+
 // --- Direct port of the incentive site's original company-overview.js
 // logic, recovered from its git history before it was deleted there. Kept
 // equivalent on purpose, not re-derived. ---
@@ -230,18 +242,7 @@ module.exports = async (req, res) => {
     // EBITDA = operating profit (Gross Profit minus Total Expenses) with
     // Depreciation & Amortisation, Interest, and Tax all added back —
     // but only Gross Profit and Total Expenses are genuinely required
-    // for this to compute at all. The other three default to zero if
-    // never entered, since plenty of real businesses, Reload included,
-    // genuinely carry none of them: no debt means no interest, and no
-    // significant depreciable assets means no depreciation either.
-    // Requiring an explicit zero typed into a field that will likely
-    // never hold anything else isn't a safeguard, it's just friction.
-    // If a specific chart of accounts does carry a real, non-zero
-    // figure for one of these, entering it corrects the calculation;
-    // leaving it blank simply assumes there's nothing to add back.
-    const ebitdaAmount = (grossProfitAmount !== null && totalExpensesAmount !== null)
-      ? (grossProfitAmount - totalExpensesAmount) + (depreciationAmortisationAmount || 0) + (interestAmount || 0) + (taxAmount || 0)
-      : null;
+    const ebitdaAmount = computeEBITDA(grossProfitAmount, totalExpensesAmount, depreciationAmortisationAmount, interestAmount, taxAmount);
 
     // Revenue per head — genuinely derived from the roster's real dates,
     // never faked. For any year that ends before the very first tracked
@@ -382,3 +383,5 @@ module.exports = async (req, res) => {
 
   return res.status(400).json({ error: "Unknown action." });
 };
+
+module.exports.computeEBITDA = computeEBITDA;
