@@ -4,6 +4,7 @@ const { ROSTER, EMPLOYMENT_KEY } = require("./roster");
 const { computeCommissionForYear } = require("./commission");
 const { computeConsultantStatsForYear } = require("./consultant-stats");
 const { averageTenureOfCurrent, averageTenureOfDeparted } = require("./retention");
+const { computeEBITDA } = require("./company-overview");
 
 const RECORDS_KEY = "atlas-fee-records";
 const PLACEMENTS_KEY = "atlas-placements";
@@ -141,15 +142,30 @@ module.exports = async (req, res) => {
   // sourced from Xero's own Profit & Loss and Balance Sheet reports.
   // Genuinely different from the deal/staff data above — this is
   // company-wide financial reporting, not derived from individual deals.
-  const financials = Object.entries(manualMetrics).map(([year, m]) => ({
-    year: parseInt(year, 10),
-    grossProfitAmount: m.grossProfitAmount ?? m.grossProfitUSD ?? null,
-    grossProfitCurrency: m.grossProfitCurrency || (m.grossProfitUSD != null ? "USD" : null),
-    cashAmount: m.cashAmount ?? null,
-    cashCurrency: m.cashCurrency || null,
-    totalExpensesAmount: m.totalExpensesAmount ?? null,
-    totalExpensesCurrency: m.totalExpensesCurrency || null,
-  }));
+  const financials = Object.entries(manualMetrics).map(([year, m]) => {
+    const grossProfitAmount = m.grossProfitAmount ?? m.grossProfitUSD ?? null;
+    const totalExpensesAmount = m.totalExpensesAmount ?? null;
+    const depreciationAmortisationAmount = m.depreciationAmortisationAmount ?? null;
+    const interestAmount = m.interestAmount ?? null;
+    const taxAmount = m.taxAmount ?? null;
+    return {
+      year: parseInt(year, 10),
+      grossProfitAmount,
+      grossProfitCurrency: m.grossProfitCurrency || (m.grossProfitUSD != null ? "USD" : null),
+      cashAmount: m.cashAmount ?? null,
+      cashCurrency: m.cashCurrency || null,
+      totalExpensesAmount,
+      totalExpensesCurrency: m.totalExpensesCurrency || null,
+      depreciationAmortisationAmount,
+      interestAmount,
+      taxAmount,
+      // The exact same shared function Company Overview itself calls —
+      // if it's shown there as real EBITDA, it's shown here as real
+      // EBITDA too, never a separate approximation that quietly
+      // disagrees with what the site itself already displays.
+      ebitdaAmount: computeEBITDA(grossProfitAmount, totalExpensesAmount, depreciationAmortisationAmount, interestAmount, taxAmount),
+    };
+  });
 
   // Commission — every fee-earning consultant and coordinator, every
   // year since bands/targets have existed. Computed one real year at a
@@ -200,7 +216,7 @@ Critically: this data does NOT include role type, seniority level, candidate loc
 
 "Revenue" figures on deals are already correctly computed in GBP, uplifts and manual corrections already applied — use them directly, don't try to recompute or re-derive them from anything else. A deal with isGenuinePlacement false is an onsite fee, not a placement — be clear about that distinction if it matters to the question asked.
 
-FINANCIALS below is company-wide, not derived from individual deals — Gross Profit and Total Expenses come straight from Xero's own Profit & Loss report as single summary lines, entered here by a director. Total Expenses is one lump figure, not broken out into interest, tax, depreciation, or amortisation separately. This means Revenue minus Total Expenses is a genuine, real approximation of pre-tax operating profit, but it is NOT the same thing as EBITDA — a true EBITDA figure would need interest, tax, depreciation, and amortisation broken out as their own separate amounts, which this data does not contain. If asked for EBITDA specifically, say plainly that only an approximate operating profit figure can be computed from what's here, show that figure, and be explicit about what's missing to make it a true EBITDA.
+FINANCIALS below is company-wide, not derived from individual deals — Gross Profit and Total Expenses come straight from Xero's own Profit & Loss report as single summary lines, entered here by a director. ebitdaAmount is the real, actual EBITDA figure this site itself computes and displays on Company Overview — use it directly when asked about EBITDA, don't recompute or hedge on it. It equals Gross Profit minus Total Expenses, with depreciationAmortisationAmount, interestAmount, and taxAmount added back wherever they've actually been entered — a null value for any of those three genuinely means nothing was entered for that year, not that it doesn't exist as a concept, and for a business with no debt or significant depreciable assets, that's completely normal and the EBITDA figure is still real and correct as shown, not merely approximate.
 
 COMMISSION is what was actually paid out to a consultant or coordinator on their own deals, computed separately for each real year since bands and targets reset annually — never sum figures from different years together as if they were computed under one shared bracket, they weren't.
 
