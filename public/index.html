@@ -180,7 +180,7 @@ const chipStyle = { background: "rgba(255,176,140,0.14)", border: `1px solid ${M
 
 const YEAR_OPTIONS = [2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026, 2027];
 
-function DealDetailsTable({ records, showSourceAndCoordinator, editingKey, editAmount, editCurrency, editCustomRate, editNotes, onStartEdit, onChangeAmount, onChangeCurrency, onChangeCustomRate, onChangeNotes, onSave, onCancel, onClear, saving, clientAreas, areaEditingKey, newAreaText, onStartAreaEdit, onCancelAreaEdit, onChangeNewAreaText, onAssignArea, onAddAndAssignArea }) {
+function DealDetailsTable({ records, showSourceAndCoordinator, editingKey, editAmount, editCurrency, editCustomRate, editNotes, onStartEdit, onChangeAmount, onChangeCurrency, onChangeCustomRate, onChangeNotes, onSave, onCancel, onClear, saving }) {
   return records.length === 0
     ? React.createElement("div", { style: { color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif", fontSize: 14, padding: "20px 0" } }, "No deals recorded yet for this year.")
     : React.createElement("div", { style: { overflowX: "auto" } },
@@ -205,15 +205,7 @@ function DealDetailsTable({ records, showSourceAndCoordinator, editingKey, editA
               React.createElement(Cell, { width: 100 }, r.feeDate ? new Date(r.feeDate).toLocaleDateString("en-GB") : "—"),
               React.createElement(Cell, { width: 130, color: r.candidateName ? INDIGO : INDIGO_MUTED }, r.candidateName || "—"),
               React.createElement(Cell, { width: 120, color: r.clientCompanyName ? INDIGO : INDIGO_MUTED }, r.clientCompanyName || "—"),
-              React.createElement(Cell, { width: 130 },
-                React.createElement("div", { style: { display: "flex", alignItems: "baseline" } },
-                  React.createElement("span", { style: { width: 80, flexShrink: 0, color: r.area ? INDIGO : INDIGO_MUTED } }, r.area || "—"),
-                  React.createElement("span", {
-                    onClick: () => onStartAreaEdit(key),
-                    style: { fontSize: 11, color: INDIGO_MUTED, textDecoration: "underline", cursor: "pointer" }
-                  }, "tag")
-                )
-              ),
+              React.createElement(Cell, { width: 130, color: r.area ? INDIGO : INDIGO_MUTED }, r.area || "—"),
               React.createElement(Cell, { width: 100, color: r.placementStartDate ? INDIGO : INDIGO_MUTED }, r.placementStartDate ? new Date(r.placementStartDate).toLocaleDateString("en-GB") : "—"),
               React.createElement(Cell, { width: 110 }, r.usdAmount !== null ? `$${Math.round(r.usdAmount).toLocaleString()}` : "no rate"),
               React.createElement(Cell, { width: 140 },
@@ -258,26 +250,6 @@ function DealDetailsTable({ records, showSourceAndCoordinator, editingKey, editA
               React.createElement("button", { onClick: onSave, disabled: saving, style: { ...ghostStyle, padding: "9px 14px" } }, saving ? "Saving…" : "Save"),
               r.upliftType === "override" && React.createElement("button", { onClick: onClear, disabled: saving, style: { ...ghostStyle, padding: "9px 14px", color: MELON_LINK } }, "Clear override"),
               React.createElement("button", { onClick: onCancel, style: { ...ghostStyle, padding: "9px 14px", background: "none", border: "none" } }, "Cancel")
-            ),
-            areaEditingKey === key && React.createElement("div", { style: { display: "flex", gap: 10, alignItems: "flex-end", padding: "10px 0", background: "rgba(142,185,176,0.08)", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, flexWrap: "wrap" } },
-              React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, width: "100%" } },
-                r.clientCompanyName
-                  ? `Areas tracked for ${r.clientCompanyName} — click one to tag this deal, or add a new one below.`
-                  : "This deal has no client on record, so there's nothing to tag it against."
-              ),
-              React.createElement("div", { style: { fontSize: 11, color: r.rawNotes ? INDIGO_MUTED : MELON_LINK, width: "100%", fontStyle: "italic" } },
-                r.rawNotes ? `Atlas's own notes field currently says: "${r.rawNotes}"` : "Atlas's own notes field is currently empty for this deal — if a note was just added there, it may not have synced through yet, or genuinely isn't being captured for this kind of record."
-              ),
-              r.clientCompanyName && (clientAreas[r.clientCompanyName] || []).map((a) => React.createElement("button", {
-                key: a, onClick: () => onAssignArea(r.feeId, r.splitId, a),
-                style: { ...chipStyle, padding: "7px 12px", background: r.area === a ? INDIGO : "rgba(46,64,91,0.06)", color: r.area === a ? WHITE : INDIGO, fontWeight: r.area === a ? 700 : 500 }
-              }, a)),
-              r.area && React.createElement("button", { onClick: () => onAssignArea(r.feeId, r.splitId, null), style: { ...ghostStyle, padding: "7px 12px", fontSize: 12, color: MELON_LINK } }, "Clear tag"),
-              r.clientCompanyName && React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "flex-end" } },
-                React.createElement("input", { type: "text", value: newAreaText, onChange: e => onChangeNewAreaText(e.target.value), placeholder: "New area, e.g. Commodities", style: { ...inputStyle, width: 180, marginBottom: 0 } }),
-                React.createElement("button", { onClick: () => onAddAndAssignArea(r.clientCompanyName, r.feeId, r.splitId, newAreaText), style: { ...ghostStyle, padding: "9px 14px" } }, "Add & tag")
-              ),
-              React.createElement("button", { onClick: onCancelAreaEdit, style: { ...ghostStyle, padding: "9px 14px", background: "none", border: "none" } }, "Cancel")
             )
           );
         })
@@ -296,8 +268,6 @@ function DealsPage({ token }) {
   const [editNotes, setEditNotes] = useState("");
   const [savingOverride, setSavingOverride] = useState(false);
   const [clientAreas, setClientAreas] = useState({});
-  const [areaEditingKey, setAreaEditingKey] = useState(null);
-  const [newAreaText, setNewAreaText] = useState("");
   const [areaConcentrationClient, setAreaConcentrationClient] = useState(null);
   const [areaConcentrationData, setAreaConcentrationData] = useState(null);
   const [areaConcentrationLoading, setAreaConcentrationLoading] = useState(false);
@@ -428,53 +398,6 @@ function DealsPage({ token }) {
       const [feeId, splitId] = editingKey.split(":");
       saveOverride(feeId, splitId, "", "GBP", "", null);
     },
-  };
-
-  // Assigning an existing area from that client's own managed list —
-  // deliberately per-client, since Citadel's real areas have nothing to
-  // do with any other client's.
-  async function assignArea(feeId, splitId, area) {
-    try {
-      await fetch("/api/deals?action=set-deal-area", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ feeId, splitId, area }),
-      });
-      setAreaEditingKey(null);
-      await load();
-      if (areaConcentrationClient) await loadAreaConcentration(areaConcentrationClient);
-    } catch (e) {
-      setError("Couldn't reach the server.");
-    }
-  }
-
-  // Adding a genuinely new area to that client's managed list, then
-  // immediately assigning it to this deal — one action, since a
-  // director adding a new area is almost always doing it specifically
-  // to tag the deal in front of them.
-  async function addAndAssignArea(client, feeId, splitId, area) {
-    if (!area.trim()) return;
-    try {
-      const res = await fetch("/api/deals?action=toggle-client-area", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ client, area: area.trim() }),
-      });
-      if (res.ok) { const body = await res.json(); setClientAreas(body.areas); }
-      await assignArea(feeId, splitId, area.trim());
-      setNewAreaText("");
-    } catch (e) {
-      setError("Couldn't reach the server.");
-    }
-  }
-
-  const areaEditProps = {
-    clientAreas, areaEditingKey, newAreaText,
-    onStartAreaEdit: (key) => { setAreaEditingKey(key); setNewAreaText(""); },
-    onCancelAreaEdit: () => { setAreaEditingKey(null); setNewAreaText(""); },
-    onChangeNewAreaText: setNewAreaText,
-    onAssignArea: assignArea,
-    onAddAndAssignArea: addAndAssignArea,
   };
 
   return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 20 } },
@@ -646,12 +569,12 @@ function DealsPage({ token }) {
     !loading && data && React.createElement(Panel, null,
       React.createElement(SectionTitle, { title: "Deal details & exchange rates" }),
       React.createElement("div", { style: { marginBottom: 12, fontSize: 12, color: INDIGO_MUTED } }, "Paid status, Source, and Coordinator are set on the incentive site. Revenue figures can be corrected here when the true rate differs from what's recorded — this only ever affects reporting, never any consultant's actual commission."),
-      React.createElement(DealDetailsTable, { records: (data.records || []).filter(r => r.hasPlacementName), showSourceAndCoordinator: true, ...overrideEditProps, ...areaEditProps })
+      React.createElement(DealDetailsTable, { records: (data.records || []).filter(r => r.hasPlacementName), showSourceAndCoordinator: true, ...overrideEditProps })
     ),
     !loading && data && React.createElement(Panel, null,
       React.createElement(SectionTitle, { title: "Onsite Fees" }),
       React.createElement("div", { style: { marginTop: 4, marginBottom: 14, fontSize: 12, color: INDIGO_MUTED } }, "Fees with no linked placement — e.g. genuine Onsite fees in Atlas."),
-      React.createElement(DealDetailsTable, { records: (data.records || []).filter(r => !r.hasPlacementName), showSourceAndCoordinator: true, ...overrideEditProps, ...areaEditProps })
+      React.createElement(DealDetailsTable, { records: (data.records || []).filter(r => !r.hasPlacementName), showSourceAndCoordinator: true, ...overrideEditProps })
     )
   );
 }
