@@ -271,6 +271,7 @@ function DealsPage({ token }) {
   const [areaConcentrationClient, setAreaConcentrationClient] = useState(null);
   const [areaConcentrationData, setAreaConcentrationData] = useState(null);
   const [areaConcentrationLoading, setAreaConcentrationLoading] = useState(false);
+  const [areaConcentrationAllTime, setAreaConcentrationAllTime] = useState(false);
   const [unmappedTexts, setUnmappedTexts] = useState([]);
 
   const load = useCallback(async () => {
@@ -298,19 +299,23 @@ function DealsPage({ token }) {
   // own deals, loaded on demand for whichever client is actually
   // selected, since with likely only one or two clients ever using this
   // at all, there's no reason to compute it for every client up front.
+  // Its own year toggle, deliberately separate from the page-wide year
+  // selector above — picking a single year is still the default, with
+  // an explicit All Time option for seeing everything combined.
   const loadAreaConcentration = useCallback(async (client) => {
     if (!client) { setAreaConcentrationData(null); setUnmappedTexts([]); return; }
     setAreaConcentrationLoading(true);
     try {
+      const yearParam = areaConcentrationAllTime ? "all" : year;
       const [concRes, unmappedRes] = await Promise.all([
-        fetch(`/api/deals?action=area-concentration&client=${encodeURIComponent(client)}&year=${year}`, { headers: { Authorization: `Bearer ${token}` } }),
+        fetch(`/api/deals?action=area-concentration&client=${encodeURIComponent(client)}&year=${yearParam}`, { headers: { Authorization: `Bearer ${token}` } }),
         fetch(`/api/deals?action=unmapped-notes&client=${encodeURIComponent(client)}`, { headers: { Authorization: `Bearer ${token}` } }),
       ]);
       if (concRes.ok) setAreaConcentrationData(await concRes.json());
       if (unmappedRes.ok) { const body = await unmappedRes.json(); setUnmappedTexts(body.unmappedTexts || []); }
     } catch (e) { /* non-critical */ }
     finally { setAreaConcentrationLoading(false); }
-  }, [token, year]);
+  }, [token, year, areaConcentrationAllTime]);
 
   useEffect(() => { loadAreaConcentration(areaConcentrationClient); }, [areaConcentrationClient, loadAreaConcentration]);
 
@@ -520,11 +525,21 @@ function DealsPage({ token }) {
             }, c))
           )
         ),
-        !areaConcentrationClient && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Pick a client above to see how its own deals split across the areas tracked for it."),
+        areaConcentrationClient && React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 10 } },
+          React.createElement("button", {
+            onClick: () => setAreaConcentrationAllTime(false),
+            style: { ...chipStyle, padding: "6px 12px", fontSize: 12, background: !areaConcentrationAllTime ? INDIGO : "rgba(46,64,91,0.06)", color: !areaConcentrationAllTime ? WHITE : INDIGO, fontWeight: !areaConcentrationAllTime ? 700 : 500 }
+          }, String(year)),
+          React.createElement("button", {
+            onClick: () => setAreaConcentrationAllTime(true),
+            style: { ...chipStyle, padding: "6px 12px", fontSize: 12, background: areaConcentrationAllTime ? INDIGO : "rgba(46,64,91,0.06)", color: areaConcentrationAllTime ? WHITE : INDIGO, fontWeight: areaConcentrationAllTime ? 700 : 500 }
+          }, "All Time")
+        ),
+        !areaConcentrationClient && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Pick a client above to see how its own placements split across the areas tracked for it."),
         areaConcentrationLoading && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Loading…"),
         areaConcentrationClient && !areaConcentrationLoading && areaConcentrationData && React.createElement(React.Fragment, null,
           areaConcentrationData.untaggedCount > 0 && React.createElement("div", { style: { fontSize: 11, color: MELON_LINK, marginBottom: 8 } },
-            `${areaConcentrationData.untaggedCount} deal${areaConcentrationData.untaggedCount === 1 ? "" : "s"} at ${areaConcentrationClient} ${areaConcentrationData.untaggedCount === 1 ? "hasn't" : "haven't"} been tagged with an area yet, so ${areaConcentrationData.untaggedCount === 1 ? "it isn't" : "they aren't"} reflected below.`
+            `${areaConcentrationData.untaggedCount} placement${areaConcentrationData.untaggedCount === 1 ? "" : "s"} at ${areaConcentrationClient} ${areaConcentrationData.untaggedCount === 1 ? "hasn't" : "haven't"} been tagged with an area yet, so ${areaConcentrationData.untaggedCount === 1 ? "it isn't" : "they aren't"} reflected below.`
           ),
           unmappedTexts.length > 0 && React.createElement("div", { style: { marginBottom: 12, padding: "10px 12px", background: "rgba(255,176,140,0.1)", borderRadius: 8 } },
             React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginBottom: 8 } },
@@ -544,13 +559,12 @@ function DealsPage({ token }) {
             ))
           ),
           areaConcentrationData.areaBreakdown.length === 0
-            ? React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "No tagged deals yet for this client this year.")
+            ? React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, `No tagged placements yet for this client ${areaConcentrationAllTime ? "at all" : "this year"}.`)
             : React.createElement(React.Fragment, null,
                 React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
                   React.createElement("span", { style: { width: 150, flexShrink: 0 } }, "Area"),
                   React.createElement("span", { style: { width: 100, flexShrink: 0 } }, "Revenue (GBP)"),
                   React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Deals"),
-                  React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Onsites"),
                   React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "%")
                 ),
                 areaConcentrationData.areaBreakdown.map((a) => React.createElement("div", {
@@ -559,7 +573,6 @@ function DealsPage({ token }) {
                   React.createElement("span", { style: { width: 150, flexShrink: 0 } }, a.area),
                   React.createElement("span", { style: { width: 100, flexShrink: 0 } }, `£${Math.round(a.totalGBP).toLocaleString()}`),
                   React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, a.deals),
-                  React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, a.onsites),
                   React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, `${a.percentage.toFixed(0)}%`)
                 ))
               )
