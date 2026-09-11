@@ -313,7 +313,7 @@ module.exports = async (req, res) => {
             clientCompanyName ? clientAreasForResolve[clientCompanyName] : null,
             clientCompanyName ? areaVariantMap[clientCompanyName] : null
           );
-          return { area: resolved.area, areaSource: resolved.source, areaRawText: resolved.rawText || null };
+          return { area: resolved.area, areaSource: resolved.source, areaRawText: resolved.rawText || null, rawNotes: r.notes || null };
         })(),
       };
     })
