@@ -4,6 +4,35 @@ const { resolveUplift, resolvedRevenueGBP, getOverrides, setOverride } = require
 const RECORDS_KEY = "atlas-fee-records"; // shared with the incentive site — read only, never written here
 const FX_KEY = "atlas-fx-rates";
 const PLACEMENTS_KEY = "atlas-placements";
+// Both owned entirely by this site, exactly like deal-revenue-overrides —
+// never touches Atlas or the shared deal data itself. The managed list is
+// deliberately per-client, since "Commodities" or "PCG" only make sense
+// within a specific client's own real internal structure, not as one
+// shared list every client gets lumped into.
+const DEAL_AREAS_KEY = "deal-client-areas"; // { [clientCompanyName]: string[] }
+const DEAL_AREA_ASSIGNMENTS_KEY = "deal-area-assignments"; // { "feeId:splitId": areaName } — a manual tag always wins over whatever Atlas's own notes say
+const DEAL_AREA_VARIANT_MAP_KEY = "deal-area-variant-map"; // { [client]: { [lowercasedRawNoteText]: canonicalAreaName } }
+
+// The actual precedence, in order: a director's own manual tag always
+// wins, since that's a deliberate, confirmed choice. Failing that, an
+// exact match (ignoring case) against the client's own managed area
+// list resolves automatically — "commodities" and "Commodities" are
+// obviously the same real thing. Failing that, a previously-confirmed
+// variant mapping resolves automatically too, since once a director has
+// told the system "Comms means Commodities" once, there's no reason to
+// ask again. Only genuinely new, unrecognised text gets flagged as
+// needing a real decision.
+function resolveAreaForDeal(rawNotes, manualAssignment, canonicalAreas, variantMap) {
+  if (manualAssignment) return { area: manualAssignment, source: "manual" };
+  const trimmed = (rawNotes || "").trim();
+  if (!trimmed) return { area: null, source: "none" };
+  const lower = trimmed.toLowerCase();
+  const exactMatch = (canonicalAreas || []).find((a) => a.toLowerCase() === lower);
+  if (exactMatch) return { area: exactMatch, source: "atlas" };
+  const mapped = (variantMap || {})[lower];
+  if (mapped) return { area: mapped, source: "atlas" };
+  return { area: null, source: "unmapped", rawText: trimmed };
+}
 
 // --- Everything below this line is a direct port of the incentive site's
 // api/deals.js "detail" logic (Super-Admin-only view). Kept byte-for-byte
@@ -96,6 +125,118 @@ module.exports = async (req, res) => {
     return res.status(200).json({ ok: true, override: result });
   }
 
+  // The managed area list, and the actual per-deal tagging — both owned
+  // entirely here, same reasoning as the revenue override above. Areas
+  // are deliberately scoped per client, not one shared list, since
+  // Citadel's own real desks have nothing to do with any other client's.
+  if (req.query.action === "client-areas" && req.method === "GET") {
+    const areas = (await kv.get(DEAL_AREAS_KEY)) || {};
+    return res.status(200).json({ areas });
+  }
+  if (req.query.action === "toggle-client-area" && req.method === "POST") {
+    const { client, area } = req.body || {};
+    if (!client || !area) return res.status(400).json({ error: "client and area are both required." });
+    const allAreas = (await kv.get(DEAL_AREAS_KEY)) || {};
+    const existing = allAreas[client] || [];
+    const alreadyThere = existing.includes(area);
+    allAreas[client] = alreadyThere ? existing.filter((a) => a !== area) : [...existing, area];
+    await kv.set(DEAL_AREAS_KEY, allAreas);
+    return res.status(200).json({ areas: allAreas, nowPresent: !alreadyThere });
+  }
+  if (req.query.action === "set-deal-area" && req.method === "POST") {
+    const { feeId, splitId, area } = req.body || {};
+    if (!feeId || !splitId) return res.status(400).json({ error: "feeId and splitId are both required." });
+    const key = `${feeId}:${splitId}`;
+    const allAssignments = (await kv.get(DEAL_AREA_ASSIGNMENTS_KEY)) || {};
+    if (area) allAssignments[key] = area; else delete allAssignments[key];
+    await kv.set(DEAL_AREA_ASSIGNMENTS_KEY, allAssignments);
+    return res.status(200).json({ ok: true, area: area || null });
+  }
+  // Area Concentration — genuinely different from the client breakdown
+  // below, this is entirely WITHIN one specific client's own deals,
+  // grouped by whichever area each was tagged with, using the exact
+  // same resolvedRevenueGBP every other revenue figure on this site
+  // already trusts. A deal never tagged with an area simply isn't
+  // counted here — this only ever reflects what's actually been tagged,
+  // never a guess at what an untagged deal's area might be.
+  if (req.query.action === "area-concentration" && req.method === "GET") {
+    const client = req.query.client;
+    if (!client) return res.status(400).json({ error: "A client is required." });
+    const year = req.query.year ? parseInt(req.query.year, 10) : new Date().getUTCFullYear();
+    const records = (await kv.get(RECORDS_KEY)) || [];
+    const allRates = (await kv.get(FX_KEY)) || {};
+    const placements = (await kv.get(PLACEMENTS_KEY)) || {};
+    const overrides = await getOverrides();
+    const assignments = (await kv.get(DEAL_AREA_ASSIGNMENTS_KEY)) || {};
+    const clientAreasForResolve = (await kv.get(DEAL_AREAS_KEY)) || {};
+    const areaVariantMap = (await kv.get(DEAL_AREA_VARIANT_MAP_KEY)) || {};
+
+    const byArea = {};
+    let clientTotalGBP = 0;
+    let untaggedCount = 0;
+    let unmappedCount = 0;
+    for (const r of records) {
+      if (effectiveYear(r, placements) !== year) continue;
+      const placement = r.placementId ? placements[r.placementId] : null;
+      const clientCompanyName = (placement && placement.clientCompanyName) || r.projectClientName || null;
+      if (clientCompanyName !== client) continue;
+      const hasPlacementName = !!(placement && placement.candidateName);
+      const gbpAmount = resolvedRevenueGBP(r, clientCompanyName, year, overrides, hasPlacementName, allRates);
+      if (gbpAmount === null) continue;
+      clientTotalGBP += gbpAmount;
+      const resolved = resolveAreaForDeal(r.notes, assignments[`${r.feeId}:${r.splitId}`], clientAreasForResolve[client], areaVariantMap[client]);
+      if (resolved.source === "unmapped") { unmappedCount += 1; continue; }
+      if (!resolved.area) { untaggedCount += 1; continue; }
+      if (!byArea[resolved.area]) byArea[resolved.area] = { area: resolved.area, totalGBP: 0, deals: 0, onsites: 0 };
+      byArea[resolved.area].totalGBP += gbpAmount;
+      if (hasPlacementName) byArea[resolved.area].deals += 1; else byArea[resolved.area].onsites += 1;
+    }
+    const areaBreakdown = Object.values(byArea)
+      .map((a) => ({ ...a, percentage: clientTotalGBP > 0 ? (a.totalGBP / clientTotalGBP) * 100 : 0 }))
+      .sort((a, b) => b.totalGBP - a.totalGBP);
+
+    return res.status(200).json({ year, client, areaBreakdown, clientTotalGBP, untaggedCount, unmappedCount });
+  }
+
+  // Whichever raw, real text Atlas actually holds for this client, that
+  // doesn't yet match any known canonical area or confirmed variant —
+  // grouped by distinct text so the same unrecognised note doesn't need
+  // resolving one deal at a time. Only ever surfaces what genuinely
+  // needs a real decision, never something already resolved automatically.
+  if (req.query.action === "unmapped-notes" && req.method === "GET") {
+    const client = req.query.client;
+    if (!client) return res.status(400).json({ error: "A client is required." });
+    const records = (await kv.get(RECORDS_KEY)) || [];
+    const placements = (await kv.get(PLACEMENTS_KEY)) || {};
+    const assignments = (await kv.get(DEAL_AREA_ASSIGNMENTS_KEY)) || {};
+    const clientAreasForResolve = (await kv.get(DEAL_AREAS_KEY)) || {};
+    const areaVariantMap = (await kv.get(DEAL_AREA_VARIANT_MAP_KEY)) || {};
+
+    const unmappedTexts = new Set();
+    for (const r of records) {
+      const placement = r.placementId ? placements[r.placementId] : null;
+      const clientCompanyName = (placement && placement.clientCompanyName) || r.projectClientName || null;
+      if (clientCompanyName !== client) continue;
+      const resolved = resolveAreaForDeal(r.notes, assignments[`${r.feeId}:${r.splitId}`], clientAreasForResolve[client], areaVariantMap[client]);
+      if (resolved.source === "unmapped") unmappedTexts.add(resolved.rawText);
+    }
+    return res.status(200).json({ client, unmappedTexts: Array.from(unmappedTexts) });
+  }
+
+  // Confirms that a specific piece of raw Atlas text genuinely means a
+  // specific canonical area — remembered here so every future deal with
+  // that same exact text resolves automatically from then on, without
+  // ever needing to ask again.
+  if (req.query.action === "map-area-variant" && req.method === "POST") {
+    const { client, rawText, canonicalArea } = req.body || {};
+    if (!client || !rawText || !canonicalArea) return res.status(400).json({ error: "client, rawText, and canonicalArea are all required." });
+    const allVariantMaps = (await kv.get(DEAL_AREA_VARIANT_MAP_KEY)) || {};
+    if (!allVariantMaps[client]) allVariantMaps[client] = {};
+    allVariantMaps[client][rawText.trim().toLowerCase()] = canonicalArea;
+    await kv.set(DEAL_AREA_VARIANT_MAP_KEY, allVariantMaps);
+    return res.status(200).json({ ok: true });
+  }
+
   if (req.method !== "GET") {
     return res.status(405).json({ error: "This endpoint is read-only. Edit deal records on the incentive site." });
   }
@@ -104,6 +245,9 @@ module.exports = async (req, res) => {
   const allRates = (await kv.get(FX_KEY)) || {};
   const placements = (await kv.get(PLACEMENTS_KEY)) || {};
   const overrides = await getOverrides();
+  const areaAssignments = (await kv.get(DEAL_AREA_ASSIGNMENTS_KEY)) || {};
+  const clientAreasForResolve = (await kv.get(DEAL_AREAS_KEY)) || {};
+  const areaVariantMap = (await kv.get(DEAL_AREA_VARIANT_MAP_KEY)) || {};
   const year = req.query.year ? parseInt(req.query.year, 10) : new Date().getUTCFullYear();
 
   const yearRecords = records
@@ -162,6 +306,15 @@ module.exports = async (req, res) => {
         monthOverrides: r.monthOverrides || {},
         coordinatorId: r.coordinatorId || null,
         source: r.source || null,
+        ...(() => {
+          const resolved = resolveAreaForDeal(
+            r.notes,
+            areaAssignments[`${r.feeId}:${r.splitId}`],
+            clientCompanyName ? clientAreasForResolve[clientCompanyName] : null,
+            clientCompanyName ? areaVariantMap[clientCompanyName] : null
+          );
+          return { area: resolved.area, areaSource: resolved.source, areaRawText: resolved.rawText || null };
+        })(),
       };
     })
   );
