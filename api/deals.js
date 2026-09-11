@@ -13,24 +13,83 @@ const DEAL_AREAS_KEY = "deal-client-areas"; // { [clientCompanyName]: string[] }
 const DEAL_AREA_ASSIGNMENTS_KEY = "deal-area-assignments"; // { "feeId:splitId": areaName } — a manual tag always wins over whatever Atlas's own notes say
 const DEAL_AREA_VARIANT_MAP_KEY = "deal-area-variant-map"; // { [client]: { [lowercasedRawNoteText]: canonicalAreaName } }
 
+// A real normalized key for comparison purposes only — strips anything
+// that isn't a letter or digit and lowercases what's left, so
+// "Post-Trade", "postrade", and "POST TRADE" all collapse to the exact
+// same key and match each other automatically. The actual canonical
+// area name shown everywhere else stays exactly as it was originally
+// entered — this is only ever used to decide whether two pieces of text
+// mean the same real thing, never to change what gets displayed.
+function normalizeAreaKey(text) {
+  return (text || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+// A real edit distance — the minimum number of single-character
+// insertions, deletions, or substitutions needed to turn one string
+// into the other. Used only to suggest a likely match for a genuine
+// typo, never to resolve one automatically without confirmation.
+function levenshteinDistance(a, b) {
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+    }
+  }
+  return dp[m][n];
+}
+
+// Deliberately conservative — the difference has to be small relative
+// to the length of the text itself, and both strings need a real
+// minimum length, since a short name like "PCG" is only one character
+// away from plenty of things that are genuinely unrelated to it, not a
+// typo of them. And critically, this only ever resolves when exactly
+// one real area is close enough — if two genuinely different areas
+// could both plausibly be what was meant, this refuses to guess between
+// them rather than silently picking whichever happens to be marginally
+// closer.
+function findFuzzyAreaMatch(normalizedText, canonicalAreas) {
+  if (normalizedText.length < 5) return null;
+  const withinRange = [];
+  for (const area of canonicalAreas || []) {
+    const normalizedArea = normalizeAreaKey(area);
+    if (normalizedArea.length < 5) continue;
+    const distance = levenshteinDistance(normalizedText, normalizedArea);
+    const threshold = Math.max(1, Math.floor(Math.max(normalizedText.length, normalizedArea.length) * 0.2));
+    if (distance > 0 && distance <= threshold) withinRange.push(area);
+  }
+  return withinRange.length === 1 ? withinRange[0] : null;
+}
+
 // The actual precedence, in order: a director's own manual tag always
-// wins, since that's a deliberate, confirmed choice. Failing that, an
-// exact match (ignoring case) against the client's own managed area
-// list resolves automatically — "commodities" and "Commodities" are
-// obviously the same real thing. Failing that, a previously-confirmed
-// variant mapping resolves automatically too, since once a director has
-// told the system "Comms means Commodities" once, there's no reason to
-// ask again. Only genuinely new, unrecognised text gets flagged as
-// needing a real decision.
+// wins, since that's a deliberate, confirmed choice. Failing that, a
+// normalized match against the client's own managed area list resolves
+// automatically — capitalization, hyphens, and spacing differences are
+// all treated as the same real thing, since they obviously are.
+// Failing that, a previously-confirmed variant mapping resolves
+// automatically too, since once a director has told the system what a
+// piece of real text actually means once, there's no reason to ask
+// again. Failing that, a genuine small typo resolves automatically as
+// well, on the reasoning that these areas are distinct enough from each
+// other that a minor spelling slip won't be mistaken for the wrong one
+// — and if a real mistake ever does happen, the fix is just correcting
+// the note in Atlas, not reviewing every deal by hand. Only genuinely
+// new, unrecognised text gets flagged as needing a real decision.
 function resolveAreaForDeal(rawNotes, manualAssignment, canonicalAreas, variantMap) {
   if (manualAssignment) return { area: manualAssignment, source: "manual" };
   const trimmed = (rawNotes || "").trim();
   if (!trimmed) return { area: null, source: "none" };
-  const lower = trimmed.toLowerCase();
-  const exactMatch = (canonicalAreas || []).find((a) => a.toLowerCase() === lower);
+  const normalized = normalizeAreaKey(trimmed);
+  const exactMatch = (canonicalAreas || []).find((a) => normalizeAreaKey(a) === normalized);
   if (exactMatch) return { area: exactMatch, source: "atlas" };
-  const mapped = (variantMap || {})[lower];
+  const mapped = (variantMap || {})[normalized];
   if (mapped) return { area: mapped, source: "atlas" };
+  const fuzzyMatch = findFuzzyAreaMatch(normalized, canonicalAreas);
+  if (fuzzyMatch) return { area: fuzzyMatch, source: "atlas-fuzzy" };
   return { area: null, source: "unmapped", rawText: trimmed };
 }
 
@@ -212,15 +271,16 @@ module.exports = async (req, res) => {
     const clientAreasForResolve = (await kv.get(DEAL_AREAS_KEY)) || {};
     const areaVariantMap = (await kv.get(DEAL_AREA_VARIANT_MAP_KEY)) || {};
 
-    const unmappedTexts = new Set();
+    const unmappedByText = {};
     for (const r of records) {
       const placement = r.placementId ? placements[r.placementId] : null;
       const clientCompanyName = (placement && placement.clientCompanyName) || r.projectClientName || null;
       if (clientCompanyName !== client) continue;
       const resolved = resolveAreaForDeal(r.notes, assignments[`${r.feeId}:${r.splitId}`], clientAreasForResolve[client], areaVariantMap[client]);
-      if (resolved.source === "unmapped") unmappedTexts.add(resolved.rawText);
+      if (resolved.source === "unmapped") unmappedByText[resolved.rawText] = resolved.suggestedArea || null;
     }
-    return res.status(200).json({ client, unmappedTexts: Array.from(unmappedTexts) });
+    const unmappedTexts = Object.entries(unmappedByText).map(([rawText, suggestedArea]) => ({ rawText, suggestedArea }));
+    return res.status(200).json({ client, unmappedTexts });
   }
 
   // Confirms that a specific piece of raw Atlas text genuinely means a
@@ -232,7 +292,7 @@ module.exports = async (req, res) => {
     if (!client || !rawText || !canonicalArea) return res.status(400).json({ error: "client, rawText, and canonicalArea are all required." });
     const allVariantMaps = (await kv.get(DEAL_AREA_VARIANT_MAP_KEY)) || {};
     if (!allVariantMaps[client]) allVariantMaps[client] = {};
-    allVariantMaps[client][rawText.trim().toLowerCase()] = canonicalArea;
+    allVariantMaps[client][normalizeAreaKey(rawText)] = canonicalArea;
     await kv.set(DEAL_AREA_VARIANT_MAP_KEY, allVariantMaps);
     return res.status(200).json({ ok: true });
   }
