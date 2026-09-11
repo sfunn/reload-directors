@@ -361,6 +361,25 @@ function DealsPage({ token }) {
     }
   }
 
+  // For when the raw Atlas text isn't a variant of anything that already
+  // exists, it's a genuinely new area in its own right — added directly
+  // to the client's own list, which the existing exact-match logic then
+  // resolves automatically, no separate mapping step required since the
+  // real text and the new canonical name are simply the same thing.
+  async function addNewAreaFromUnmapped(client, rawText) {
+    try {
+      const res = await fetch("/api/deals?action=toggle-client-area", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ client, area: rawText }),
+      });
+      if (res.ok) { const body = await res.json(); setClientAreas(body.areas); }
+      await loadAreaConcentration(client);
+    } catch (e) {
+      setError("Couldn't reach the server.");
+    }
+  }
+
   function startEdit(record) {
     setEditingKey(`${record.feeId}:${record.splitId}`);
     setEditAmount(record.upliftType === "override" ? String(record.upliftOverrideAmount) : "");
@@ -594,7 +613,11 @@ function DealsPage({ token }) {
               (clientAreas[areaConcentrationClient] || []).map((a) => React.createElement("button", {
                 key: a, onClick: () => mapVariant(areaConcentrationClient, text, a),
                 style: { ...chipStyle, padding: "6px 10px", fontSize: 12, background: "rgba(46,64,91,0.06)", color: INDIGO }
-              }, a))
+              }, a)),
+              React.createElement("button", {
+                onClick: () => addNewAreaFromUnmapped(areaConcentrationClient, text),
+                style: { ...ghostStyle, padding: "6px 10px", fontSize: 12, color: VERDIGRIS }
+              }, `Add "${text}" as a new area`)
             ))
           ),
           areaConcentrationData.areaBreakdown.length === 0
