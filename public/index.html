@@ -265,6 +265,9 @@ function DealDetailsTable({ records, showSourceAndCoordinator, editingKey, editA
                   ? `Areas tracked for ${r.clientCompanyName} — click one to tag this deal, or add a new one below.`
                   : "This deal has no client on record, so there's nothing to tag it against."
               ),
+              React.createElement("div", { style: { fontSize: 11, color: r.rawNotes ? INDIGO_MUTED : MELON_LINK, width: "100%", fontStyle: "italic" } },
+                r.rawNotes ? `Atlas's own notes field currently says: "${r.rawNotes}"` : "Atlas's own notes field is currently empty for this deal — if a note was just added there, it may not have synced through yet, or genuinely isn't being captured for this kind of record."
+              ),
               r.clientCompanyName && (clientAreas[r.clientCompanyName] || []).map((a) => React.createElement("button", {
                 key: a, onClick: () => onAssignArea(r.feeId, r.splitId, a),
                 style: { ...chipStyle, padding: "7px 12px", background: r.area === a ? INDIGO : "rgba(46,64,91,0.06)", color: r.area === a ? WHITE : INDIGO, fontWeight: r.area === a ? 700 : 500 }
