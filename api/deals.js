@@ -209,7 +209,8 @@ module.exports = async (req, res) => {
   if (req.query.action === "area-concentration" && req.method === "GET") {
     const client = req.query.client;
     if (!client) return res.status(400).json({ error: "A client is required." });
-    const year = req.query.year ? parseInt(req.query.year, 10) : new Date().getUTCFullYear();
+    const allTime = req.query.year === "all";
+    const year = allTime ? null : (req.query.year ? parseInt(req.query.year, 10) : new Date().getUTCFullYear());
     const records = (await kv.get(RECORDS_KEY)) || [];
     const allRates = (await kv.get(FX_KEY)) || {};
     const placements = (await kv.get(PLACEMENTS_KEY)) || {};
@@ -222,26 +223,31 @@ module.exports = async (req, res) => {
     let untaggedCount = 0;
     let unmappedCount = 0;
     for (const r of records) {
-      if (effectiveYear(r, placements) !== year) continue;
+      const dealYear = effectiveYear(r, placements);
+      if (!allTime && dealYear !== year) continue;
       const placement = r.placementId ? placements[r.placementId] : null;
       const clientCompanyName = (placement && placement.clientCompanyName) || r.projectClientName || null;
       if (clientCompanyName !== client) continue;
       const hasPlacementName = !!(placement && placement.candidateName);
-      const gbpAmount = resolvedRevenueGBP(r, clientCompanyName, year, overrides, hasPlacementName, allRates);
+      // Placements only — this whole feature exists to track which real
+      // desk a genuine hire went into, not onsite fee revenue, which
+      // isn't tied to a specific area the same way.
+      if (!hasPlacementName) continue;
+      const gbpAmount = resolvedRevenueGBP(r, clientCompanyName, dealYear, overrides, hasPlacementName, allRates);
       if (gbpAmount === null) continue;
       clientTotalGBP += gbpAmount;
       const resolved = resolveAreaForDeal(r.notes, clientAreasForResolve[client], areaVariantMap[client]);
       if (resolved.source === "unmapped") { unmappedCount += 1; continue; }
       if (!resolved.area) { untaggedCount += 1; continue; }
-      if (!byArea[resolved.area]) byArea[resolved.area] = { area: resolved.area, totalGBP: 0, deals: 0, onsites: 0 };
+      if (!byArea[resolved.area]) byArea[resolved.area] = { area: resolved.area, totalGBP: 0, deals: 0 };
       byArea[resolved.area].totalGBP += gbpAmount;
-      if (hasPlacementName) byArea[resolved.area].deals += 1; else byArea[resolved.area].onsites += 1;
+      byArea[resolved.area].deals += 1;
     }
     const areaBreakdown = Object.values(byArea)
       .map((a) => ({ ...a, percentage: clientTotalGBP > 0 ? (a.totalGBP / clientTotalGBP) * 100 : 0 }))
       .sort((a, b) => b.totalGBP - a.totalGBP);
 
-    return res.status(200).json({ year, client, areaBreakdown, clientTotalGBP, untaggedCount, unmappedCount });
+    return res.status(200).json({ year: allTime ? "all" : year, client, areaBreakdown, clientTotalGBP, untaggedCount, unmappedCount });
   }
 
   // Whichever raw, real text Atlas actually holds for this client, that
@@ -249,6 +255,8 @@ module.exports = async (req, res) => {
   // grouped by distinct text so the same unrecognised note doesn't need
   // resolving one deal at a time. Only ever surfaces what genuinely
   // needs a real decision, never something already resolved automatically.
+  // Placements only, same reasoning as area-concentration above — an
+  // onsite fee was never going to need an area tag in the first place.
   if (req.query.action === "unmapped-notes" && req.method === "GET") {
     const client = req.query.client;
     if (!client) return res.status(400).json({ error: "A client is required." });
@@ -262,6 +270,7 @@ module.exports = async (req, res) => {
       const placement = r.placementId ? placements[r.placementId] : null;
       const clientCompanyName = (placement && placement.clientCompanyName) || r.projectClientName || null;
       if (clientCompanyName !== client) continue;
+      if (!(placement && placement.candidateName)) continue;
       const resolved = resolveAreaForDeal(r.notes, clientAreasForResolve[client], areaVariantMap[client]);
       if (resolved.source === "unmapped") unmappedTexts.add(resolved.rawText);
     }
