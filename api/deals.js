@@ -10,7 +10,6 @@ const PLACEMENTS_KEY = "atlas-placements";
 // within a specific client's own real internal structure, not as one
 // shared list every client gets lumped into.
 const DEAL_AREAS_KEY = "deal-client-areas"; // { [clientCompanyName]: string[] }
-const DEAL_AREA_ASSIGNMENTS_KEY = "deal-area-assignments"; // { "feeId:splitId": areaName } — a manual tag always wins over whatever Atlas's own notes say
 const DEAL_AREA_VARIANT_MAP_KEY = "deal-area-variant-map"; // { [client]: { [lowercasedRawNoteText]: canonicalAreaName } }
 
 // A real normalized key for comparison purposes only — strips anything
@@ -65,22 +64,20 @@ function findFuzzyAreaMatch(normalizedText, canonicalAreas) {
   return withinRange.length === 1 ? withinRange[0] : null;
 }
 
-// The actual precedence, in order: a director's own manual tag always
-// wins, since that's a deliberate, confirmed choice. Failing that, a
-// normalized match against the client's own managed area list resolves
-// automatically — capitalization, hyphens, and spacing differences are
-// all treated as the same real thing, since they obviously are.
-// Failing that, a previously-confirmed variant mapping resolves
-// automatically too, since once a director has told the system what a
-// piece of real text actually means once, there's no reason to ask
-// again. Failing that, a genuine small typo resolves automatically as
-// well, on the reasoning that these areas are distinct enough from each
-// other that a minor spelling slip won't be mistaken for the wrong one
-// — and if a real mistake ever does happen, the fix is just correcting
-// the note in Atlas, not reviewing every deal by hand. Only genuinely
-// new, unrecognised text gets flagged as needing a real decision.
-function resolveAreaForDeal(rawNotes, manualAssignment, canonicalAreas, variantMap) {
-  if (manualAssignment) return { area: manualAssignment, source: "manual" };
+// The actual precedence, in order: a normalized match against the
+// client's own managed area list resolves automatically —
+// capitalization, hyphens, and spacing differences are all treated as
+// the same real thing, since they obviously are. Failing that, a
+// previously-confirmed variant mapping resolves automatically too,
+// since once a director has told the system what a piece of real text
+// actually means once, there's no reason to ask again. Failing that, a
+// genuine small typo resolves automatically as well, on the reasoning
+// that these areas are distinct enough from each other that a minor
+// spelling slip won't be mistaken for the wrong one — and if a real
+// mistake ever does happen, the fix is just correcting the note in
+// Atlas, not reviewing every deal by hand. Only genuinely new,
+// unrecognised text gets flagged as needing a real decision.
+function resolveAreaForDeal(rawNotes, canonicalAreas, variantMap) {
   const trimmed = (rawNotes || "").trim();
   if (!trimmed) return { area: null, source: "none" };
   const normalized = normalizeAreaKey(trimmed);
@@ -202,15 +199,6 @@ module.exports = async (req, res) => {
     await kv.set(DEAL_AREAS_KEY, allAreas);
     return res.status(200).json({ areas: allAreas, nowPresent: !alreadyThere });
   }
-  if (req.query.action === "set-deal-area" && req.method === "POST") {
-    const { feeId, splitId, area } = req.body || {};
-    if (!feeId || !splitId) return res.status(400).json({ error: "feeId and splitId are both required." });
-    const key = `${feeId}:${splitId}`;
-    const allAssignments = (await kv.get(DEAL_AREA_ASSIGNMENTS_KEY)) || {};
-    if (area) allAssignments[key] = area; else delete allAssignments[key];
-    await kv.set(DEAL_AREA_ASSIGNMENTS_KEY, allAssignments);
-    return res.status(200).json({ ok: true, area: area || null });
-  }
   // Area Concentration — genuinely different from the client breakdown
   // below, this is entirely WITHIN one specific client's own deals,
   // grouped by whichever area each was tagged with, using the exact
@@ -226,7 +214,6 @@ module.exports = async (req, res) => {
     const allRates = (await kv.get(FX_KEY)) || {};
     const placements = (await kv.get(PLACEMENTS_KEY)) || {};
     const overrides = await getOverrides();
-    const assignments = (await kv.get(DEAL_AREA_ASSIGNMENTS_KEY)) || {};
     const clientAreasForResolve = (await kv.get(DEAL_AREAS_KEY)) || {};
     const areaVariantMap = (await kv.get(DEAL_AREA_VARIANT_MAP_KEY)) || {};
 
@@ -243,7 +230,7 @@ module.exports = async (req, res) => {
       const gbpAmount = resolvedRevenueGBP(r, clientCompanyName, year, overrides, hasPlacementName, allRates);
       if (gbpAmount === null) continue;
       clientTotalGBP += gbpAmount;
-      const resolved = resolveAreaForDeal(r.notes, assignments[`${r.feeId}:${r.splitId}`], clientAreasForResolve[client], areaVariantMap[client]);
+      const resolved = resolveAreaForDeal(r.notes, clientAreasForResolve[client], areaVariantMap[client]);
       if (resolved.source === "unmapped") { unmappedCount += 1; continue; }
       if (!resolved.area) { untaggedCount += 1; continue; }
       if (!byArea[resolved.area]) byArea[resolved.area] = { area: resolved.area, totalGBP: 0, deals: 0, onsites: 0 };
@@ -267,20 +254,18 @@ module.exports = async (req, res) => {
     if (!client) return res.status(400).json({ error: "A client is required." });
     const records = (await kv.get(RECORDS_KEY)) || [];
     const placements = (await kv.get(PLACEMENTS_KEY)) || {};
-    const assignments = (await kv.get(DEAL_AREA_ASSIGNMENTS_KEY)) || {};
     const clientAreasForResolve = (await kv.get(DEAL_AREAS_KEY)) || {};
     const areaVariantMap = (await kv.get(DEAL_AREA_VARIANT_MAP_KEY)) || {};
 
-    const unmappedByText = {};
+    const unmappedTexts = new Set();
     for (const r of records) {
       const placement = r.placementId ? placements[r.placementId] : null;
       const clientCompanyName = (placement && placement.clientCompanyName) || r.projectClientName || null;
       if (clientCompanyName !== client) continue;
-      const resolved = resolveAreaForDeal(r.notes, assignments[`${r.feeId}:${r.splitId}`], clientAreasForResolve[client], areaVariantMap[client]);
-      if (resolved.source === "unmapped") unmappedByText[resolved.rawText] = resolved.suggestedArea || null;
+      const resolved = resolveAreaForDeal(r.notes, clientAreasForResolve[client], areaVariantMap[client]);
+      if (resolved.source === "unmapped") unmappedTexts.add(resolved.rawText);
     }
-    const unmappedTexts = Object.entries(unmappedByText).map(([rawText, suggestedArea]) => ({ rawText, suggestedArea }));
-    return res.status(200).json({ client, unmappedTexts });
+    return res.status(200).json({ client, unmappedTexts: Array.from(unmappedTexts) });
   }
 
   // Confirms that a specific piece of raw Atlas text genuinely means a
@@ -305,7 +290,6 @@ module.exports = async (req, res) => {
   const allRates = (await kv.get(FX_KEY)) || {};
   const placements = (await kv.get(PLACEMENTS_KEY)) || {};
   const overrides = await getOverrides();
-  const areaAssignments = (await kv.get(DEAL_AREA_ASSIGNMENTS_KEY)) || {};
   const clientAreasForResolve = (await kv.get(DEAL_AREAS_KEY)) || {};
   const areaVariantMap = (await kv.get(DEAL_AREA_VARIANT_MAP_KEY)) || {};
   const year = req.query.year ? parseInt(req.query.year, 10) : new Date().getUTCFullYear();
@@ -369,7 +353,6 @@ module.exports = async (req, res) => {
         ...(() => {
           const resolved = resolveAreaForDeal(
             r.notes,
-            areaAssignments[`${r.feeId}:${r.splitId}`],
             clientCompanyName ? clientAreasForResolve[clientCompanyName] : null,
             clientCompanyName ? areaVariantMap[clientCompanyName] : null
           );
