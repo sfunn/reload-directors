@@ -623,7 +623,20 @@ function DealsPage({ token }) {
                       React.createElement("button", { onClick: () => setRenamingArea(null), style: { ...ghostStyle, padding: "4px 10px", fontSize: 12, background: "none", border: "none" } }, "Cancel")
                     )
                   )
-                ))
+                )),
+                React.createElement("div", {
+                  style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 13.5, padding: "6px 0 0", marginTop: 4, borderTop: `1px solid ${INDIGO_HAIRLINE}`, fontWeight: 700, color: INDIGO }
+                },
+                  React.createElement("span", { style: { width: 150, flexShrink: 0 } }, "Total"),
+                  React.createElement("span", { style: { width: 100, flexShrink: 0 } }, `£${Math.round(areaConcentrationData.areaBreakdown.reduce((s, a) => s + a.totalGBP, 0)).toLocaleString()}`),
+                  React.createElement("span", { style: { width: 50, flexShrink: 0 } }, areaConcentrationData.areaBreakdown.reduce((s, a) => s + a.deals, 0)),
+                  // The genuine share of this client's revenue actually
+                  // accounted for by a tagged area — not hardcoded to
+                  // 100%, since untagged or unmapped placements are real
+                  // and deliberately excluded from the rows above, so
+                  // the true total here can honestly be less than 100%.
+                  React.createElement("span", { style: { width: 50, flexShrink: 0 } }, `${areaConcentrationData.areaBreakdown.reduce((s, a) => s + a.percentage, 0).toFixed(0)}%`)
+                )
               )
         )
       )
