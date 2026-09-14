@@ -458,6 +458,7 @@ function DealsPage({ token }) {
     !loading && data && React.createElement("div", { style: { display: "flex", gap: 20, flexWrap: "wrap" } },
       (data.sourceBreakdown || []).length > 0 && React.createElement(Panel, { style: { flex: 1, minWidth: 320 } },
         React.createElement(SectionTitle, { title: "Deal Source Breakdown" }),
+        React.createElement("div", { style: { overflowX: "auto" } },
         React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
           React.createElement("span", { style: { width: 140, flexShrink: 0 } }, "Source"),
           React.createElement("span", { style: { width: 90, flexShrink: 0 } }, "USD"),
@@ -483,9 +484,11 @@ function DealsPage({ token }) {
           React.createElement("span", { style: { width: 50, flexShrink: 0 } }, (data.sourceBreakdown || []).reduce((s, r) => s + r.deals, 0)),
           React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "100%")
         )
+        )
       ),
       (data.clientBreakdown || []).length > 0 && React.createElement(Panel, { style: { flex: 1, minWidth: 320 } },
         React.createElement(SectionTitle, { title: "Client Breakdown" }),
+        React.createElement("div", { style: { overflowX: "auto" } },
         React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
           React.createElement("span", { style: { width: 150, flexShrink: 0 } }, "Client"),
           React.createElement("span", { style: { width: 90, flexShrink: 0 } }, "USD"),
@@ -514,8 +517,11 @@ function DealsPage({ token }) {
           React.createElement("span", { style: { width: 50, flexShrink: 0 } }, (data.clientBreakdown || []).reduce((s, r) => s + r.onsites, 0)),
           React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "100%")
         )
-      ),
-      Object.keys(clientAreas).some((c) => (clientAreas[c] || []).length > 0) && React.createElement(Panel, { style: { flex: 1, minWidth: 320 } },
+        )
+      )
+    ),
+    !loading && data && Object.keys(clientAreas).some((c) => (clientAreas[c] || []).length > 0) && React.createElement("div", { style: { display: "flex", gap: 20, flexWrap: "wrap" } },
+      React.createElement(Panel, { style: { flex: 1, minWidth: 320 } },
         React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 10 } },
           React.createElement(SectionTitle, { title: "Area Concentration" }),
           React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
@@ -560,7 +566,7 @@ function DealsPage({ token }) {
           ),
           areaConcentrationData.areaBreakdown.length === 0
             ? React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, `No tagged placements yet for this client ${areaConcentrationAllTime ? "at all" : "this year"}.`)
-            : React.createElement(React.Fragment, null,
+            : React.createElement("div", { style: { overflowX: "auto" } },
                 React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
                   React.createElement("span", { style: { width: 150, flexShrink: 0 } }, "Area"),
                   React.createElement("span", { style: { width: 100, flexShrink: 0 } }, "Revenue (GBP)"),
