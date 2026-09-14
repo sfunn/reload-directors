@@ -199,6 +199,34 @@ module.exports = async (req, res) => {
     await kv.set(DEAL_AREAS_KEY, allAreas);
     return res.status(200).json({ areas: allAreas, nowPresent: !alreadyThere });
   }
+  // Fixing a typo in an area's own name — genuinely different from
+  // toggling one on or off. Renaming needs to fix two things together:
+  // the name itself in the managed list, and any already-confirmed
+  // variant mapping that was pointing at the old, misspelled name,
+  // since otherwise those would keep quietly resolving to the wrong
+  // spelling even after this rename.
+  if (req.query.action === "rename-client-area" && req.method === "POST") {
+    const { client, oldArea, newArea } = req.body || {};
+    if (!client || !oldArea || !newArea) return res.status(400).json({ error: "client, oldArea, and newArea are all required." });
+    const allAreas = (await kv.get(DEAL_AREAS_KEY)) || {};
+    const existing = allAreas[client] || [];
+    if (!existing.includes(oldArea)) return res.status(400).json({ error: "That area doesn't currently exist for this client." });
+    // If newArea already exists too, this is really a merge — drop the
+    // old name rather than leaving a duplicate entry in the list.
+    allAreas[client] = existing.includes(newArea)
+      ? existing.filter((a) => a !== oldArea)
+      : existing.map((a) => (a === oldArea ? newArea : a));
+    await kv.set(DEAL_AREAS_KEY, allAreas);
+
+    const allVariantMaps = (await kv.get(DEAL_AREA_VARIANT_MAP_KEY)) || {};
+    if (allVariantMaps[client]) {
+      for (const key of Object.keys(allVariantMaps[client])) {
+        if (allVariantMaps[client][key] === oldArea) allVariantMaps[client][key] = newArea;
+      }
+      await kv.set(DEAL_AREA_VARIANT_MAP_KEY, allVariantMaps);
+    }
+    return res.status(200).json({ areas: allAreas });
+  }
   // Area Concentration — genuinely different from the client breakdown
   // below, this is entirely WITHIN one specific client's own deals,
   // grouped by whichever area each was tagged with, using the exact
