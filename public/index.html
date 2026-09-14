@@ -273,6 +273,8 @@ function DealsPage({ token }) {
   const [areaConcentrationLoading, setAreaConcentrationLoading] = useState(false);
   const [areaConcentrationAllTime, setAreaConcentrationAllTime] = useState(false);
   const [unmappedTexts, setUnmappedTexts] = useState([]);
+  const [renamingArea, setRenamingArea] = useState(null);
+  const [renameText, setRenameText] = useState("");
 
   const load = useCallback(async () => {
     setError(""); setLoading(true);
@@ -349,6 +351,27 @@ function DealsPage({ token }) {
         body: JSON.stringify({ client, area: rawText }),
       });
       if (res.ok) { const body = await res.json(); setClientAreas(body.areas); }
+      await loadAreaConcentration(client);
+    } catch (e) {
+      setError("Couldn't reach the server.");
+    }
+  }
+
+  // Fixing a typo in an area's own name — updates the canonical list and
+  // any already-confirmed variant mapping that was pointing at the old
+  // spelling, so every deal genuinely reflects the fix immediately, not
+  // just new ones going forward.
+  async function renameArea(client, oldArea, newArea) {
+    if (!newArea || !newArea.trim() || newArea.trim() === oldArea) { setRenamingArea(null); return; }
+    try {
+      const res = await fetch("/api/deals?action=rename-client-area", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ client, oldArea, newArea: newArea.trim() }),
+      });
+      if (res.ok) { const body = await res.json(); setClientAreas(body.areas); }
+      setRenamingArea(null);
+      await load();
       await loadAreaConcentration(client);
     } catch (e) {
       setError("Couldn't reach the server.");
@@ -573,13 +596,33 @@ function DealsPage({ token }) {
                   React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Deals"),
                   React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "%")
                 ),
-                areaConcentrationData.areaBreakdown.map((a) => React.createElement("div", {
-                  key: a.area, style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 13.5, padding: "4px 0", color: INDIGO }
-                },
-                  React.createElement("span", { style: { width: 150, flexShrink: 0 } }, a.area),
-                  React.createElement("span", { style: { width: 100, flexShrink: 0 } }, `£${Math.round(a.totalGBP).toLocaleString()}`),
-                  React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, a.deals),
-                  React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, `${a.percentage.toFixed(0)}%`)
+                areaConcentrationData.areaBreakdown.map((a) => React.createElement(React.Fragment, { key: a.area },
+                  React.createElement("div", {
+                    style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 13.5, padding: "4px 0", color: INDIGO }
+                  },
+                    renamingArea === a.area
+                      ? React.createElement("div", { style: { width: 150, flexShrink: 0, display: "flex", gap: 4 } },
+                          React.createElement("input", {
+                            type: "text", value: renameText, onChange: (e) => setRenameText(e.target.value), autoFocus: true,
+                            style: { ...inputStyle, width: 100, marginBottom: 0, fontSize: 13 }
+                          })
+                        )
+                      : React.createElement("span", { style: { width: 150, flexShrink: 0 } },
+                          a.area,
+                          " ",
+                          React.createElement("span", {
+                            onClick: () => { setRenamingArea(a.area); setRenameText(a.area); },
+                            style: { fontSize: 11, color: INDIGO_MUTED, textDecoration: "underline", cursor: "pointer" }
+                          }, "rename")
+                        ),
+                    React.createElement("span", { style: { width: 100, flexShrink: 0 } }, `£${Math.round(a.totalGBP).toLocaleString()}`),
+                    React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, a.deals),
+                    React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, `${a.percentage.toFixed(0)}%`),
+                    renamingArea === a.area && React.createElement(React.Fragment, null,
+                      React.createElement("button", { onClick: () => renameArea(areaConcentrationClient, a.area, renameText), style: { ...ghostStyle, padding: "4px 10px", fontSize: 12 } }, "Save"),
+                      React.createElement("button", { onClick: () => setRenamingArea(null), style: { ...ghostStyle, padding: "4px 10px", fontSize: 12, background: "none", border: "none" } }, "Cancel")
+                    )
+                  )
                 ))
               )
         )
