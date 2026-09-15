@@ -543,12 +543,15 @@ function DealsPage({ token }) {
         )
       )
     ),
-    !loading && data && Object.keys(clientAreas).some((c) => (clientAreas[c] || []).length > 0) && React.createElement("div", { style: { display: "flex", gap: 20, flexWrap: "wrap" } },
+    !loading && data && (data.clientBreakdown || []).some((c) => c.firm !== "Unknown") && React.createElement("div", { style: { display: "flex", gap: 20, flexWrap: "wrap" } },
       React.createElement(Panel, { style: { flex: 1, minWidth: 320 } },
         React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 10 } },
           React.createElement(SectionTitle, { title: "Area Concentration" }),
           React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
-            Object.keys(clientAreas).filter((c) => (clientAreas[c] || []).length > 0).map((c) => React.createElement("button", {
+            Array.from(new Set([
+              ...Object.keys(clientAreas).filter((c) => (clientAreas[c] || []).length > 0),
+              ...(data.clientBreakdown || []).filter((c) => c.firm !== "Unknown").map((c) => c.firm),
+            ])).map((c) => React.createElement("button", {
               key: c, onClick: () => setAreaConcentrationClient(c),
               style: { ...chipStyle, background: areaConcentrationClient === c ? INDIGO : "rgba(46,64,91,0.06)", color: areaConcentrationClient === c ? WHITE : INDIGO, fontWeight: areaConcentrationClient === c ? 700 : 500 }
             }, c))
