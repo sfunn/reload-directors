@@ -179,6 +179,10 @@ const labelStyle = { display: "block", fontFamily: "'Work Sans', sans-serif", fo
 const chipStyle = { background: "rgba(255,176,140,0.14)", border: `1px solid ${MELON}`, color: MELON_LINK, borderRadius: 20, padding: "6px 12px", fontSize: 12.5, cursor: "pointer", fontFamily: "'Work Sans', sans-serif", fontWeight: 500 };
 
 const YEAR_OPTIONS = [2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026, 2027];
+// Area tracking only ever applies to these two — deliberately not
+// derived from whichever clients happen to have revenue, since that
+// list would include plenty of clients this feature was never meant for.
+const AREA_TRACKED_CLIENTS = ["Citadel", "Citadel Securities"];
 
 function DealDetailsTable({ records, showSourceAndCoordinator, editingKey, editAmount, editCurrency, editCustomRate, editNotes, onStartEdit, onChangeAmount, onChangeCurrency, onChangeCustomRate, onChangeNotes, onSave, onCancel, onClear, saving }) {
   return records.length === 0
@@ -268,7 +272,7 @@ function DealsPage({ token }) {
   const [editNotes, setEditNotes] = useState("");
   const [savingOverride, setSavingOverride] = useState(false);
   const [clientAreas, setClientAreas] = useState({});
-  const [areaConcentrationClient, setAreaConcentrationClient] = useState(null);
+  const [areaConcentrationClient, setAreaConcentrationClient] = useState(() => localStorage.getItem("areaConcentrationClient") || null);
   const [areaConcentrationData, setAreaConcentrationData] = useState(null);
   const [areaConcentrationLoading, setAreaConcentrationLoading] = useState(false);
   const [areaConcentrationAllTime, setAreaConcentrationAllTime] = useState(false);
@@ -320,6 +324,14 @@ function DealsPage({ token }) {
   }, [token, year, areaConcentrationAllTime]);
 
   useEffect(() => { loadAreaConcentration(areaConcentrationClient); }, [areaConcentrationClient, loadAreaConcentration]);
+
+  // Remembered across a refresh — selecting a client here is a genuine,
+  // deliberate choice worth keeping, not something to lose the moment
+  // the page reloads.
+  useEffect(() => {
+    if (areaConcentrationClient) localStorage.setItem("areaConcentrationClient", areaConcentrationClient);
+    else localStorage.removeItem("areaConcentrationClient");
+  }, [areaConcentrationClient]);
 
   // Confirming that a real piece of Atlas text genuinely means a
   // specific canonical area — remembered from then on, so this exact
@@ -543,15 +555,15 @@ function DealsPage({ token }) {
         )
       )
     ),
-    !loading && data && (data.clientBreakdown || []).some((c) => c.firm !== "Unknown") && React.createElement("div", { style: { display: "flex", gap: 20, flexWrap: "wrap" } },
+    !loading && data && React.createElement("div", { style: { display: "flex", gap: 20, flexWrap: "wrap" } },
       React.createElement(Panel, { style: { flex: 1, minWidth: 320 } },
         React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 10 } },
           React.createElement(SectionTitle, { title: "Area Concentration" }),
           React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
-            Array.from(new Set([
-              ...Object.keys(clientAreas).filter((c) => (clientAreas[c] || []).length > 0),
-              ...(data.clientBreakdown || []).filter((c) => c.firm !== "Unknown").map((c) => c.firm),
-            ])).map((c) => React.createElement("button", {
+            // Deliberately just these two — area tracking only ever
+            // applies to Citadel and Citadel Securities, so there's no
+            // reason to surface every other client as an option here.
+            AREA_TRACKED_CLIENTS.map((c) => React.createElement("button", {
               key: c, onClick: () => setAreaConcentrationClient(c),
               style: { ...chipStyle, background: areaConcentrationClient === c ? INDIGO : "rgba(46,64,91,0.06)", color: areaConcentrationClient === c ? WHITE : INDIGO, fontWeight: areaConcentrationClient === c ? 700 : 500 }
             }, c))
