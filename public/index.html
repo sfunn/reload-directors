@@ -193,6 +193,7 @@ function DealDetailsTable({ records, showSourceAndCoordinator, editingKey, editA
           { label: "Candidate", width: 130 },
           { label: "Client", width: 120 },
           { label: "Area", width: 130 },
+          { label: "Previous Employer", width: 150 },
           { label: "Start Date", width: 100 },
           { label: "USD", width: 110 },
           { label: "Revenue (GBP)", width: 140 },
@@ -210,6 +211,7 @@ function DealDetailsTable({ records, showSourceAndCoordinator, editingKey, editA
               React.createElement(Cell, { width: 130, color: r.candidateName ? INDIGO : INDIGO_MUTED }, r.candidateName || "—"),
               React.createElement(Cell, { width: 120, color: r.clientCompanyName ? INDIGO : INDIGO_MUTED }, r.clientCompanyName || "—"),
               React.createElement(Cell, { width: 130, color: r.area ? INDIGO : INDIGO_MUTED }, r.area || "—"),
+              React.createElement(Cell, { width: 150, color: r.previousEmployer ? INDIGO : INDIGO_MUTED }, r.previousEmployer || "—"),
               React.createElement(Cell, { width: 100, color: r.placementStartDate ? INDIGO : INDIGO_MUTED }, r.placementStartDate ? new Date(r.placementStartDate).toLocaleDateString("en-GB") : "—"),
               React.createElement(Cell, { width: 110 }, r.usdAmount !== null ? `$${Math.round(r.usdAmount).toLocaleString()}` : "no rate"),
               React.createElement(Cell, { width: 140 },
@@ -279,6 +281,25 @@ function DealsPage({ token }) {
   const [unmappedTexts, setUnmappedTexts] = useState([]);
   const [renamingArea, setRenamingArea] = useState(null);
   const [renameText, setRenameText] = useState("");
+  const [previousEmployersList, setPreviousEmployersList] = useState([]);
+  const [unmappedEmployerTexts, setUnmappedEmployerTexts] = useState([]);
+  const [renamingEmployer, setRenamingEmployer] = useState(null);
+  const [renameEmployerText, setRenameEmployerText] = useState("");
+  const [employersLoaded, setEmployersLoaded] = useState(false);
+
+  const loadPreviousEmployers = useCallback(async () => {
+    try {
+      const [listRes, unmappedRes] = await Promise.all([
+        fetch("/api/deals?action=previous-employers", { headers: { Authorization: `Bearer ${token}` } }),
+        fetch("/api/deals?action=unmapped-previous-employers", { headers: { Authorization: `Bearer ${token}` } }),
+      ]);
+      if (listRes.ok) { const body = await listRes.json(); setPreviousEmployersList(body.employers || []); }
+      if (unmappedRes.ok) { const body = await unmappedRes.json(); setUnmappedEmployerTexts(body.unmappedTexts || []); }
+    } catch (e) { /* non-critical */ }
+    finally { setEmployersLoaded(true); }
+  }, [token]);
+
+  useEffect(() => { loadPreviousEmployers(); }, [loadPreviousEmployers]);
 
   const load = useCallback(async () => {
     setError(""); setLoading(true);
@@ -385,6 +406,53 @@ function DealsPage({ token }) {
       setRenamingArea(null);
       await load();
       await loadAreaConcentration(client);
+    } catch (e) {
+      setError("Couldn't reach the server.");
+    }
+  }
+
+  // Same three actions as areas, mirrored exactly, just global rather
+  // than scoped to a client.
+  async function mapEmployerVariant(rawText, canonicalEmployer) {
+    try {
+      await fetch("/api/deals?action=map-previous-employer-variant", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ rawText, canonicalEmployer }),
+      });
+      await loadPreviousEmployers();
+      await load();
+    } catch (e) {
+      setError("Couldn't reach the server.");
+    }
+  }
+
+  async function addNewEmployerFromUnmapped(rawText) {
+    try {
+      const res = await fetch("/api/deals?action=toggle-previous-employer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ employer: rawText }),
+      });
+      if (res.ok) { const body = await res.json(); setPreviousEmployersList(body.employers); }
+      await loadPreviousEmployers();
+      await load();
+    } catch (e) {
+      setError("Couldn't reach the server.");
+    }
+  }
+
+  async function renameEmployer(oldEmployer, newEmployer) {
+    if (!newEmployer || !newEmployer.trim() || newEmployer.trim() === oldEmployer) { setRenamingEmployer(null); return; }
+    try {
+      const res = await fetch("/api/deals?action=rename-previous-employer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ oldEmployer, newEmployer: newEmployer.trim() }),
+      });
+      if (res.ok) { const body = await res.json(); setPreviousEmployersList(body.employers); }
+      setRenamingEmployer(null);
+      await load();
     } catch (e) {
       setError("Couldn't reach the server.");
     }
@@ -653,6 +721,49 @@ function DealsPage({ token }) {
                   React.createElement("span", { style: { width: 50, flexShrink: 0 } }, `${areaConcentrationData.areaBreakdown.reduce((s, a) => s + a.percentage, 0).toFixed(0)}%`)
                 )
               )
+        )
+      )
+    ),
+    employersLoaded && (previousEmployersList.length > 0 || unmappedEmployerTexts.length > 0) && React.createElement("div", { style: { display: "flex", gap: 20, flexWrap: "wrap" } },
+      React.createElement(Panel, { style: { flex: 1, minWidth: 320 } },
+        React.createElement(SectionTitle, { title: "Previous Employer" }),
+        React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Read the same way as Area, from Atlas's own notes field, but global across every client rather than scoped to any one of them, since where a candidate came from has nothing to do with which client they were placed at."),
+        previousEmployersList.length > 0 && React.createElement("div", { style: { marginBottom: unmappedEmployerTexts.length > 0 ? 16 : 0 } },
+          previousEmployersList.map((emp) => React.createElement("div", { key: emp, style: { display: "flex", alignItems: "center", gap: 8, padding: "4px 0", fontSize: 13.5, color: INDIGO } },
+            renamingEmployer === emp
+              ? React.createElement(React.Fragment, null,
+                  React.createElement("input", {
+                    type: "text", value: renameEmployerText, onChange: (e) => setRenameEmployerText(e.target.value), autoFocus: true,
+                    style: { ...inputStyle, width: 180, marginBottom: 0, fontSize: 13 }
+                  }),
+                  React.createElement("button", { onClick: () => renameEmployer(emp, renameEmployerText), style: { ...ghostStyle, padding: "4px 10px", fontSize: 12 } }, "Save"),
+                  React.createElement("button", { onClick: () => setRenamingEmployer(null), style: { ...ghostStyle, padding: "4px 10px", fontSize: 12, background: "none", border: "none" } }, "Cancel")
+                )
+              : React.createElement(React.Fragment, null,
+                  React.createElement("span", null, emp),
+                  React.createElement("span", {
+                    onClick: () => { setRenamingEmployer(emp); setRenameEmployerText(emp); },
+                    style: { fontSize: 11, color: INDIGO_MUTED, textDecoration: "underline", cursor: "pointer" }
+                  }, "rename")
+                )
+          ))
+        ),
+        unmappedEmployerTexts.length > 0 && React.createElement("div", { style: { padding: "10px 12px", background: "rgba(255,176,140,0.1)", borderRadius: 8 } },
+          React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginBottom: 8 } },
+            `Atlas has real text on ${unmappedEmployerTexts.length === 1 ? "one deal" : `${unmappedEmployerTexts.length} deals`} for a previous employer that doesn't match a known name yet — confirm what each one actually means, and it'll resolve on its own from then on.`
+          ),
+          unmappedEmployerTexts.map((text) => React.createElement("div", { key: text, style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 6 } },
+            React.createElement("span", { style: { fontSize: 13, color: INDIGO, fontStyle: "italic", width: 150, flexShrink: 0 } }, `"${text}"`),
+            React.createElement("span", { style: { fontSize: 11, color: INDIGO_MUTED } }, "means →"),
+            previousEmployersList.map((emp) => React.createElement("button", {
+              key: emp, onClick: () => mapEmployerVariant(text, emp),
+              style: { ...chipStyle, padding: "6px 10px", fontSize: 12, background: "rgba(46,64,91,0.06)", color: INDIGO }
+            }, emp)),
+            React.createElement("button", {
+              onClick: () => addNewEmployerFromUnmapped(text),
+              style: { ...ghostStyle, padding: "6px 10px", fontSize: 12, color: VERDIGRIS }
+            }, `Add "${text}" as a new employer`)
+          ))
         )
       )
     ),
