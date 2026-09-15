@@ -11,6 +11,63 @@ const PLACEMENTS_KEY = "atlas-placements";
 // shared list every client gets lumped into.
 const DEAL_AREAS_KEY = "deal-client-areas"; // { [clientCompanyName]: string[] }
 const DEAL_AREA_VARIANT_MAP_KEY = "deal-area-variant-map"; // { [client]: { [lowercasedRawNoteText]: canonicalAreaName } }
+// Previous employer is deliberately NOT per-client the way areas are —
+// a candidate's last employer has nothing to do with which client they
+// were placed at, so this is one single global managed list rather
+// than a separate one per client.
+const PREVIOUS_EMPLOYERS_KEY = "previous-employers-list"; // string[]
+const PREVIOUS_EMPLOYER_VARIANT_MAP_KEY = "previous-employer-variant-map"; // { [lowercasedRawText]: canonicalEmployerName }
+
+// A single Atlas note now potentially carries two genuinely different
+// things — which desk a placement went into, and where the candidate
+// came from — so this splits one raw note into both parts.
+//
+// If a "|" is used, each side is treated as its own explicit segment,
+// with optional "Area:"/"From:" labels, in either order — "Area:
+// Commodities | From: Goldman Sachs" works exactly as written.
+//
+// Without a "|", the word "from" itself is the split point, wherever it
+// naturally appears — "Commodities from Goldman Sachs" and "From
+// Amazon" both work with nothing else needed, no separator, no label,
+// just a real space and the word "from". Whatever's left before it is
+// the area.
+//
+// Critically, a note with no "from" anywhere and nothing to split on is
+// still treated entirely as an area — every note written before this
+// feature existed reads exactly the same as it always did, nothing
+// needs re-entering.
+function parseNotesIntoParts(rawNotes) {
+  const trimmed = (rawNotes || "").trim();
+  if (!trimmed) return { areaText: null, employerText: null };
+
+  if (trimmed.includes("|")) {
+    const segments = trimmed.split("|").map((s) => s.trim()).filter(Boolean);
+    let areaText = null;
+    let employerText = null;
+    const leftover = [];
+    for (const segment of segments) {
+      const fromMatch = segment.match(/^from\s*:?\s*(.+)$/i);
+      const areaMatch = segment.match(/^area\s*:?\s*(.+)$/i);
+      if (fromMatch) { employerText = fromMatch[1].trim(); continue; }
+      if (areaMatch) { areaText = areaMatch[1].trim(); continue; }
+      leftover.push(segment);
+    }
+    if (!areaText && !employerText && leftover.length === 1) areaText = leftover[0];
+    return { areaText, employerText };
+  }
+
+  const fromMatch = trimmed.match(/\bfrom\b\s*:?\s*(.+)$/i);
+  if (fromMatch) {
+    const employerText = fromMatch[1].trim() || null;
+    const beforeFrom = trimmed.slice(0, fromMatch.index).trim();
+    const areaLabelMatch = beforeFrom.match(/^area\s*:?\s*(.+)$/i);
+    const areaText = beforeFrom ? (areaLabelMatch ? areaLabelMatch[1].trim() : beforeFrom) : null;
+    return { areaText, employerText };
+  }
+
+  const areaLabelMatch = trimmed.match(/^area\s*:?\s*(.+)$/i);
+  return { areaText: areaLabelMatch ? areaLabelMatch[1].trim() : trimmed, employerText: null };
+}
 
 // A real normalized key for comparison purposes only — strips anything
 // that isn't a letter or digit and lowercases what's left, so
@@ -88,6 +145,23 @@ function resolveAreaForDeal(rawNotes, canonicalAreas, variantMap) {
   const fuzzyMatch = findFuzzyAreaMatch(normalized, canonicalAreas);
   if (fuzzyMatch) return { area: fuzzyMatch, source: "atlas-fuzzy" };
   return { area: null, source: "unmapped", rawText: trimmed };
+}
+
+// Same exact algorithm as resolveAreaForDeal, same precedence, same
+// fuzzy-match safety rules — just matched against the one global
+// employer list rather than a per-client one, since where a candidate
+// came from has nothing to do with which client they were placed at.
+function resolvePreviousEmployerForDeal(rawEmployerText, canonicalEmployers, variantMap) {
+  const trimmed = (rawEmployerText || "").trim();
+  if (!trimmed) return { employer: null, source: "none" };
+  const normalized = normalizeAreaKey(trimmed);
+  const exactMatch = (canonicalEmployers || []).find((e) => normalizeAreaKey(e) === normalized);
+  if (exactMatch) return { employer: exactMatch, source: "atlas" };
+  const mapped = (variantMap || {})[normalized];
+  if (mapped) return { employer: mapped, source: "atlas" };
+  const fuzzyMatch = findFuzzyAreaMatch(normalized, canonicalEmployers);
+  if (fuzzyMatch) return { employer: fuzzyMatch, source: "atlas-fuzzy" };
+  return { employer: null, source: "unmapped", rawText: trimmed };
 }
 
 // --- Everything below this line is a direct port of the incentive site's
@@ -264,7 +338,7 @@ module.exports = async (req, res) => {
       const gbpAmount = resolvedRevenueGBP(r, clientCompanyName, dealYear, overrides, hasPlacementName, allRates);
       if (gbpAmount === null) continue;
       clientTotalGBP += gbpAmount;
-      const resolved = resolveAreaForDeal(r.notes, clientAreasForResolve[client], areaVariantMap[client]);
+      const resolved = resolveAreaForDeal(parseNotesIntoParts(r.notes).areaText, clientAreasForResolve[client], areaVariantMap[client]);
       if (resolved.source === "unmapped") { unmappedCount += 1; continue; }
       if (!resolved.area) { untaggedCount += 1; continue; }
       if (!byArea[resolved.area]) byArea[resolved.area] = { area: resolved.area, totalGBP: 0, deals: 0 };
@@ -299,7 +373,7 @@ module.exports = async (req, res) => {
       const clientCompanyName = (placement && placement.clientCompanyName) || r.projectClientName || null;
       if (clientCompanyName !== client) continue;
       if (!(placement && placement.candidateName)) continue;
-      const resolved = resolveAreaForDeal(r.notes, clientAreasForResolve[client], areaVariantMap[client]);
+      const resolved = resolveAreaForDeal(parseNotesIntoParts(r.notes).areaText, clientAreasForResolve[client], areaVariantMap[client]);
       if (resolved.source === "unmapped") unmappedTexts.add(resolved.rawText);
     }
     return res.status(200).json({ client, unmappedTexts: Array.from(unmappedTexts) });
@@ -319,6 +393,66 @@ module.exports = async (req, res) => {
     return res.status(200).json({ ok: true });
   }
 
+  // Previous employer — the same set of actions as areas above, mirrored
+  // exactly, but there's no client parameter anywhere here, since this
+  // is one single global list, not something scoped per client.
+  if (req.query.action === "previous-employers" && req.method === "GET") {
+    const employers = (await kv.get(PREVIOUS_EMPLOYERS_KEY)) || [];
+    return res.status(200).json({ employers });
+  }
+  if (req.query.action === "toggle-previous-employer" && req.method === "POST") {
+    const { employer } = req.body || {};
+    if (!employer) return res.status(400).json({ error: "employer is required." });
+    const existing = (await kv.get(PREVIOUS_EMPLOYERS_KEY)) || [];
+    const alreadyThere = existing.includes(employer);
+    const updated = alreadyThere ? existing.filter((e) => e !== employer) : [...existing, employer];
+    await kv.set(PREVIOUS_EMPLOYERS_KEY, updated);
+    return res.status(200).json({ employers: updated, nowPresent: !alreadyThere });
+  }
+  if (req.query.action === "rename-previous-employer" && req.method === "POST") {
+    const { oldEmployer, newEmployer } = req.body || {};
+    if (!oldEmployer || !newEmployer) return res.status(400).json({ error: "oldEmployer and newEmployer are both required." });
+    const existing = (await kv.get(PREVIOUS_EMPLOYERS_KEY)) || [];
+    if (!existing.includes(oldEmployer)) return res.status(400).json({ error: "That employer doesn't currently exist." });
+    const updated = existing.includes(newEmployer)
+      ? existing.filter((e) => e !== oldEmployer)
+      : existing.map((e) => (e === oldEmployer ? newEmployer : e));
+    await kv.set(PREVIOUS_EMPLOYERS_KEY, updated);
+
+    const variantMap = (await kv.get(PREVIOUS_EMPLOYER_VARIANT_MAP_KEY)) || {};
+    for (const key of Object.keys(variantMap)) {
+      if (variantMap[key] === oldEmployer) variantMap[key] = newEmployer;
+    }
+    await kv.set(PREVIOUS_EMPLOYER_VARIANT_MAP_KEY, variantMap);
+    return res.status(200).json({ employers: updated });
+  }
+  if (req.query.action === "map-previous-employer-variant" && req.method === "POST") {
+    const { rawText, canonicalEmployer } = req.body || {};
+    if (!rawText || !canonicalEmployer) return res.status(400).json({ error: "rawText and canonicalEmployer are both required." });
+    const variantMap = (await kv.get(PREVIOUS_EMPLOYER_VARIANT_MAP_KEY)) || {};
+    variantMap[normalizeAreaKey(rawText)] = canonicalEmployer;
+    await kv.set(PREVIOUS_EMPLOYER_VARIANT_MAP_KEY, variantMap);
+    return res.status(200).json({ ok: true });
+  }
+  // Whichever raw employer text doesn't yet match anything known, across
+  // every client, not scoped to one the way area's own unmapped review is.
+  if (req.query.action === "unmapped-previous-employers" && req.method === "GET") {
+    const records = (await kv.get(RECORDS_KEY)) || [];
+    const placements = (await kv.get(PLACEMENTS_KEY)) || {};
+    const previousEmployersList = (await kv.get(PREVIOUS_EMPLOYERS_KEY)) || [];
+    const variantMap = (await kv.get(PREVIOUS_EMPLOYER_VARIANT_MAP_KEY)) || {};
+
+    const unmappedTexts = new Set();
+    for (const r of records) {
+      const placement = r.placementId ? placements[r.placementId] : null;
+      if (!(placement && placement.candidateName)) continue;
+      const { employerText } = parseNotesIntoParts(r.notes);
+      const resolved = resolvePreviousEmployerForDeal(employerText, previousEmployersList, variantMap);
+      if (resolved.source === "unmapped") unmappedTexts.add(resolved.rawText);
+    }
+    return res.status(200).json({ unmappedTexts: Array.from(unmappedTexts) });
+  }
+
   if (req.method !== "GET") {
     return res.status(405).json({ error: "This endpoint is read-only. Edit deal records on the incentive site." });
   }
@@ -329,6 +463,8 @@ module.exports = async (req, res) => {
   const overrides = await getOverrides();
   const clientAreasForResolve = (await kv.get(DEAL_AREAS_KEY)) || {};
   const areaVariantMap = (await kv.get(DEAL_AREA_VARIANT_MAP_KEY)) || {};
+  const previousEmployersList = (await kv.get(PREVIOUS_EMPLOYERS_KEY)) || [];
+  const previousEmployerVariantMap = (await kv.get(PREVIOUS_EMPLOYER_VARIANT_MAP_KEY)) || {};
   const year = req.query.year ? parseInt(req.query.year, 10) : new Date().getUTCFullYear();
 
   const yearRecords = records
@@ -388,12 +524,18 @@ module.exports = async (req, res) => {
         coordinatorId: r.coordinatorId || null,
         source: r.source || null,
         ...(() => {
-          const resolved = resolveAreaForDeal(
-            r.notes,
+          const { areaText, employerText } = parseNotesIntoParts(r.notes);
+          const resolvedArea = resolveAreaForDeal(
+            areaText,
             clientCompanyName ? clientAreasForResolve[clientCompanyName] : null,
             clientCompanyName ? areaVariantMap[clientCompanyName] : null
           );
-          return { area: resolved.area, areaSource: resolved.source, areaRawText: resolved.rawText || null, rawNotes: r.notes || null };
+          const resolvedEmployer = resolvePreviousEmployerForDeal(employerText, previousEmployersList, previousEmployerVariantMap);
+          return {
+            area: resolvedArea.area, areaSource: resolvedArea.source, areaRawText: resolvedArea.rawText || null,
+            previousEmployer: resolvedEmployer.employer, previousEmployerSource: resolvedEmployer.source, previousEmployerRawText: resolvedEmployer.rawText || null,
+            rawNotes: r.notes || null,
+          };
         })(),
       };
     })
