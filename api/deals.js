@@ -453,6 +453,88 @@ module.exports = async (req, res) => {
     return res.status(200).json({ unmappedTexts: Array.from(unmappedTexts) });
   }
 
+  // Global concentration by previous employer — same shape as area
+  // concentration, same year/All Time handling, same placements-only
+  // scoping, just never scoped to one client, since where a candidate
+  // came from is tracked the same way regardless of who they were
+  // placed at.
+  if (req.query.action === "previous-employer-concentration" && req.method === "GET") {
+    const allTime = req.query.year === "all";
+    const year = allTime ? null : (req.query.year ? parseInt(req.query.year, 10) : new Date().getUTCFullYear());
+    const records = (await kv.get(RECORDS_KEY)) || [];
+    const allRates = (await kv.get(FX_KEY)) || {};
+    const placements = (await kv.get(PLACEMENTS_KEY)) || {};
+    const overrides = await getOverrides();
+    const previousEmployersList = (await kv.get(PREVIOUS_EMPLOYERS_KEY)) || [];
+    const variantMap = (await kv.get(PREVIOUS_EMPLOYER_VARIANT_MAP_KEY)) || {};
+
+    const byEmployer = {};
+    let totalGBP = 0;
+    let untaggedCount = 0;
+    let unmappedCount = 0;
+    for (const r of records) {
+      const dealYear = effectiveYear(r, placements);
+      if (!allTime && dealYear !== year) continue;
+      const placement = r.placementId ? placements[r.placementId] : null;
+      const hasPlacementName = !!(placement && placement.candidateName);
+      if (!hasPlacementName) continue;
+      const clientCompanyName = (placement && placement.clientCompanyName) || r.projectClientName || null;
+      const gbpAmount = resolvedRevenueGBP(r, clientCompanyName, dealYear, overrides, hasPlacementName, allRates);
+      if (gbpAmount === null) continue;
+      totalGBP += gbpAmount;
+      const { employerText } = parseNotesIntoParts(r.notes);
+      const resolved = resolvePreviousEmployerForDeal(employerText, previousEmployersList, variantMap);
+      if (resolved.source === "unmapped") { unmappedCount += 1; continue; }
+      if (!resolved.employer) { untaggedCount += 1; continue; }
+      if (!byEmployer[resolved.employer]) byEmployer[resolved.employer] = { employer: resolved.employer, totalGBP: 0, deals: 0 };
+      byEmployer[resolved.employer].totalGBP += gbpAmount;
+      byEmployer[resolved.employer].deals += 1;
+    }
+    const employerBreakdown = Object.values(byEmployer)
+      .map((e) => ({ ...e, percentage: totalGBP > 0 ? (e.totalGBP / totalGBP) * 100 : 0 }))
+      .sort((a, b) => b.totalGBP - a.totalGBP);
+
+    return res.status(200).json({ year: allTime ? "all" : year, employerBreakdown, totalGBP, untaggedCount, unmappedCount });
+  }
+
+  // Every real candidate placed at one specific client, with their area
+  // and previous employer sitting side by side — a genuinely different
+  // question from the concentration report above: one row per person,
+  // not aggregated into percentages.
+  if (req.query.action === "client-candidates-with-origin" && req.method === "GET") {
+    const client = req.query.client;
+    if (!client) return res.status(400).json({ error: "A client is required." });
+    const allTime = req.query.year === "all";
+    const year = allTime ? null : (req.query.year ? parseInt(req.query.year, 10) : new Date().getUTCFullYear());
+    const records = (await kv.get(RECORDS_KEY)) || [];
+    const placements = (await kv.get(PLACEMENTS_KEY)) || {};
+    const clientAreasForResolve = (await kv.get(DEAL_AREAS_KEY)) || {};
+    const areaVariantMap = (await kv.get(DEAL_AREA_VARIANT_MAP_KEY)) || {};
+    const previousEmployersList = (await kv.get(PREVIOUS_EMPLOYERS_KEY)) || [];
+    const employerVariantMap = (await kv.get(PREVIOUS_EMPLOYER_VARIANT_MAP_KEY)) || {};
+
+    const candidates = [];
+    for (const r of records) {
+      const dealYear = effectiveYear(r, placements);
+      if (!allTime && dealYear !== year) continue;
+      const placement = r.placementId ? placements[r.placementId] : null;
+      if (!(placement && placement.candidateName)) continue;
+      const clientCompanyName = placement.clientCompanyName || r.projectClientName || null;
+      if (clientCompanyName !== client) continue;
+      const { areaText, employerText } = parseNotesIntoParts(r.notes);
+      const resolvedArea = resolveAreaForDeal(areaText, clientAreasForResolve[client], areaVariantMap[client]);
+      const resolvedEmployer = resolvePreviousEmployerForDeal(employerText, previousEmployersList, employerVariantMap);
+      candidates.push({
+        candidateName: placement.candidateName,
+        area: resolvedArea.area,
+        previousEmployer: resolvedEmployer.employer,
+        startDate: placement.startDate || null,
+      });
+    }
+    candidates.sort((a, b) => (b.startDate || "").localeCompare(a.startDate || ""));
+    return res.status(200).json({ year: allTime ? "all" : year, client, candidates });
+  }
+
   if (req.method !== "GET") {
     return res.status(405).json({ error: "This endpoint is read-only. Edit deal records on the incentive site." });
   }
