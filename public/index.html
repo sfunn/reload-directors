@@ -766,7 +766,7 @@ function DealsPage({ token }) {
     !loading && data && React.createElement("div", { style: { display: "flex", gap: 20, flexWrap: "wrap" } },
       React.createElement(Panel, { style: { flex: 1, minWidth: 320 } },
         React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 10 } },
-          React.createElement(SectionTitle, { title: "Area Concentration" }),
+          React.createElement(SectionTitle, { title: "Citadel Area Concentration" }),
           React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
             // Deliberately just these two — area tracking only ever
             // applies to Citadel and Citadel Securities, so there's no
@@ -862,9 +862,7 @@ function DealsPage({ token }) {
                 )
               )
         )
-      )
-    ),
-    React.createElement("div", { style: { display: "flex", gap: 20, flexWrap: "wrap" } },
+      ),
       React.createElement(Panel, { style: { flex: 1, minWidth: 320 } },
         React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 10 } },
           React.createElement(SectionTitle, { title: "Where Candidates Came From" }),
