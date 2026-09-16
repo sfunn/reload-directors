@@ -316,6 +316,7 @@ function DealsPage({ token }) {
   const [areaSort, setAreaSort] = useState(null);
   const [employerSort, setEmployerSort] = useState(null);
   const [candidateSort, setCandidateSort] = useState(null);
+  const [explorerSort, setExplorerSort] = useState(null);
   function toggleSort(currentSort, setSort, column) {
     if (currentSort && currentSort.column === column) {
       setSort({ column, direction: currentSort.direction === "asc" ? "desc" : "asc" });
@@ -335,6 +336,40 @@ function DealsPage({ token }) {
   const areaConcentrationRequestId = useRef(0);
   const employerConcentrationRequestId = useRef(0);
   const candidateListRequestId = useRef(0);
+  // The unified explorer replacing the two old separate panels — one
+  // group-by switch (employer, area, or candidate), an optional client
+  // scope remembered across a refresh the same way area's own selection
+  // is, and its own year/All Time toggle.
+  const [explorerGroupBy, setExplorerGroupBy] = useState("employer");
+  const [explorerClient, setExplorerClient] = useState(() => localStorage.getItem("explorerClient") || "");
+  const [explorerAllTime, setExplorerAllTime] = useState(false);
+  const [explorerData, setExplorerData] = useState(null);
+  const [explorerLoading, setExplorerLoading] = useState(false);
+  const [explorerError, setExplorerError] = useState("");
+  const explorerRequestId = useRef(0);
+
+  const loadExplorer = useCallback(async () => {
+    const requestId = ++explorerRequestId.current;
+    setExplorerLoading(true);
+    setExplorerError("");
+    try {
+      const yearParam = explorerAllTime ? "all" : year;
+      const clientParam = explorerClient ? `&client=${encodeURIComponent(explorerClient)}` : "";
+      const res = await fetch(`/api/deals?action=origin-explorer&groupBy=${explorerGroupBy}&year=${yearParam}${clientParam}`, { headers: { Authorization: `Bearer ${token}` } });
+      const body = await res.json();
+      if (requestId !== explorerRequestId.current) return;
+      if (!res.ok) { setExplorerError(body.error || "Couldn't load this."); setExplorerData(null); return; }
+      setExplorerData(body);
+    } catch (e) {
+      if (requestId === explorerRequestId.current) setExplorerError("Couldn't reach the server.");
+    } finally {
+      if (requestId === explorerRequestId.current) setExplorerLoading(false);
+    }
+  }, [token, year, explorerGroupBy, explorerClient, explorerAllTime]);
+
+  useEffect(() => { loadExplorer(); }, [loadExplorer]);
+  useEffect(() => { localStorage.setItem("explorerClient", explorerClient || ""); }, [explorerClient]);
+
   const [employerConcentrationLoading, setEmployerConcentrationLoading] = useState(false);
   const [employerConcentrationAllTime, setEmployerConcentrationAllTime] = useState(false);
   const [candidateListClient, setCandidateListClient] = useState(() => localStorage.getItem("candidateListClient") || AREA_TRACKED_CLIENTS[0]);
@@ -522,6 +557,7 @@ function DealsPage({ token }) {
         body: JSON.stringify({ rawText, canonicalEmployer }),
       });
       await loadPreviousEmployers();
+      await loadExplorer();
       await load();
     } catch (e) {
       setError("Couldn't reach the server.");
@@ -537,6 +573,7 @@ function DealsPage({ token }) {
       });
       if (res.ok) { const body = await res.json(); setPreviousEmployersList(body.employers); }
       await loadPreviousEmployers();
+      await loadExplorer();
       await load();
     } catch (e) {
       setError("Couldn't reach the server.");
@@ -553,6 +590,7 @@ function DealsPage({ token }) {
       });
       if (res.ok) { const body = await res.json(); setPreviousEmployersList(body.employers); }
       setRenamingEmployer(null);
+      await loadExplorer();
       await load();
     } catch (e) {
       setError("Couldn't reach the server.");
@@ -828,126 +866,129 @@ function DealsPage({ token }) {
     React.createElement("div", { style: { display: "flex", gap: 20, flexWrap: "wrap" } },
       React.createElement(Panel, { style: { flex: 1, minWidth: 320 } },
         React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 10 } },
-          React.createElement(SectionTitle, { title: "Previous Employer Concentration" }),
+          React.createElement(SectionTitle, { title: "Where Candidates Came From" }),
           React.createElement("div", { style: { display: "flex", gap: 6 } },
-            React.createElement("button", {
-              onClick: () => setEmployerConcentrationAllTime(false),
-              style: { ...chipStyle, padding: "6px 12px", fontSize: 12, background: !employerConcentrationAllTime ? INDIGO : "rgba(46,64,91,0.06)", color: !employerConcentrationAllTime ? WHITE : INDIGO, fontWeight: !employerConcentrationAllTime ? 700 : 500 }
-            }, String(year)),
-            React.createElement("button", {
-              onClick: () => setEmployerConcentrationAllTime(true),
-              style: { ...chipStyle, padding: "6px 12px", fontSize: 12, background: employerConcentrationAllTime ? INDIGO : "rgba(46,64,91,0.06)", color: employerConcentrationAllTime ? WHITE : INDIGO, fontWeight: employerConcentrationAllTime ? 700 : 500 }
-            }, "All Time")
+            [["employer", "By Employer"], ["area", "By Area"], ["candidate", "By Candidate"]].map(([g, label]) => React.createElement("button", {
+              key: g, onClick: () => setExplorerGroupBy(g),
+              style: { ...chipStyle, padding: "6px 12px", fontSize: 12, background: explorerGroupBy === g ? INDIGO : "rgba(46,64,91,0.06)", color: explorerGroupBy === g ? WHITE : INDIGO, fontWeight: explorerGroupBy === g ? 700 : 500 }
+            }, label))
           )
         ),
-        employerConcentrationLoading && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Loading…"),
-        !employerConcentrationLoading && employerConcentrationData && React.createElement(React.Fragment, null,
-          employerConcentrationData.untaggedCount > 0 && React.createElement("div", { style: { fontSize: 11, color: MELON_LINK, marginBottom: 8 } },
-            `${employerConcentrationData.untaggedCount} placement${employerConcentrationData.untaggedCount === 1 ? "" : "s"} ${employerConcentrationData.untaggedCount === 1 ? "has" : "have"} no previous employer noted at all, so ${employerConcentrationData.untaggedCount === 1 ? "it isn't" : "they aren't"} reflected below.`
-          ),
-          employerConcentrationData.employerBreakdown.length === 0
-            ? React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, `No previous employers tagged yet ${employerConcentrationAllTime ? "at all" : "this year"}.`)
-            : React.createElement("div", { style: { overflowX: "auto" } },
-                React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
-                  React.createElement(SortableHeaderCell, { label: "Employer", column: "employer", width: 170, sortState: employerSort, onSort: (c) => toggleSort(employerSort, setEmployerSort, c) }),
-                  React.createElement(SortableHeaderCell, { label: "Revenue (GBP)", column: "totalGBP", width: 100, sortState: employerSort, onSort: (c) => toggleSort(employerSort, setEmployerSort, c) }),
-                  React.createElement(SortableHeaderCell, { label: "Deals", column: "deals", width: 50, sortState: employerSort, onSort: (c) => toggleSort(employerSort, setEmployerSort, c) }),
-                  React.createElement(SortableHeaderCell, { label: "%", column: "percentage", width: 50, sortState: employerSort, onSort: (c) => toggleSort(employerSort, setEmployerSort, c) })
-                ),
-                sortRows(employerConcentrationData.employerBreakdown, employerSort, { employer: (e) => e.employer, totalGBP: (e) => e.totalGBP, deals: (e) => e.deals, percentage: (e) => e.percentage }).map((e) => React.createElement(React.Fragment, { key: e.employer },
-                  React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 13.5, padding: "4px 0", color: INDIGO } },
-                    renamingEmployer === e.employer
-                      ? React.createElement("div", { style: { width: 170, flexShrink: 0, display: "flex", gap: 4 } },
-                          React.createElement("input", {
-                            type: "text", value: renameEmployerText, onChange: (ev) => setRenameEmployerText(ev.target.value), autoFocus: true,
-                            style: { ...inputStyle, width: 110, marginBottom: 0, fontSize: 13 }
-                          })
-                        )
-                      : React.createElement("span", { style: { width: 170, flexShrink: 0 } },
-                          e.employer,
-                          " ",
-                          React.createElement("span", {
-                            onClick: () => { setRenamingEmployer(e.employer); setRenameEmployerText(e.employer); },
-                            style: { fontSize: 11, color: INDIGO_MUTED, textDecoration: "underline", cursor: "pointer" }
-                          }, "rename")
-                        ),
-                    React.createElement("span", { style: { width: 100, flexShrink: 0 } }, `£${Math.round(e.totalGBP).toLocaleString()}`),
-                    React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, e.deals),
-                    React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, `${e.percentage.toFixed(0)}%`),
-                    renamingEmployer === e.employer && React.createElement(React.Fragment, null,
-                      React.createElement("button", { onClick: () => renameEmployer(e.employer, renameEmployerText), style: { ...ghostStyle, padding: "4px 10px", fontSize: 12 } }, "Save"),
-                      React.createElement("button", { onClick: () => setRenamingEmployer(null), style: { ...ghostStyle, padding: "4px 10px", fontSize: 12, background: "none", border: "none" } }, "Cancel")
-                    )
-                  )
-                )),
-                React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 13.5, padding: "6px 0 0", marginTop: 4, borderTop: `1px solid ${INDIGO_HAIRLINE}`, fontWeight: 700, color: INDIGO } },
-                  React.createElement("span", { style: { width: 170, flexShrink: 0 } }, "Total"),
-                  React.createElement("span", { style: { width: 100, flexShrink: 0 } }, `£${Math.round(employerConcentrationData.employerBreakdown.reduce((s, e) => s + e.totalGBP, 0)).toLocaleString()}`),
-                  React.createElement("span", { style: { width: 50, flexShrink: 0 } }, employerConcentrationData.employerBreakdown.reduce((s, e) => s + e.deals, 0)),
-                  React.createElement("span", { style: { width: 50, flexShrink: 0 } }, `${employerConcentrationData.employerBreakdown.reduce((s, e) => s + e.percentage, 0).toFixed(0)}%`)
-                )
-              ),
-          unmappedEmployerTexts.length > 0 && React.createElement("div", { style: { marginTop: 14, padding: "10px 12px", background: "rgba(255,176,140,0.1)", borderRadius: 8 } },
-            React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginBottom: 8 } },
-              `Atlas has real text on ${unmappedEmployerTexts.length === 1 ? "one deal" : `${unmappedEmployerTexts.length} deals`} for a previous employer that doesn't match a known name yet — confirm what each one actually means, and it'll resolve on its own from then on.`
-            ),
-            unmappedEmployerTexts.map((text) => React.createElement("div", { key: text, style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 6 } },
-              React.createElement("span", { style: { fontSize: 13, color: INDIGO, fontStyle: "italic", width: 150, flexShrink: 0 } }, `"${text}"`),
-              React.createElement("span", { style: { fontSize: 11, color: INDIGO_MUTED } }, "means →"),
-              previousEmployersList.map((emp) => React.createElement("button", {
-                key: emp, onClick: () => mapEmployerVariant(text, emp),
-                style: { ...chipStyle, padding: "6px 10px", fontSize: 12, background: "rgba(46,64,91,0.06)", color: INDIGO }
-              }, emp)),
-              React.createElement("button", {
-                onClick: () => addNewEmployerFromUnmapped(text),
-                style: { ...ghostStyle, padding: "6px 10px", fontSize: 12, color: VERDIGRIS }
-              }, `Add "${text}" as a new employer`)
-            ))
-          )
-        )
-      ),
-      React.createElement(Panel, { style: { flex: 1, minWidth: 320 } },
-        React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 10 } },
-          React.createElement(SectionTitle, { title: "Candidates & Where They Came From" }),
-          React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
-            Array.from(new Set((data && data.clientBreakdown || []).filter((c) => c.firm !== "Unknown").map((c) => c.firm))).map((c) => React.createElement("button", {
-              key: c, onClick: () => setCandidateListClient(c),
-              style: { ...chipStyle, background: candidateListClient === c ? INDIGO : "rgba(46,64,91,0.06)", color: candidateListClient === c ? WHITE : INDIGO, fontWeight: candidateListClient === c ? 700 : 500 }
-            }, c))
-          )
+        React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 } },
+          React.createElement("button", {
+            onClick: () => setExplorerClient(""),
+            style: { ...chipStyle, background: !explorerClient ? INDIGO : "rgba(46,64,91,0.06)", color: !explorerClient ? WHITE : INDIGO, fontWeight: !explorerClient ? 700 : 500 }
+          }, "All Clients"),
+          Array.from(new Set((data && data.clientBreakdown || []).filter((c) => c.firm !== "Unknown").map((c) => c.firm))).map((c) => React.createElement("button", {
+            key: c, onClick: () => setExplorerClient(c),
+            style: { ...chipStyle, background: explorerClient === c ? INDIGO : "rgba(46,64,91,0.06)", color: explorerClient === c ? WHITE : INDIGO, fontWeight: explorerClient === c ? 700 : 500 }
+          }, c))
         ),
         React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 10 } },
           React.createElement("button", {
-            onClick: () => setCandidateListAllTime(false),
-            style: { ...chipStyle, padding: "6px 12px", fontSize: 12, background: !candidateListAllTime ? INDIGO : "rgba(46,64,91,0.06)", color: !candidateListAllTime ? WHITE : INDIGO, fontWeight: !candidateListAllTime ? 700 : 500 }
+            onClick: () => setExplorerAllTime(false),
+            style: { ...chipStyle, padding: "6px 12px", fontSize: 12, background: !explorerAllTime ? INDIGO : "rgba(46,64,91,0.06)", color: !explorerAllTime ? WHITE : INDIGO, fontWeight: !explorerAllTime ? 700 : 500 }
           }, String(year)),
           React.createElement("button", {
-            onClick: () => setCandidateListAllTime(true),
-            style: { ...chipStyle, padding: "6px 12px", fontSize: 12, background: candidateListAllTime ? INDIGO : "rgba(46,64,91,0.06)", color: candidateListAllTime ? WHITE : INDIGO, fontWeight: candidateListAllTime ? 700 : 500 }
+            onClick: () => setExplorerAllTime(true),
+            style: { ...chipStyle, padding: "6px 12px", fontSize: 12, background: explorerAllTime ? INDIGO : "rgba(46,64,91,0.06)", color: explorerAllTime ? WHITE : INDIGO, fontWeight: explorerAllTime ? 700 : 500 }
           }, "All Time")
         ),
-        candidateListLoading && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Loading…"),
-        !candidateListLoading && candidateListData && (() => {
-          const showAreaColumn = (clientAreas[candidateListClient] || []).length > 0;
-          return candidateListData.candidates.length === 0
-            ? React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, `No placements yet at ${candidateListClient} ${candidateListAllTime ? "at all" : "this year"}.`)
-            : React.createElement("div", { style: { overflowX: "auto" } },
-                React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
-                  React.createElement(SortableHeaderCell, { label: "Candidate", column: "candidateName", width: 130, sortState: candidateSort, onSort: (c) => toggleSort(candidateSort, setCandidateSort, c) }),
-                  showAreaColumn && React.createElement(SortableHeaderCell, { label: "Area", column: "area", width: 100, sortState: candidateSort, onSort: (c) => toggleSort(candidateSort, setCandidateSort, c) }),
-                  React.createElement(SortableHeaderCell, { label: "Previous Employer", column: "previousEmployer", width: 130, sortState: candidateSort, onSort: (c) => toggleSort(candidateSort, setCandidateSort, c) }),
-                  React.createElement(SortableHeaderCell, { label: "Start Date", column: "startDate", width: 90, sortState: candidateSort, onSort: (c) => toggleSort(candidateSort, setCandidateSort, c) })
+        explorerLoading && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Loading…"),
+        explorerError && React.createElement("div", { style: errorStyle }, explorerError),
+        !explorerLoading && !explorerError && explorerData && explorerData.groupBy === explorerGroupBy && (
+          explorerGroupBy === "candidate"
+            ? (() => {
+                const showClientColumn = !explorerClient;
+                const showAreaColumn = explorerData.candidates.some((c) => c.area);
+                return explorerData.candidates.length === 0
+                  ? React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, `No placements yet ${explorerAllTime ? "at all" : "this year"}.`)
+                  : React.createElement("div", { style: { overflowX: "auto" } },
+                      React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
+                        React.createElement(SortableHeaderCell, { label: "Candidate", column: "candidateName", width: 130, sortState: explorerSort, onSort: (c) => toggleSort(explorerSort, setExplorerSort, c) }),
+                        showClientColumn && React.createElement(SortableHeaderCell, { label: "Client", column: "client", width: 120, sortState: explorerSort, onSort: (c) => toggleSort(explorerSort, setExplorerSort, c) }),
+                        showAreaColumn && React.createElement(SortableHeaderCell, { label: "Area", column: "area", width: 100, sortState: explorerSort, onSort: (c) => toggleSort(explorerSort, setExplorerSort, c) }),
+                        React.createElement(SortableHeaderCell, { label: "Previous Employer", column: "previousEmployer", width: 130, sortState: explorerSort, onSort: (c) => toggleSort(explorerSort, setExplorerSort, c) }),
+                        React.createElement(SortableHeaderCell, { label: "Start Date", column: "startDate", width: 90, sortState: explorerSort, onSort: (c) => toggleSort(explorerSort, setExplorerSort, c) })
+                      ),
+                      sortRows(explorerData.candidates, explorerSort, { candidateName: (c) => c.candidateName, client: (c) => c.client, area: (c) => c.area, previousEmployer: (c) => c.previousEmployer, startDate: (c) => c.startDate }).map((c, i) => React.createElement("div", {
+                        key: i, style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 13.5, padding: "4px 0", color: INDIGO }
+                      },
+                        React.createElement("span", { style: { width: 130, flexShrink: 0 } }, c.candidateName),
+                        showClientColumn && React.createElement("span", { style: { width: 120, flexShrink: 0, color: c.client ? INDIGO : INDIGO_MUTED } }, c.client || "—"),
+                        showAreaColumn && React.createElement("span", { style: { width: 100, flexShrink: 0, color: c.area ? INDIGO : INDIGO_MUTED } }, c.area || "—"),
+                        React.createElement("span", { style: { width: 130, flexShrink: 0, color: c.previousEmployer ? INDIGO : INDIGO_MUTED } }, c.previousEmployer || "—"),
+                        React.createElement("span", { style: { width: 90, flexShrink: 0, color: INDIGO_MUTED } }, c.startDate ? new Date(c.startDate).toLocaleDateString("en-GB") : "—")
+                      ))
+                    );
+              })()
+            : React.createElement(React.Fragment, null,
+                explorerData.untaggedCount > 0 && React.createElement("div", { style: { fontSize: 11, color: MELON_LINK, marginBottom: 8 } },
+                  `${explorerData.untaggedCount} placement${explorerData.untaggedCount === 1 ? "" : "s"} ${explorerData.untaggedCount === 1 ? "has" : "have"} no ${explorerGroupBy} noted at all, so ${explorerData.untaggedCount === 1 ? "it isn't" : "they aren't"} reflected below.`
                 ),
-                sortRows(candidateListData.candidates, candidateSort, { candidateName: (c) => c.candidateName, area: (c) => c.area, previousEmployer: (c) => c.previousEmployer, startDate: (c) => c.startDate }).map((c, i) => React.createElement("div", {
-                  key: i, style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 13.5, padding: "4px 0", color: INDIGO }
-                },
-                  React.createElement("span", { style: { width: 130, flexShrink: 0 } }, c.candidateName),
-                  showAreaColumn && React.createElement("span", { style: { width: 100, flexShrink: 0, color: c.area ? INDIGO : INDIGO_MUTED } }, c.area || "—"),
-                  React.createElement("span", { style: { width: 130, flexShrink: 0, color: c.previousEmployer ? INDIGO : INDIGO_MUTED } }, c.previousEmployer || "—"),
-                  React.createElement("span", { style: { width: 90, flexShrink: 0, color: INDIGO_MUTED } }, c.startDate ? new Date(c.startDate).toLocaleDateString("en-GB") : "—")
-                ))
-              );
-        })()
+                explorerData.breakdown.length === 0
+                  ? React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, `Nothing tagged yet ${explorerAllTime ? "at all" : "this year"}.`)
+                  : React.createElement("div", { style: { overflowX: "auto" } },
+                      React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
+                        React.createElement(SortableHeaderCell, { label: explorerGroupBy === "area" ? "Area" : "Employer", column: "key", width: 170, sortState: explorerSort, onSort: (c) => toggleSort(explorerSort, setExplorerSort, c) }),
+                        React.createElement(SortableHeaderCell, { label: "Revenue (GBP)", column: "totalGBP", width: 100, sortState: explorerSort, onSort: (c) => toggleSort(explorerSort, setExplorerSort, c) }),
+                        React.createElement(SortableHeaderCell, { label: "Deals", column: "deals", width: 50, sortState: explorerSort, onSort: (c) => toggleSort(explorerSort, setExplorerSort, c) }),
+                        React.createElement(SortableHeaderCell, { label: "%", column: "percentage", width: 50, sortState: explorerSort, onSort: (c) => toggleSort(explorerSort, setExplorerSort, c) })
+                      ),
+                      sortRows(explorerData.breakdown, explorerSort, { key: (x) => x.key, totalGBP: (x) => x.totalGBP, deals: (x) => x.deals, percentage: (x) => x.percentage }).map((x) => React.createElement(React.Fragment, { key: x.key },
+                        React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 13.5, padding: "4px 0", color: INDIGO } },
+                          explorerGroupBy === "employer" && renamingEmployer === x.key
+                            ? React.createElement("div", { style: { width: 170, flexShrink: 0, display: "flex", gap: 4 } },
+                                React.createElement("input", {
+                                  type: "text", value: renameEmployerText, onChange: (ev) => setRenameEmployerText(ev.target.value), autoFocus: true,
+                                  style: { ...inputStyle, width: 110, marginBottom: 0, fontSize: 13 }
+                                })
+                              )
+                            : React.createElement("span", { style: { width: 170, flexShrink: 0 } },
+                                x.key,
+                                explorerGroupBy === "employer" && React.createElement(React.Fragment, null,
+                                  " ",
+                                  React.createElement("span", {
+                                    onClick: () => { setRenamingEmployer(x.key); setRenameEmployerText(x.key); },
+                                    style: { fontSize: 11, color: INDIGO_MUTED, textDecoration: "underline", cursor: "pointer" }
+                                  }, "rename")
+                                )
+                              ),
+                          React.createElement("span", { style: { width: 100, flexShrink: 0 } }, `£${Math.round(x.totalGBP).toLocaleString()}`),
+                          React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, x.deals),
+                          React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, `${x.percentage.toFixed(0)}%`),
+                          explorerGroupBy === "employer" && renamingEmployer === x.key && React.createElement(React.Fragment, null,
+                            React.createElement("button", { onClick: () => renameEmployer(x.key, renameEmployerText), style: { ...ghostStyle, padding: "4px 10px", fontSize: 12 } }, "Save"),
+                            React.createElement("button", { onClick: () => setRenamingEmployer(null), style: { ...ghostStyle, padding: "4px 10px", fontSize: 12, background: "none", border: "none" } }, "Cancel")
+                          )
+                        )
+                      )),
+                      React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 13.5, padding: "6px 0 0", marginTop: 4, borderTop: `1px solid ${INDIGO_HAIRLINE}`, fontWeight: 700, color: INDIGO } },
+                        React.createElement("span", { style: { width: 170, flexShrink: 0 } }, "Total"),
+                        React.createElement("span", { style: { width: 100, flexShrink: 0 } }, `£${Math.round(explorerData.breakdown.reduce((s, x) => s + x.totalGBP, 0)).toLocaleString()}`),
+                        React.createElement("span", { style: { width: 50, flexShrink: 0 } }, explorerData.breakdown.reduce((s, x) => s + x.deals, 0)),
+                        React.createElement("span", { style: { width: 50, flexShrink: 0 } }, `${explorerData.breakdown.reduce((s, x) => s + x.percentage, 0).toFixed(0)}%`)
+                      )
+                    ),
+                explorerGroupBy === "employer" && unmappedEmployerTexts.length > 0 && React.createElement("div", { style: { marginTop: 14, padding: "10px 12px", background: "rgba(255,176,140,0.1)", borderRadius: 8 } },
+                  React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginBottom: 8 } },
+                    `Atlas has real text on ${unmappedEmployerTexts.length === 1 ? "one deal" : `${unmappedEmployerTexts.length} deals`} for a previous employer that doesn't match a known name yet — confirm what each one actually means, and it'll resolve on its own from then on.`
+                  ),
+                  unmappedEmployerTexts.map((text) => React.createElement("div", { key: text, style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 6 } },
+                    React.createElement("span", { style: { fontSize: 13, color: INDIGO, fontStyle: "italic", width: 150, flexShrink: 0 } }, `"${text}"`),
+                    React.createElement("span", { style: { fontSize: 11, color: INDIGO_MUTED } }, "means →"),
+                    previousEmployersList.map((emp) => React.createElement("button", {
+                      key: emp, onClick: () => mapEmployerVariant(text, emp),
+                      style: { ...chipStyle, padding: "6px 10px", fontSize: 12, background: "rgba(46,64,91,0.06)", color: INDIGO }
+                    }, emp)),
+                    React.createElement("button", {
+                      onClick: () => addNewEmployerFromUnmapped(text),
+                      style: { ...ghostStyle, padding: "6px 10px", fontSize: 12, color: VERDIGRIS }
+                    }, `Add "${text}" as a new employer`)
+                  ))
+                )
+              )
+        )
       )
     ),
     !loading && data && React.createElement(Panel, null,
