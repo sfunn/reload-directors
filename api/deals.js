@@ -453,22 +453,63 @@ module.exports = async (req, res) => {
     return res.status(200).json({ unmappedTexts: Array.from(unmappedTexts) });
   }
 
-  // Global concentration by previous employer — same shape as area
-  // concentration, same year/All Time handling, same placements-only
-  // scoping, just never scoped to one client, since where a candidate
-  // came from is tracked the same way regardless of who they were
-  // placed at.
-  if (req.query.action === "previous-employer-concentration" && req.method === "GET") {
+  // Every real candidate placed at one specific client, with their area
+  // and previous employer sitting side by side — a genuinely different
+  // question from the concentration report above: one row per person,
+  // not aggregated into percentages.
+  // The single unified explorer replacing the two separate views above —
+  // group by employer, area, or candidate, optionally scoped to one
+  // specific client or left global across all of them. Area grouping
+  // specifically still needs a real client selected, since an area only
+  // ever means something within one client's own internal structure —
+  // Citadel's desks have nothing to do with any other client's, so
+  // there's no honest way to combine them into one global area view.
+  if (req.query.action === "origin-explorer" && req.method === "GET") {
+    const groupBy = req.query.groupBy || "candidate";
+    const client = req.query.client || null;
     const allTime = req.query.year === "all";
     const year = allTime ? null : (req.query.year ? parseInt(req.query.year, 10) : new Date().getUTCFullYear());
+
+    if (groupBy === "area" && !client) {
+      return res.status(400).json({ error: "Grouping by area needs one specific client selected — each client's own areas are entirely its own, so there's no honest way to combine them globally." });
+    }
+
     const records = (await kv.get(RECORDS_KEY)) || [];
     const allRates = (await kv.get(FX_KEY)) || {};
     const placements = (await kv.get(PLACEMENTS_KEY)) || {};
     const overrides = await getOverrides();
+    const clientAreasForResolve = (await kv.get(DEAL_AREAS_KEY)) || {};
+    const areaVariantMap = (await kv.get(DEAL_AREA_VARIANT_MAP_KEY)) || {};
     const previousEmployersList = (await kv.get(PREVIOUS_EMPLOYERS_KEY)) || [];
-    const variantMap = (await kv.get(PREVIOUS_EMPLOYER_VARIANT_MAP_KEY)) || {};
+    const employerVariantMap = (await kv.get(PREVIOUS_EMPLOYER_VARIANT_MAP_KEY)) || {};
 
-    const byEmployer = {};
+    if (groupBy === "candidate") {
+      const candidates = [];
+      for (const r of records) {
+        const dealYear = effectiveYear(r, placements);
+        if (!allTime && dealYear !== year) continue;
+        const placement = r.placementId ? placements[r.placementId] : null;
+        if (!(placement && placement.candidateName)) continue;
+        const clientCompanyName = placement.clientCompanyName || r.projectClientName || null;
+        if (client && clientCompanyName !== client) continue;
+        const { areaText, employerText } = parseNotesIntoParts(r.notes);
+        const resolvedArea = resolveAreaForDeal(areaText, clientCompanyName ? clientAreasForResolve[clientCompanyName] : null, clientCompanyName ? areaVariantMap[clientCompanyName] : null);
+        const resolvedEmployer = resolvePreviousEmployerForDeal(employerText, previousEmployersList, employerVariantMap);
+        candidates.push({
+          candidateName: placement.candidateName,
+          client: clientCompanyName,
+          area: resolvedArea.area,
+          previousEmployer: resolvedEmployer.employer,
+          startDate: placement.startDate || null,
+        });
+      }
+      candidates.sort((a, b) => (b.startDate || "").localeCompare(a.startDate || ""));
+      return res.status(200).json({ groupBy, client, year: allTime ? "all" : year, candidates });
+    }
+
+    // groupBy === "employer" or "area" — same aggregation shape either
+    // way, just resolved against a different real list.
+    const byKey = {};
     let totalGBP = 0;
     let untaggedCount = 0;
     let unmappedCount = 0;
@@ -478,61 +519,32 @@ module.exports = async (req, res) => {
       const placement = r.placementId ? placements[r.placementId] : null;
       const hasPlacementName = !!(placement && placement.candidateName);
       if (!hasPlacementName) continue;
-      const clientCompanyName = (placement && placement.clientCompanyName) || r.projectClientName || null;
+      const clientCompanyName = placement.clientCompanyName || r.projectClientName || null;
+      if (client && clientCompanyName !== client) continue;
       const gbpAmount = resolvedRevenueGBP(r, clientCompanyName, dealYear, overrides, hasPlacementName, allRates);
       if (gbpAmount === null) continue;
       totalGBP += gbpAmount;
-      const { employerText } = parseNotesIntoParts(r.notes);
-      const resolved = resolvePreviousEmployerForDeal(employerText, previousEmployersList, variantMap);
-      if (resolved.source === "unmapped") { unmappedCount += 1; continue; }
-      if (!resolved.employer) { untaggedCount += 1; continue; }
-      if (!byEmployer[resolved.employer]) byEmployer[resolved.employer] = { employer: resolved.employer, totalGBP: 0, deals: 0 };
-      byEmployer[resolved.employer].totalGBP += gbpAmount;
-      byEmployer[resolved.employer].deals += 1;
+
+      const { areaText, employerText } = parseNotesIntoParts(r.notes);
+      let resolvedKey, resolvedSource;
+      if (groupBy === "area") {
+        const resolved = resolveAreaForDeal(areaText, clientAreasForResolve[client], areaVariantMap[client]);
+        resolvedKey = resolved.area; resolvedSource = resolved.source;
+      } else {
+        const resolved = resolvePreviousEmployerForDeal(employerText, previousEmployersList, employerVariantMap);
+        resolvedKey = resolved.employer; resolvedSource = resolved.source;
+      }
+      if (resolvedSource === "unmapped") { unmappedCount += 1; continue; }
+      if (!resolvedKey) { untaggedCount += 1; continue; }
+      if (!byKey[resolvedKey]) byKey[resolvedKey] = { key: resolvedKey, totalGBP: 0, deals: 0 };
+      byKey[resolvedKey].totalGBP += gbpAmount;
+      byKey[resolvedKey].deals += 1;
     }
-    const employerBreakdown = Object.values(byEmployer)
-      .map((e) => ({ ...e, percentage: totalGBP > 0 ? (e.totalGBP / totalGBP) * 100 : 0 }))
+    const breakdown = Object.values(byKey)
+      .map((x) => ({ ...x, percentage: totalGBP > 0 ? (x.totalGBP / totalGBP) * 100 : 0 }))
       .sort((a, b) => b.totalGBP - a.totalGBP);
 
-    return res.status(200).json({ year: allTime ? "all" : year, employerBreakdown, totalGBP, untaggedCount, unmappedCount });
-  }
-
-  // Every real candidate placed at one specific client, with their area
-  // and previous employer sitting side by side — a genuinely different
-  // question from the concentration report above: one row per person,
-  // not aggregated into percentages.
-  if (req.query.action === "client-candidates-with-origin" && req.method === "GET") {
-    const client = req.query.client;
-    if (!client) return res.status(400).json({ error: "A client is required." });
-    const allTime = req.query.year === "all";
-    const year = allTime ? null : (req.query.year ? parseInt(req.query.year, 10) : new Date().getUTCFullYear());
-    const records = (await kv.get(RECORDS_KEY)) || [];
-    const placements = (await kv.get(PLACEMENTS_KEY)) || {};
-    const clientAreasForResolve = (await kv.get(DEAL_AREAS_KEY)) || {};
-    const areaVariantMap = (await kv.get(DEAL_AREA_VARIANT_MAP_KEY)) || {};
-    const previousEmployersList = (await kv.get(PREVIOUS_EMPLOYERS_KEY)) || [];
-    const employerVariantMap = (await kv.get(PREVIOUS_EMPLOYER_VARIANT_MAP_KEY)) || {};
-
-    const candidates = [];
-    for (const r of records) {
-      const dealYear = effectiveYear(r, placements);
-      if (!allTime && dealYear !== year) continue;
-      const placement = r.placementId ? placements[r.placementId] : null;
-      if (!(placement && placement.candidateName)) continue;
-      const clientCompanyName = placement.clientCompanyName || r.projectClientName || null;
-      if (clientCompanyName !== client) continue;
-      const { areaText, employerText } = parseNotesIntoParts(r.notes);
-      const resolvedArea = resolveAreaForDeal(areaText, clientAreasForResolve[client], areaVariantMap[client]);
-      const resolvedEmployer = resolvePreviousEmployerForDeal(employerText, previousEmployersList, employerVariantMap);
-      candidates.push({
-        candidateName: placement.candidateName,
-        area: resolvedArea.area,
-        previousEmployer: resolvedEmployer.employer,
-        startDate: placement.startDate || null,
-      });
-    }
-    candidates.sort((a, b) => (b.startDate || "").localeCompare(a.startDate || ""));
-    return res.status(200).json({ year: allTime ? "all" : year, client, candidates });
+    return res.status(200).json({ groupBy, client, year: allTime ? "all" : year, breakdown, totalGBP, untaggedCount, unmappedCount });
   }
 
   if (req.method !== "GET") {
