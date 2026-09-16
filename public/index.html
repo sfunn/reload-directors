@@ -178,6 +178,36 @@ function Cell({ children, width, flex, bold, color }) {
 const labelStyle = { display: "block", fontFamily: "'Work Sans', sans-serif", fontWeight: 600, fontSize: 11, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 };
 const chipStyle = { background: "rgba(255,176,140,0.14)", border: `1px solid ${MELON}`, color: MELON_LINK, borderRadius: 20, padding: "6px 12px", fontSize: 12.5, cursor: "pointer", fontFamily: "'Work Sans', sans-serif", fontWeight: 500 };
 
+// Sorts a real copy of the array (never mutates the original, since
+// that's still used elsewhere for totals) using whichever accessor
+// function the active column maps to. Text columns sort
+// case-insensitively; everything else sorts as a plain value.
+function sortRows(rows, sortState, accessors) {
+  if (!sortState || !sortState.column || !accessors[sortState.column]) return rows;
+  const getValue = accessors[sortState.column];
+  const dir = sortState.direction === "desc" ? -1 : 1;
+  return [...rows].sort((a, b) => {
+    const va = getValue(a);
+    const vb = getValue(b);
+    if (typeof va === "string" || typeof vb === "string") {
+      return dir * String(va || "").localeCompare(String(vb || ""));
+    }
+    return dir * ((va ?? 0) - (vb ?? 0));
+  });
+}
+
+// A clickable column header — click once to sort ascending by that
+// column, click again to reverse, click a different column to switch
+// to it (starting ascending again). The small arrow shows which column
+// is active and which direction, so it's never ambiguous.
+function SortableHeaderCell({ label, column, width, sortState, onSort }) {
+  const isActive = sortState && sortState.column === column;
+  return React.createElement("span", {
+    onClick: () => onSort(column),
+    style: { width, flexShrink: 0, cursor: "pointer", userSelect: "none", color: isActive ? INDIGO : INDIGO_MUTED }
+  }, label, isActive ? (sortState.direction === "desc" ? " ▾" : " ▴") : "");
+}
+
 const YEAR_OPTIONS = [2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026, 2027];
 // Area tracking only ever applies to these two — deliberately not
 // derived from whichever clients happen to have revenue, since that
@@ -280,6 +310,19 @@ function DealsPage({ token }) {
   const [previousEmployersList, setPreviousEmployersList] = useState([]);
   const [unmappedEmployerTexts, setUnmappedEmployerTexts] = useState([]);
   const [renamingEmployer, setRenamingEmployer] = useState(null);
+  // One independent sort state per table — clicking a header toggles
+  // ascending/descending on that column, clicking a different header
+  // switches to it starting ascending.
+  const [areaSort, setAreaSort] = useState(null);
+  const [employerSort, setEmployerSort] = useState(null);
+  const [candidateSort, setCandidateSort] = useState(null);
+  function toggleSort(currentSort, setSort, column) {
+    if (currentSort && currentSort.column === column) {
+      setSort({ column, direction: currentSort.direction === "asc" ? "desc" : "asc" });
+    } else {
+      setSort({ column, direction: "asc" });
+    }
+  }
   const [renameEmployerText, setRenameEmployerText] = useState("");
   const [employersLoaded, setEmployersLoaded] = useState(false);
   const [employerConcentrationData, setEmployerConcentrationData] = useState(null);
@@ -732,12 +775,12 @@ function DealsPage({ token }) {
             ? React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, `No tagged placements yet for this client ${areaConcentrationAllTime ? "at all" : "this year"}.`)
             : React.createElement("div", { style: { overflowX: "auto" } },
                 React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
-                  React.createElement("span", { style: { width: 150, flexShrink: 0 } }, "Area"),
-                  React.createElement("span", { style: { width: 100, flexShrink: 0 } }, "Revenue (GBP)"),
-                  React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Deals"),
-                  React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "%")
+                  React.createElement(SortableHeaderCell, { label: "Area", column: "area", width: 150, sortState: areaSort, onSort: (c) => toggleSort(areaSort, setAreaSort, c) }),
+                  React.createElement(SortableHeaderCell, { label: "Revenue (GBP)", column: "totalGBP", width: 100, sortState: areaSort, onSort: (c) => toggleSort(areaSort, setAreaSort, c) }),
+                  React.createElement(SortableHeaderCell, { label: "Deals", column: "deals", width: 50, sortState: areaSort, onSort: (c) => toggleSort(areaSort, setAreaSort, c) }),
+                  React.createElement(SortableHeaderCell, { label: "%", column: "percentage", width: 50, sortState: areaSort, onSort: (c) => toggleSort(areaSort, setAreaSort, c) })
                 ),
-                areaConcentrationData.areaBreakdown.map((a) => React.createElement(React.Fragment, { key: a.area },
+                sortRows(areaConcentrationData.areaBreakdown, areaSort, { area: (a) => a.area, totalGBP: (a) => a.totalGBP, deals: (a) => a.deals, percentage: (a) => a.percentage }).map((a) => React.createElement(React.Fragment, { key: a.area },
                   React.createElement("div", {
                     style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 13.5, padding: "4px 0", color: INDIGO }
                   },
@@ -806,12 +849,12 @@ function DealsPage({ token }) {
             ? React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, `No previous employers tagged yet ${employerConcentrationAllTime ? "at all" : "this year"}.`)
             : React.createElement("div", { style: { overflowX: "auto" } },
                 React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
-                  React.createElement("span", { style: { width: 170, flexShrink: 0 } }, "Employer"),
-                  React.createElement("span", { style: { width: 100, flexShrink: 0 } }, "Revenue (GBP)"),
-                  React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Deals"),
-                  React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "%")
+                  React.createElement(SortableHeaderCell, { label: "Employer", column: "employer", width: 170, sortState: employerSort, onSort: (c) => toggleSort(employerSort, setEmployerSort, c) }),
+                  React.createElement(SortableHeaderCell, { label: "Revenue (GBP)", column: "totalGBP", width: 100, sortState: employerSort, onSort: (c) => toggleSort(employerSort, setEmployerSort, c) }),
+                  React.createElement(SortableHeaderCell, { label: "Deals", column: "deals", width: 50, sortState: employerSort, onSort: (c) => toggleSort(employerSort, setEmployerSort, c) }),
+                  React.createElement(SortableHeaderCell, { label: "%", column: "percentage", width: 50, sortState: employerSort, onSort: (c) => toggleSort(employerSort, setEmployerSort, c) })
                 ),
-                employerConcentrationData.employerBreakdown.map((e) => React.createElement(React.Fragment, { key: e.employer },
+                sortRows(employerConcentrationData.employerBreakdown, employerSort, { employer: (e) => e.employer, totalGBP: (e) => e.totalGBP, deals: (e) => e.deals, percentage: (e) => e.percentage }).map((e) => React.createElement(React.Fragment, { key: e.employer },
                   React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 13.5, padding: "4px 0", color: INDIGO } },
                     renamingEmployer === e.employer
                       ? React.createElement("div", { style: { width: 170, flexShrink: 0, display: "flex", gap: 4 } },
@@ -890,12 +933,12 @@ function DealsPage({ token }) {
             ? React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, `No placements yet at ${candidateListClient} ${candidateListAllTime ? "at all" : "this year"}.`)
             : React.createElement("div", { style: { overflowX: "auto" } },
                 React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
-                  React.createElement("span", { style: { width: 130, flexShrink: 0 } }, "Candidate"),
-                  showAreaColumn && React.createElement("span", { style: { width: 100, flexShrink: 0 } }, "Area"),
-                  React.createElement("span", { style: { width: 130, flexShrink: 0 } }, "Previous Employer"),
-                  React.createElement("span", { style: { width: 90, flexShrink: 0 } }, "Start Date")
+                  React.createElement(SortableHeaderCell, { label: "Candidate", column: "candidateName", width: 130, sortState: candidateSort, onSort: (c) => toggleSort(candidateSort, setCandidateSort, c) }),
+                  showAreaColumn && React.createElement(SortableHeaderCell, { label: "Area", column: "area", width: 100, sortState: candidateSort, onSort: (c) => toggleSort(candidateSort, setCandidateSort, c) }),
+                  React.createElement(SortableHeaderCell, { label: "Previous Employer", column: "previousEmployer", width: 130, sortState: candidateSort, onSort: (c) => toggleSort(candidateSort, setCandidateSort, c) }),
+                  React.createElement(SortableHeaderCell, { label: "Start Date", column: "startDate", width: 90, sortState: candidateSort, onSort: (c) => toggleSort(candidateSort, setCandidateSort, c) })
                 ),
-                candidateListData.candidates.map((c, i) => React.createElement("div", {
+                sortRows(candidateListData.candidates, candidateSort, { candidateName: (c) => c.candidateName, area: (c) => c.area, previousEmployer: (c) => c.previousEmployer, startDate: (c) => c.startDate }).map((c, i) => React.createElement("div", {
                   key: i, style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 13.5, padding: "4px 0", color: INDIGO }
                 },
                   React.createElement("span", { style: { width: 130, flexShrink: 0 } }, c.candidateName),
