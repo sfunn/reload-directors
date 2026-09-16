@@ -766,105 +766,6 @@ function DealsPage({ token }) {
     !loading && data && React.createElement("div", { style: { display: "flex", gap: 20, flexWrap: "wrap" } },
       React.createElement(Panel, { style: { flex: 1, minWidth: 320 } },
         React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 10 } },
-          React.createElement(SectionTitle, { title: "Citadel Area Concentration" }),
-          React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
-            // Deliberately just these two — area tracking only ever
-            // applies to Citadel and Citadel Securities, so there's no
-            // reason to surface every other client as an option here.
-            AREA_TRACKED_CLIENTS.map((c) => React.createElement("button", {
-              key: c, onClick: () => setAreaConcentrationClient(c),
-              style: { ...chipStyle, background: areaConcentrationClient === c ? INDIGO : "rgba(46,64,91,0.06)", color: areaConcentrationClient === c ? WHITE : INDIGO, fontWeight: areaConcentrationClient === c ? 700 : 500 }
-            }, c))
-          )
-        ),
-        areaConcentrationClient && React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 10 } },
-          React.createElement("button", {
-            onClick: () => setAreaConcentrationAllTime(false),
-            style: { ...chipStyle, padding: "6px 12px", fontSize: 12, background: !areaConcentrationAllTime ? INDIGO : "rgba(46,64,91,0.06)", color: !areaConcentrationAllTime ? WHITE : INDIGO, fontWeight: !areaConcentrationAllTime ? 700 : 500 }
-          }, String(year)),
-          React.createElement("button", {
-            onClick: () => setAreaConcentrationAllTime(true),
-            style: { ...chipStyle, padding: "6px 12px", fontSize: 12, background: areaConcentrationAllTime ? INDIGO : "rgba(46,64,91,0.06)", color: areaConcentrationAllTime ? WHITE : INDIGO, fontWeight: areaConcentrationAllTime ? 700 : 500 }
-          }, "All Time")
-        ),
-        !areaConcentrationClient && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Pick a client above to see how its own placements split across the areas tracked for it."),
-        areaConcentrationLoading && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Loading…"),
-        areaConcentrationClient && !areaConcentrationLoading && areaConcentrationData && React.createElement(React.Fragment, null,
-          areaConcentrationData.untaggedCount > 0 && React.createElement("div", { style: { fontSize: 11, color: MELON_LINK, marginBottom: 8 } },
-            `${areaConcentrationData.untaggedCount} placement${areaConcentrationData.untaggedCount === 1 ? "" : "s"} at ${areaConcentrationClient} ${areaConcentrationData.untaggedCount === 1 ? "hasn't" : "haven't"} been tagged with an area yet, so ${areaConcentrationData.untaggedCount === 1 ? "it isn't" : "they aren't"} reflected below.`
-          ),
-          unmappedTexts.length > 0 && React.createElement("div", { style: { marginBottom: 12, padding: "10px 12px", background: "rgba(255,176,140,0.1)", borderRadius: 8 } },
-            React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginBottom: 8 } },
-              `Atlas has real text on ${unmappedTexts.length === 1 ? "one deal" : `${unmappedTexts.length} deals`} that doesn't match a known area yet — confirm what each one actually means, and it'll resolve on its own from then on.`
-            ),
-            unmappedTexts.map((text) => React.createElement("div", { key: text, style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 6 } },
-              React.createElement("span", { style: { fontSize: 13, color: INDIGO, fontStyle: "italic", width: 130, flexShrink: 0 } }, `"${text}"`),
-              React.createElement("span", { style: { fontSize: 11, color: INDIGO_MUTED } }, "means →"),
-              (clientAreas[areaConcentrationClient] || []).map((a) => React.createElement("button", {
-                key: a, onClick: () => mapVariant(areaConcentrationClient, text, a),
-                style: { ...chipStyle, padding: "6px 10px", fontSize: 12, background: "rgba(46,64,91,0.06)", color: INDIGO }
-              }, a)),
-              React.createElement("button", {
-                onClick: () => addNewAreaFromUnmapped(areaConcentrationClient, text),
-                style: { ...ghostStyle, padding: "6px 10px", fontSize: 12, color: VERDIGRIS }
-              }, `Add "${text}" as a new area`)
-            ))
-          ),
-          areaConcentrationData.areaBreakdown.length === 0
-            ? React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, `No tagged placements yet for this client ${areaConcentrationAllTime ? "at all" : "this year"}.`)
-            : React.createElement("div", { style: { overflowX: "auto" } },
-                React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
-                  React.createElement(SortableHeaderCell, { label: "Area", column: "area", width: 150, sortState: areaSort, onSort: (c) => toggleSort(areaSort, setAreaSort, c) }),
-                  React.createElement(SortableHeaderCell, { label: "Revenue (GBP)", column: "totalGBP", width: 100, sortState: areaSort, onSort: (c) => toggleSort(areaSort, setAreaSort, c) }),
-                  React.createElement(SortableHeaderCell, { label: "Deals", column: "deals", width: 50, sortState: areaSort, onSort: (c) => toggleSort(areaSort, setAreaSort, c) }),
-                  React.createElement(SortableHeaderCell, { label: "%", column: "percentage", width: 50, sortState: areaSort, onSort: (c) => toggleSort(areaSort, setAreaSort, c) })
-                ),
-                sortRows(areaConcentrationData.areaBreakdown, areaSort, { area: (a) => a.area, totalGBP: (a) => a.totalGBP, deals: (a) => a.deals, percentage: (a) => a.percentage }).map((a) => React.createElement(React.Fragment, { key: a.area },
-                  React.createElement("div", {
-                    style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 13.5, padding: "4px 0", color: INDIGO }
-                  },
-                    renamingArea === a.area
-                      ? React.createElement("div", { style: { width: 150, flexShrink: 0, display: "flex", gap: 4 } },
-                          React.createElement("input", {
-                            type: "text", value: renameText, onChange: (e) => setRenameText(e.target.value), autoFocus: true,
-                            style: { ...inputStyle, width: 100, marginBottom: 0, fontSize: 13 }
-                          })
-                        )
-                      : React.createElement("span", { style: { width: 150, flexShrink: 0 } },
-                          a.area,
-                          " ",
-                          React.createElement("span", {
-                            onClick: () => { setRenamingArea(a.area); setRenameText(a.area); },
-                            style: { fontSize: 11, color: INDIGO_MUTED, textDecoration: "underline", cursor: "pointer" }
-                          }, "rename")
-                        ),
-                    React.createElement("span", { style: { width: 100, flexShrink: 0 } }, `£${Math.round(a.totalGBP).toLocaleString()}`),
-                    React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, a.deals),
-                    React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, `${a.percentage.toFixed(0)}%`),
-                    renamingArea === a.area && React.createElement(React.Fragment, null,
-                      React.createElement("button", { onClick: () => renameArea(areaConcentrationClient, a.area, renameText), style: { ...ghostStyle, padding: "4px 10px", fontSize: 12 } }, "Save"),
-                      React.createElement("button", { onClick: () => setRenamingArea(null), style: { ...ghostStyle, padding: "4px 10px", fontSize: 12, background: "none", border: "none" } }, "Cancel")
-                    )
-                  )
-                )),
-                React.createElement("div", {
-                  style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 13.5, padding: "6px 0 0", marginTop: 4, borderTop: `1px solid ${INDIGO_HAIRLINE}`, fontWeight: 700, color: INDIGO }
-                },
-                  React.createElement("span", { style: { width: 150, flexShrink: 0 } }, "Total"),
-                  React.createElement("span", { style: { width: 100, flexShrink: 0 } }, `£${Math.round(areaConcentrationData.areaBreakdown.reduce((s, a) => s + a.totalGBP, 0)).toLocaleString()}`),
-                  React.createElement("span", { style: { width: 50, flexShrink: 0 } }, areaConcentrationData.areaBreakdown.reduce((s, a) => s + a.deals, 0)),
-                  // The genuine share of this client's revenue actually
-                  // accounted for by a tagged area — not hardcoded to
-                  // 100%, since untagged or unmapped placements are real
-                  // and deliberately excluded from the rows above, so
-                  // the true total here can honestly be less than 100%.
-                  React.createElement("span", { style: { width: 50, flexShrink: 0 } }, `${areaConcentrationData.areaBreakdown.reduce((s, a) => s + a.percentage, 0).toFixed(0)}%`)
-                )
-              )
-        )
-      ),
-      React.createElement(Panel, { style: { flex: 1, minWidth: 320 } },
-        React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 10 } },
           React.createElement(SectionTitle, { title: "Where Candidates Came From" }),
           React.createElement("div", { style: { display: "flex", gap: 6 } },
             [["employer", "By Employer"], ["area", "By Area"], ["candidate", "By Candidate"]].map(([g, label]) => React.createElement("button", {
@@ -985,6 +886,105 @@ function DealsPage({ token }) {
                       style: { ...ghostStyle, padding: "6px 10px", fontSize: 12, color: VERDIGRIS }
                     }, `Add "${text}" as a new employer`)
                   ))
+                )
+              )
+        )
+      ),
+      React.createElement(Panel, { style: { flex: 1, minWidth: 320 } },
+        React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 10 } },
+          React.createElement(SectionTitle, { title: "Citadel Area Concentration" }),
+          React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+            // Deliberately just these two — area tracking only ever
+            // applies to Citadel and Citadel Securities, so there's no
+            // reason to surface every other client as an option here.
+            AREA_TRACKED_CLIENTS.map((c) => React.createElement("button", {
+              key: c, onClick: () => setAreaConcentrationClient(c),
+              style: { ...chipStyle, background: areaConcentrationClient === c ? INDIGO : "rgba(46,64,91,0.06)", color: areaConcentrationClient === c ? WHITE : INDIGO, fontWeight: areaConcentrationClient === c ? 700 : 500 }
+            }, c))
+          )
+        ),
+        areaConcentrationClient && React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 10 } },
+          React.createElement("button", {
+            onClick: () => setAreaConcentrationAllTime(false),
+            style: { ...chipStyle, padding: "6px 12px", fontSize: 12, background: !areaConcentrationAllTime ? INDIGO : "rgba(46,64,91,0.06)", color: !areaConcentrationAllTime ? WHITE : INDIGO, fontWeight: !areaConcentrationAllTime ? 700 : 500 }
+          }, String(year)),
+          React.createElement("button", {
+            onClick: () => setAreaConcentrationAllTime(true),
+            style: { ...chipStyle, padding: "6px 12px", fontSize: 12, background: areaConcentrationAllTime ? INDIGO : "rgba(46,64,91,0.06)", color: areaConcentrationAllTime ? WHITE : INDIGO, fontWeight: areaConcentrationAllTime ? 700 : 500 }
+          }, "All Time")
+        ),
+        !areaConcentrationClient && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Pick a client above to see how its own placements split across the areas tracked for it."),
+        areaConcentrationLoading && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Loading…"),
+        areaConcentrationClient && !areaConcentrationLoading && areaConcentrationData && React.createElement(React.Fragment, null,
+          areaConcentrationData.untaggedCount > 0 && React.createElement("div", { style: { fontSize: 11, color: MELON_LINK, marginBottom: 8 } },
+            `${areaConcentrationData.untaggedCount} placement${areaConcentrationData.untaggedCount === 1 ? "" : "s"} at ${areaConcentrationClient} ${areaConcentrationData.untaggedCount === 1 ? "hasn't" : "haven't"} been tagged with an area yet, so ${areaConcentrationData.untaggedCount === 1 ? "it isn't" : "they aren't"} reflected below.`
+          ),
+          unmappedTexts.length > 0 && React.createElement("div", { style: { marginBottom: 12, padding: "10px 12px", background: "rgba(255,176,140,0.1)", borderRadius: 8 } },
+            React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginBottom: 8 } },
+              `Atlas has real text on ${unmappedTexts.length === 1 ? "one deal" : `${unmappedTexts.length} deals`} that doesn't match a known area yet — confirm what each one actually means, and it'll resolve on its own from then on.`
+            ),
+            unmappedTexts.map((text) => React.createElement("div", { key: text, style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 6 } },
+              React.createElement("span", { style: { fontSize: 13, color: INDIGO, fontStyle: "italic", width: 130, flexShrink: 0 } }, `"${text}"`),
+              React.createElement("span", { style: { fontSize: 11, color: INDIGO_MUTED } }, "means →"),
+              (clientAreas[areaConcentrationClient] || []).map((a) => React.createElement("button", {
+                key: a, onClick: () => mapVariant(areaConcentrationClient, text, a),
+                style: { ...chipStyle, padding: "6px 10px", fontSize: 12, background: "rgba(46,64,91,0.06)", color: INDIGO }
+              }, a)),
+              React.createElement("button", {
+                onClick: () => addNewAreaFromUnmapped(areaConcentrationClient, text),
+                style: { ...ghostStyle, padding: "6px 10px", fontSize: 12, color: VERDIGRIS }
+              }, `Add "${text}" as a new area`)
+            ))
+          ),
+          areaConcentrationData.areaBreakdown.length === 0
+            ? React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, `No tagged placements yet for this client ${areaConcentrationAllTime ? "at all" : "this year"}.`)
+            : React.createElement("div", { style: { overflowX: "auto" } },
+                React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
+                  React.createElement(SortableHeaderCell, { label: "Area", column: "area", width: 150, sortState: areaSort, onSort: (c) => toggleSort(areaSort, setAreaSort, c) }),
+                  React.createElement(SortableHeaderCell, { label: "Revenue (GBP)", column: "totalGBP", width: 100, sortState: areaSort, onSort: (c) => toggleSort(areaSort, setAreaSort, c) }),
+                  React.createElement(SortableHeaderCell, { label: "Deals", column: "deals", width: 50, sortState: areaSort, onSort: (c) => toggleSort(areaSort, setAreaSort, c) }),
+                  React.createElement(SortableHeaderCell, { label: "%", column: "percentage", width: 50, sortState: areaSort, onSort: (c) => toggleSort(areaSort, setAreaSort, c) })
+                ),
+                sortRows(areaConcentrationData.areaBreakdown, areaSort, { area: (a) => a.area, totalGBP: (a) => a.totalGBP, deals: (a) => a.deals, percentage: (a) => a.percentage }).map((a) => React.createElement(React.Fragment, { key: a.area },
+                  React.createElement("div", {
+                    style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 13.5, padding: "4px 0", color: INDIGO }
+                  },
+                    renamingArea === a.area
+                      ? React.createElement("div", { style: { width: 150, flexShrink: 0, display: "flex", gap: 4 } },
+                          React.createElement("input", {
+                            type: "text", value: renameText, onChange: (e) => setRenameText(e.target.value), autoFocus: true,
+                            style: { ...inputStyle, width: 100, marginBottom: 0, fontSize: 13 }
+                          })
+                        )
+                      : React.createElement("span", { style: { width: 150, flexShrink: 0 } },
+                          a.area,
+                          " ",
+                          React.createElement("span", {
+                            onClick: () => { setRenamingArea(a.area); setRenameText(a.area); },
+                            style: { fontSize: 11, color: INDIGO_MUTED, textDecoration: "underline", cursor: "pointer" }
+                          }, "rename")
+                        ),
+                    React.createElement("span", { style: { width: 100, flexShrink: 0 } }, `£${Math.round(a.totalGBP).toLocaleString()}`),
+                    React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, a.deals),
+                    React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, `${a.percentage.toFixed(0)}%`),
+                    renamingArea === a.area && React.createElement(React.Fragment, null,
+                      React.createElement("button", { onClick: () => renameArea(areaConcentrationClient, a.area, renameText), style: { ...ghostStyle, padding: "4px 10px", fontSize: 12 } }, "Save"),
+                      React.createElement("button", { onClick: () => setRenamingArea(null), style: { ...ghostStyle, padding: "4px 10px", fontSize: 12, background: "none", border: "none" } }, "Cancel")
+                    )
+                  )
+                )),
+                React.createElement("div", {
+                  style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 13.5, padding: "6px 0 0", marginTop: 4, borderTop: `1px solid ${INDIGO_HAIRLINE}`, fontWeight: 700, color: INDIGO }
+                },
+                  React.createElement("span", { style: { width: 150, flexShrink: 0 } }, "Total"),
+                  React.createElement("span", { style: { width: 100, flexShrink: 0 } }, `£${Math.round(areaConcentrationData.areaBreakdown.reduce((s, a) => s + a.totalGBP, 0)).toLocaleString()}`),
+                  React.createElement("span", { style: { width: 50, flexShrink: 0 } }, areaConcentrationData.areaBreakdown.reduce((s, a) => s + a.deals, 0)),
+                  // The genuine share of this client's revenue actually
+                  // accounted for by a tagged area — not hardcoded to
+                  // 100%, since untagged or unmapped placements are real
+                  // and deliberately excluded from the rows above, so
+                  // the true total here can honestly be less than 100%.
+                  React.createElement("span", { style: { width: 50, flexShrink: 0 } }, `${areaConcentrationData.areaBreakdown.reduce((s, a) => s + a.percentage, 0).toFixed(0)}%`)
                 )
               )
         )
