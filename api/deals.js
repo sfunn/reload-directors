@@ -484,7 +484,14 @@ module.exports = async (req, res) => {
     const employerVariantMap = (await kv.get(PREVIOUS_EMPLOYER_VARIANT_MAP_KEY)) || {};
 
     if (groupBy === "candidate") {
-      const candidates = [];
+      // A placement can genuinely have more than one fee record tied to
+      // it — a split invoice, an initial fee plus a later adjustment,
+      // and so on. We only ever want one row per real person here, and
+      // if one of the duplicates has the "from" note and another
+      // doesn't, we keep the one that actually has it rather than
+      // risk losing that information to whichever happened to come
+      // first or last in Atlas's own records.
+      const byPlacementId = {};
       for (const r of records) {
         const dealYear = effectiveYear(r, placements);
         if (!allTime && dealYear !== year) continue;
@@ -492,6 +499,18 @@ module.exports = async (req, res) => {
         if (!(placement && placement.candidateName)) continue;
         const clientCompanyName = placement.clientCompanyName || r.projectClientName || null;
         if (client && clientCompanyName !== client) continue;
+        const existing = byPlacementId[r.placementId];
+        if (!existing) { byPlacementId[r.placementId] = r; continue; }
+        const existingHasEmployer = !!parseNotesIntoParts(existing.notes).employerText;
+        const candidateHasEmployer = !!parseNotesIntoParts(r.notes).employerText;
+        if (!existingHasEmployer && candidateHasEmployer) byPlacementId[r.placementId] = r;
+      }
+
+      const candidates = [];
+      for (const placementId of Object.keys(byPlacementId)) {
+        const r = byPlacementId[placementId];
+        const placement = placements[placementId];
+        const clientCompanyName = placement.clientCompanyName || r.projectClientName || null;
         const { areaText, employerText } = parseNotesIntoParts(r.notes);
         const resolvedArea = resolveAreaForDeal(areaText, clientCompanyName ? clientAreasForResolve[clientCompanyName] : null, clientCompanyName ? areaVariantMap[clientCompanyName] : null);
         const resolvedEmployer = resolvePreviousEmployerForDeal(employerText, previousEmployersList, employerVariantMap);
