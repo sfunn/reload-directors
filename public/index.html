@@ -342,6 +342,7 @@ function DealsPage({ token }) {
   // is, and its own year/All Time toggle.
   const [explorerGroupBy, setExplorerGroupBy] = useState("employer");
   const [explorerClient, setExplorerClient] = useState(() => localStorage.getItem("explorerClient") || "");
+  const [explorerYear, setExplorerYear] = useState(() => new Date().getUTCFullYear());
   const [explorerAllTime, setExplorerAllTime] = useState(false);
   const [explorerData, setExplorerData] = useState(null);
   const [explorerLoading, setExplorerLoading] = useState(false);
@@ -353,7 +354,7 @@ function DealsPage({ token }) {
     setExplorerLoading(true);
     setExplorerError("");
     try {
-      const yearParam = explorerAllTime ? "all" : year;
+      const yearParam = explorerAllTime ? "all" : explorerYear;
       const clientParam = explorerClient ? `&client=${encodeURIComponent(explorerClient)}` : "";
       const res = await fetch(`/api/deals?action=origin-explorer&groupBy=${explorerGroupBy}&year=${yearParam}${clientParam}`, { headers: { Authorization: `Bearer ${token}` } });
       const body = await res.json();
@@ -365,7 +366,7 @@ function DealsPage({ token }) {
     } finally {
       if (requestId === explorerRequestId.current) setExplorerLoading(false);
     }
-  }, [token, year, explorerGroupBy, explorerClient, explorerAllTime]);
+  }, [token, explorerGroupBy, explorerClient, explorerYear, explorerAllTime]);
 
   useEffect(() => { loadExplorer(); }, [loadExplorer]);
   useEffect(() => { localStorage.setItem("explorerClient", explorerClient || ""); }, [explorerClient]);
@@ -884,11 +885,11 @@ function DealsPage({ token }) {
             style: { ...chipStyle, background: explorerClient === c ? INDIGO : "rgba(46,64,91,0.06)", color: explorerClient === c ? WHITE : INDIGO, fontWeight: explorerClient === c ? 700 : 500 }
           }, c))
         ),
-        React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 10 } },
-          React.createElement("button", {
-            onClick: () => setExplorerAllTime(false),
-            style: { ...chipStyle, padding: "6px 12px", fontSize: 12, background: !explorerAllTime ? INDIGO : "rgba(46,64,91,0.06)", color: !explorerAllTime ? WHITE : INDIGO, fontWeight: !explorerAllTime ? 700 : 500 }
-          }, String(year)),
+        React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" } },
+          YEAR_OPTIONS.map((y) => React.createElement("button", {
+            key: y, onClick: () => { setExplorerAllTime(false); setExplorerYear(y); },
+            style: { ...chipStyle, padding: "6px 12px", fontSize: 12, background: (!explorerAllTime && explorerYear === y) ? INDIGO : "rgba(46,64,91,0.06)", color: (!explorerAllTime && explorerYear === y) ? WHITE : INDIGO, fontWeight: (!explorerAllTime && explorerYear === y) ? 700 : 500 }
+          }, String(y))),
           React.createElement("button", {
             onClick: () => setExplorerAllTime(true),
             style: { ...chipStyle, padding: "6px 12px", fontSize: 12, background: explorerAllTime ? INDIGO : "rgba(46,64,91,0.06)", color: explorerAllTime ? WHITE : INDIGO, fontWeight: explorerAllTime ? 700 : 500 }
@@ -902,7 +903,7 @@ function DealsPage({ token }) {
                 const showClientColumn = !explorerClient;
                 const showAreaColumn = explorerData.candidates.some((c) => c.area);
                 return explorerData.candidates.length === 0
-                  ? React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, `No placements yet ${explorerAllTime ? "at all" : "this year"}.`)
+                  ? React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, `No placements yet ${explorerAllTime ? "at all" : `in ${explorerYear}`}.`)
                   : React.createElement("div", { style: { overflowX: "auto" } },
                       React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
                         React.createElement(SortableHeaderCell, { label: "Candidate", column: "candidateName", width: 130, sortState: explorerSort, onSort: (c) => toggleSort(explorerSort, setExplorerSort, c) }),
@@ -927,7 +928,7 @@ function DealsPage({ token }) {
                   `${explorerData.untaggedCount} placement${explorerData.untaggedCount === 1 ? "" : "s"} ${explorerData.untaggedCount === 1 ? "has" : "have"} no ${explorerGroupBy} noted at all, so ${explorerData.untaggedCount === 1 ? "it isn't" : "they aren't"} reflected below.`
                 ),
                 explorerData.breakdown.length === 0
-                  ? React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, `Nothing tagged yet ${explorerAllTime ? "at all" : "this year"}.`)
+                  ? React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, `Nothing tagged yet ${explorerAllTime ? "at all" : `in ${explorerYear}`}.`)
                   : React.createElement("div", { style: { overflowX: "auto" } },
                       React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
                         React.createElement(SortableHeaderCell, { label: explorerGroupBy === "area" ? "Area" : "Employer", column: "key", width: 170, sortState: explorerSort, onSort: (c) => toggleSort(explorerSort, setExplorerSort, c) }),
