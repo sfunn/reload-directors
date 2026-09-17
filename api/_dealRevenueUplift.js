@@ -38,6 +38,23 @@ function defaultMultiplierFor(clientName, year) {
 
 const OVERRIDES_KEY = "deal-revenue-overrides"; // { "feeId:splitId": { amount, currency, customRate, notes, setAt } } — owned entirely by this site
 
+// A specific Atlas project/role, entirely excluded from every "Deals"-style
+// number on this site — reporting AND commission both, confirmed directly
+// with Scott. The incentive site now writes a `projectName` field onto
+// every new fee record it creates from Atlas, and does the equivalent
+// exclusion on its own side; this is this site's own matching exclusion,
+// since the two codebases don't share logic, only the underlying data.
+// Deliberately forward-looking only — records created before the incentive
+// site started writing this field simply don't have it at all, so nothing
+// already counted anywhere gets retroactively removed. If a historical
+// cleanup is ever wanted, that's a separate, deliberate decision, not
+// something this quietly does on its own.
+const EXCLUDED_PROJECT_NAMES = ["citsec options"];
+function isExcludedProjectRecord(record) {
+  if (!record || !record.projectName) return false;
+  return EXCLUDED_PROJECT_NAMES.includes(record.projectName.toLowerCase());
+}
+
 function overrideKeyFor(record) {
   return `${record.feeId}:${record.splitId}`;
 }
@@ -163,4 +180,4 @@ async function setOverride(feeId, splitId, amount, currency, customRate, notes) 
   return all[key] || null;
 }
 
-module.exports = { CLIENT_UPLIFT_RULES, defaultMultiplierFor, resolveUplift, getOverrides, setOverride, OVERRIDES_KEY, convertToGBP, resolvedRevenueGBP };
+module.exports = { CLIENT_UPLIFT_RULES, defaultMultiplierFor, resolveUplift, getOverrides, setOverride, OVERRIDES_KEY, convertToGBP, resolvedRevenueGBP, isExcludedProjectRecord };
