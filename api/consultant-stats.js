@@ -1,5 +1,5 @@
 const { getDirectorFromRequest, kv } = require("./_directorAuth");
-const { resolvedRevenueGBP, getOverrides } = require("./_dealRevenueUplift");
+const { resolvedRevenueGBP, getOverrides, isExcludedProjectRecord } = require("./_dealRevenueUplift");
 
 const WEEKS_KEY = "reload-league-weeks"; // shared with the incentive site — read only, never written here
 const TEAMS_KEY = "consultant-teams";
@@ -222,6 +222,7 @@ function revenueDateFor(record, placement) {
 }
 
   for (const r of records) {
+    if (isExcludedProjectRecord(r)) continue;
     if (!r.consultantId || !perConsultant[r.consultantId]) continue;
     const placement = r.placementId ? placements[r.placementId] : null;
     const client = (placement && placement.clientCompanyName) || r.projectClientName || null;
