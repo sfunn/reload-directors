@@ -1,5 +1,6 @@
 const { getDirectorFromRequest, kv } = require("./_directorAuth");
 const { ROSTER, EMPLOYMENT_KEY } = require("./roster");
+const { isExcludedProjectRecord } = require("./_dealRevenueUplift");
 
 const RECORDS_KEY = "atlas-fee-records"; // shared with the incentive site — read only
 const PLACEMENTS_KEY = "atlas-placements";
@@ -16,6 +17,7 @@ const PLACEMENTS_KEY = "atlas-placements";
 function firstGenuinePlacementRecordFor(consultantId, records, placements) {
   let best = null;
   for (const r of records) {
+    if (isExcludedProjectRecord(r)) continue;
     if (r.consultantId !== consultantId || !r.feeDate) continue;
     const placement = r.placementId ? placements[r.placementId] : null;
     // A candidateName that's just whitespace or empty isn't a real name —
