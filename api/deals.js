@@ -1,5 +1,5 @@
 const { getDirectorFromRequest, kv } = require("./_directorAuth");
-const { resolveUplift, resolvedRevenueGBP, getOverrides, setOverride } = require("./_dealRevenueUplift");
+const { resolveUplift, resolvedRevenueGBP, getOverrides, setOverride, isExcludedProjectRecord } = require("./_dealRevenueUplift");
 
 const RECORDS_KEY = "atlas-fee-records"; // shared with the incentive site — read only, never written here
 const FX_KEY = "atlas-fx-rates";
@@ -325,6 +325,7 @@ module.exports = async (req, res) => {
     let untaggedCount = 0;
     let unmappedCount = 0;
     for (const r of records) {
+    if (isExcludedProjectRecord(r)) continue;
       const dealYear = effectiveYear(r, placements);
       if (!allTime && dealYear !== year) continue;
       const placement = r.placementId ? placements[r.placementId] : null;
@@ -369,6 +370,7 @@ module.exports = async (req, res) => {
 
     const unmappedTexts = new Set();
     for (const r of records) {
+    if (isExcludedProjectRecord(r)) continue;
       const placement = r.placementId ? placements[r.placementId] : null;
       const clientCompanyName = (placement && placement.clientCompanyName) || r.projectClientName || null;
       if (clientCompanyName !== client) continue;
@@ -444,6 +446,7 @@ module.exports = async (req, res) => {
 
     const unmappedTexts = new Set();
     for (const r of records) {
+    if (isExcludedProjectRecord(r)) continue;
       const placement = r.placementId ? placements[r.placementId] : null;
       if (!(placement && placement.candidateName)) continue;
       const { employerText } = parseNotesIntoParts(r.notes);
@@ -493,6 +496,7 @@ module.exports = async (req, res) => {
       // first or last in Atlas's own records.
       const byPlacementId = {};
       for (const r of records) {
+      if (isExcludedProjectRecord(r)) continue;
         const dealYear = effectiveYear(r, placements);
         if (!allTime && dealYear !== year) continue;
         const placement = r.placementId ? placements[r.placementId] : null;
@@ -533,6 +537,7 @@ module.exports = async (req, res) => {
     let untaggedCount = 0;
     let unmappedCount = 0;
     for (const r of records) {
+    if (isExcludedProjectRecord(r)) continue;
       const dealYear = effectiveYear(r, placements);
       if (!allTime && dealYear !== year) continue;
       const placement = r.placementId ? placements[r.placementId] : null;
@@ -581,7 +586,7 @@ module.exports = async (req, res) => {
   const year = req.query.year ? parseInt(req.query.year, 10) : new Date().getUTCFullYear();
 
   const yearRecords = records
-    .filter((r) => effectiveYear(r, placements) === year)
+    .filter((r) => effectiveYear(r, placements) === year && !isExcludedProjectRecord(r))
     .sort((a, b) => orderDateOf(a, placements).localeCompare(orderDateOf(b, placements)));
 
   const withUSD = await Promise.all(
