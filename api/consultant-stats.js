@@ -61,6 +61,20 @@ function emptyYearTotal() {
   return { calls: 0, callSeconds: 0, cvs: 0, interviews: 0, onsite: 0, offers: 0, placements: 0, placementRevenueGBP: 0, totalRevenueGBP: 0 };
 }
 
+// Verbatim from the incentive site, so the two sites' week-key math can
+// never quietly diverge — this is exactly the kind of thing that goes
+// wrong when reimplemented independently instead of copied exactly.
+function isoWeekKey(dateStr) {
+  const d = new Date(dateStr);
+  const target = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  const dayNum = (target.getUTCDay() + 6) % 7;
+  target.setUTCDate(target.getUTCDate() - dayNum + 3);
+  const firstThursday = new Date(Date.UTC(target.getUTCFullYear(), 0, 4));
+  const week = 1 + Math.round(((target - firstThursday) / 86400000 - 3 + ((firstThursday.getUTCDay() + 6) % 7)) / 7);
+  return `${target.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+}
+const ATLAS_TALLY_PREFIX = "atlas-tally"; // atlas-tally:{isoWeekKey} — shared with the incentive site, read only, new as of this fix
+
 // An ISO week string like "2026-W35" identifies a week, not a specific
 // date — bucketing it into a calendar month requires picking one real
 // day from within it. This app's established convention, used for
@@ -130,9 +144,30 @@ async function computeConsultantStatsForYear(year) {
   // tracking. Deliberately does NOT check the week's "excluded" flag —
   // that flag only affects league ranking for that week, it doesn't mean
   // the consultant's real activity didn't happen.
+  //
+  // Onsite and offers specifically need one more check first: a week
+  // created automatically the instant it rolled over (`autoFinalized:
+  // true`) can have those two fields silently frozen at whatever they
+  // were the moment it finalized, never catching up with real activity
+  // afterward. A week a director actually created or edited by hand in
+  // Matchday Setup carries no such risk — that's a genuine, deliberate
+  // correction, and gets trusted directly, exactly as before. CVs and
+  // interviews aren't affected by this and are read the same way
+  // regardless, matching the incentive site's own fix exactly.
+  const liveTallyByWeekKey = {};
+  async function liveTallyFor(week) {
+    if (!week.date) return null;
+    const key = isoWeekKey(week.date);
+    if (!(key in liveTallyByWeekKey)) {
+      liveTallyByWeekKey[key] = (await kv.get(`${ATLAS_TALLY_PREFIX}:${key}`)) || {};
+    }
+    return liveTallyByWeekKey[key];
+  }
+
   for (const week of weeks) {
     if (!week.date || !week.date.startsWith(String(year))) continue;
     const monthKey = week.date.slice(0, 7); // YYYY-MM
+    const liveTally = week.autoFinalized ? await liveTallyFor(week) : null;
 
     for (const [consultantId, row] of Object.entries(week.rows || {})) {
       if (!perConsultant[consultantId]) continue;
@@ -140,8 +175,8 @@ async function computeConsultantStatsForYear(year) {
       const m = perConsultant[consultantId].monthly[monthKey];
       const cvs = Number(row.cvs) || 0;
       const interviews = Number(row.interviews) || 0;
-      const onsite = Number(row.onsite) || 0;
-      const offers = Number(row.offers) || 0;
+      const onsite = liveTally ? (Number((liveTally[consultantId] || {}).onsite) || 0) : (Number(row.onsite) || 0);
+      const offers = liveTally ? (Number((liveTally[consultantId] || {}).offers) || 0) : (Number(row.offers) || 0);
       m.cvs += cvs; m.interviews += interviews; m.onsite += onsite; m.offers += offers;
       const yt = perConsultant[consultantId].yearTotal;
       yt.cvs += cvs; yt.interviews += interviews; yt.onsite += onsite; yt.offers += offers;
@@ -155,8 +190,8 @@ async function computeConsultantStatsForYear(year) {
       const m = perConsultant[consultantId].monthly[monthKey];
       const cvs = Number(row.cvs) || 0;
       const interviews = Number(row.interviews) || 0;
-      const onsite = Number(row.onsite) || 0;
-      const offers = Number(row.offers) || 0;
+      const onsite = liveTally ? (Number((liveTally[consultantId] || {}).onsite) || 0) : (Number(row.onsite) || 0);
+      const offers = liveTally ? (Number((liveTally[consultantId] || {}).offers) || 0) : (Number(row.offers) || 0);
       m.cvs += cvs; m.interviews += interviews; m.onsite += onsite; m.offers += offers;
       const yt = perConsultant[consultantId].yearTotal;
       yt.cvs += cvs; yt.interviews += interviews; yt.onsite += onsite; yt.offers += offers;
