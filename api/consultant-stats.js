@@ -198,6 +198,36 @@ async function computeConsultantStatsForYear(year) {
     }
   }
 
+  // The current, still-open week has no row in reload-league-weeks at
+  // all yet — autoFinalizePastWeeks() only ever creates a row for the
+  // week that just ended, never the one still running. That's not the
+  // same situation as an existing row flagged autoFinalized: true; it's
+  // a third case, no row to check the flag on in the first place. Read
+  // live tally directly for it, covering cvs/interviews too this time,
+  // since there's no row here to fall back to for those either.
+  const nowIsoWeekKey = isoWeekKey(new Date().toISOString());
+  const alreadyHasRowForCurrentWeek = weeks.some((w) => w.date && isoWeekKey(w.date) === nowIsoWeekKey);
+  if (!alreadyHasRowForCurrentWeek) {
+    const currentWeekSunday = isoWeekToSunday(nowIsoWeekKey);
+    if (currentWeekSunday && currentWeekSunday.getUTCFullYear() === year) {
+      const monthKey = monthKeyFromDate(currentWeekSunday);
+      const liveTally = (await kv.get(`${ATLAS_TALLY_PREFIX}:${nowIsoWeekKey}`)) || {};
+      for (const consultantId of Object.keys(perConsultant)) {
+        const live = liveTally[consultantId];
+        if (!live) continue; // genuinely no live activity yet this week — leave at zero, not an error
+        if (!perConsultant[consultantId].monthly[monthKey]) perConsultant[consultantId].monthly[monthKey] = emptyMonthEntry(monthKey);
+        const m = perConsultant[consultantId].monthly[monthKey];
+        const cvs = Number(live.cvsOut) || 0;
+        const interviews = Number(live.interviews) || 0;
+        const onsite = Number(live.onsite) || 0;
+        const offers = Number(live.offers) || 0;
+        m.cvs += cvs; m.interviews += interviews; m.onsite += onsite; m.offers += offers;
+        const yt = perConsultant[consultantId].yearTotal;
+        yt.cvs += cvs; yt.interviews += interviews; yt.onsite += onsite; yt.offers += offers;
+      }
+    }
+  }
+
   // Ringover call tracking — each ISO week is bucketed by its Sunday,
   // same convention as everything else in this app for deciding which
   // calendar month a week belongs to.
