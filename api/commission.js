@@ -1,4 +1,5 @@
 const { getDirectorFromRequest, kv } = require("./_directorAuth");
+const { isExcludedProjectRecord } = require("./_dealRevenueUplift");
 
 // ============================================================================
 // Everything below is a direct, deliberate port of the incentive site's own
@@ -219,7 +220,7 @@ function computeCommissionForYear(consultantId, year, allRecords, allRates, plac
 
   if (COORDINATOR_IDS.has(consultantId)) {
     const flatRate = carryForwardValue(personSettings.flatRateByYear, year) || DEFAULT_FLAT_RATE;
-    const yearRecords = allRecords.filter((r) => effectiveYear(r, placements) === year && r.coordinatorId === consultantId);
+    const yearRecords = allRecords.filter((r) => effectiveYear(r, placements) === year && r.coordinatorId === consultantId && !isExcludedProjectRecord(r));
     const withOrderDate = yearRecords.map((r) => {
       const placement = r.placementId ? placements[r.placementId] : null;
       const orderDate = (placement && placement.startDate) || r.feeDate;
@@ -254,7 +255,7 @@ function computeCommissionForYear(consultantId, year, allRecords, allRates, plac
   const bands = carryForwardValue(personSettings.bandsByYear, year) || STANDARD_BANDS;
   const target = (personSettings.targets && personSettings.targets[year]) || null;
 
-  const yearRecords = allRecords.filter((r) => effectiveYear(r, placements) === year && r.consultantId === consultantId);
+  const yearRecords = allRecords.filter((r) => effectiveYear(r, placements) === year && r.consultantId === consultantId && !isExcludedProjectRecord(r));
   const withOrderDate = yearRecords.map((r) => {
     const placement = r.placementId ? placements[r.placementId] : null;
     const orderDate = (placement && placement.startDate) || r.feeDate;
