@@ -1,5 +1,5 @@
 const { getDirectorFromRequest, kv } = require("./_directorAuth");
-const { resolvedRevenueGBP, getOverrides } = require("./_dealRevenueUplift");
+const { resolvedRevenueGBP, getOverrides, isExcludedProjectRecord } = require("./_dealRevenueUplift");
 const { ROSTER, EMPLOYMENT_KEY } = require("./roster");
 const { computeCommissionForYear } = require("./commission");
 const { computeConsultantStatsForYear } = require("./consultant-stats");
@@ -101,7 +101,7 @@ module.exports = async (req, res) => {
   // Every real deal, enriched with the correctly-resolved figures other
   // pages already show — never raw currency amounts Claude would have
   // to convert or uplift itself.
-  const deals = records.map((r) => {
+  const deals = records.filter((r) => !isExcludedProjectRecord(r)).map((r) => {
     const placement = r.placementId ? placements[r.placementId] : null;
     const hasPlacementName = !!(placement && placement.candidateName);
     const clientCompanyName = (placement && placement.clientCompanyName) || r.projectClientName || null;
