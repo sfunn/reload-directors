@@ -1,5 +1,5 @@
 const { getDirectorFromRequest, kv } = require("./_directorAuth");
-const { resolveUplift, resolvedRevenueGBP, getOverrides } = require("./_dealRevenueUplift");
+const { resolveUplift, resolvedRevenueGBP, getOverrides, isExcludedProjectRecord } = require("./_dealRevenueUplift");
 const { EMPLOYMENT_KEY } = require("./roster");
 const { buildTimeline, countAsOf } = require("./headcount");
 
@@ -105,7 +105,7 @@ module.exports = async (req, res) => {
       getOverrides(),
     ]);
 
-    const yearRecords = records.filter((r) => effectiveYear(r, placements) === year);
+    const yearRecords = records.filter((r) => effectiveYear(r, placements) === year && !isExcludedProjectRecord(r));
     let totalRevenueGBP = 0;
     let totalRevenueUSD = 0;
     let countedDeals = 0;
@@ -362,6 +362,7 @@ module.exports = async (req, res) => {
     ]);
     const byClient = {};
     for (const r of records) {
+      if (isExcludedProjectRecord(r)) continue;
       const placement = r.placementId ? placements[r.placementId] : null;
       const hasPlacementName = !!(placement && placement.candidateName);
       if (!hasPlacementName) continue; // onsite fees don't count toward "repeat"
