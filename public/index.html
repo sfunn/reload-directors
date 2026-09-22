@@ -3246,25 +3246,37 @@ function AskAQuestionPage({ token }) {
 
   useEffect(() => { loadConversationsList(); }, [loadConversationsList]);
 
+  // Bumped every time the user moves on to something else — starting
+  // fresh, opening a different past conversation, or asking a new
+  // question. A request in flight when that happens is now stale: if
+  // its answer arrives after the user has already moved on, it must be
+  // ignored rather than silently overwriting whatever they're looking
+  // at now, which is exactly what could make a fresh conversation
+  // suddenly look like it reverted to an old one.
+  const sessionIdRef = useRef(0);
+
   // Opens one specific past thread, loading its full message history and
   // making it the active one any follow-up question continues.
   async function openConversation(conversationId) {
+    const thisSessionId = ++sessionIdRef.current;
     setSwitchingConversation(true); setError("");
     try {
       const res = await fetch(`/api/ask?conversationId=${encodeURIComponent(conversationId)}`, { headers: { Authorization: `Bearer ${token}` } });
       const body = await res.json();
+      if (thisSessionId !== sessionIdRef.current) return; // the user has already moved on again since this was requested
       if (!res.ok) { setError(body.error || "Couldn't open that conversation."); return; }
       setMessages(body.conversation.messages || []);
       setActiveConversationId(conversationId);
     } catch (e) {
-      setError("Couldn't reach the server.");
+      if (thisSessionId === sessionIdRef.current) setError("Couldn't reach the server.");
     } finally {
-      setSwitchingConversation(false);
+      if (thisSessionId === sessionIdRef.current) setSwitchingConversation(false);
     }
   }
 
   async function submitQuestion() {
     if (!question.trim() || loading) return;
+    const thisSessionId = ++sessionIdRef.current;
     setError(""); setLoading(true);
     const thisQuestion = question.trim();
     const priorHistory = messages; // everything said so far in this thread, before this new question
@@ -3277,21 +3289,25 @@ function AskAQuestionPage({ token }) {
         body: JSON.stringify({ question: thisQuestion, history: priorHistory, conversationId: activeConversationId }),
       });
       const body = await res.json();
+      if (thisSessionId !== sessionIdRef.current) { loadConversationsList(); return; } // the user moved on before this came back — the answer is still saved, just don't pull them back to it
       if (!res.ok) { setError(body.error || "Something went wrong."); return; }
       setMessages([...priorHistory, { role: "user", content: thisQuestion }, { role: "assistant", content: body.answer }]);
       setActiveConversationId(body.conversationId); // set on the very first question of a brand new thread, unchanged on a follow-up
       loadConversationsList(); // refresh the list — a new thread appears, an existing one's title/position updates
     } catch (e) {
-      setError("Couldn't reach the server.");
+      if (thisSessionId === sessionIdRef.current) setError("Couldn't reach the server.");
     } finally {
-      setLoading(false);
+      setLoading(false); // always reset this, regardless of session — otherwise a stale request could leave the user unable to ask anything at all
     }
   }
 
   // Starting fresh never deletes anything — it just clears the screen
   // for a genuinely new thread, which only gets saved once a question
-  // is actually asked in it.
+  // is actually asked in it. Also invalidates any request still in
+  // flight from before, so its answer can't silently pull the screen
+  // back once it arrives.
   function startNewConversation() {
+    sessionIdRef.current++;
     setMessages([]); setQuestion(""); setError(""); setActiveConversationId(null);
   }
 
