@@ -1,7 +1,6 @@
 const { getDirectorFromRequest, kv } = require("./_directorAuth");
 const { resolvedRevenueGBP, getOverrides, isExcludedProjectRecord } = require("./_dealRevenueUplift");
 
-const WEEKS_KEY = "reload-league-weeks"; // shared with the incentive site — read only, never written here
 const TEAMS_KEY = "consultant-teams";
 const RECORDS_KEY = "atlas-fee-records";
 const PLACEMENTS_KEY = "atlas-placements";
@@ -13,9 +12,22 @@ const FX_KEY = "atlas-fx-rates";
 // filtering happens on this end.
 const RINGOVER_KEY = "ringover-tally"; // { [isoWeek]: { [consultantId]: { calls, seconds, ... } } }
 // Entirely separate from the raw tracked data — a manual correction never
-// touches reload-league-weeks or ringover-tally, it lives in its own key
-// and is checked afterward, computed value never mutated.
+// touches ringover-tally, it lives in its own key and is checked
+// afterward, computed value never mutated.
 const OVERRIDES_KEY = "kpi-overrides"; // { [personId]: { [monthKey]: { [field]: value } } }
+
+// CVs, interviews, onsite, offers are read live from the incentive
+// site's own KPI computation now, one real HTTP call per month, rather
+// than merged from reload-league-weeks/atlas-tally on this side. That
+// data came from a webhook known to miss a real share of events, exactly
+// why this changed — the incentive site is now the single place this
+// gets computed, this site just displays it. Confirmed directly with
+// them: no authentication needed, it's a public endpoint.
+const INCENTIVE_LEAGUE_BASE = "https://reload-incentive-league.vercel.app";
+// Atlas itself has only been in use since roughly here — years before
+// this genuinely have no data to fetch, so skipping them isn't an
+// arbitrary shortcut, there's nothing there to find.
+const EARLIEST_LIVE_KPI_YEAR = 2024;
 
 // Exact logic the incentive site itself uses to decide which number is
 // real — a stored override wins if one exists for that person/month/field,
@@ -61,26 +73,43 @@ function emptyYearTotal() {
   return { calls: 0, callSeconds: 0, cvs: 0, interviews: 0, onsite: 0, offers: 0, placements: 0, placementRevenueGBP: 0, totalRevenueGBP: 0 };
 }
 
-// Verbatim from the incentive site, so the two sites' week-key math can
-// never quietly diverge — this is exactly the kind of thing that goes
-// wrong when reimplemented independently instead of copied exactly.
-function isoWeekKey(dateStr) {
-  const d = new Date(dateStr);
-  const target = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
-  const dayNum = (target.getUTCDay() + 6) % 7;
-  target.setUTCDate(target.getUTCDate() - dayNum + 3);
-  const firstThursday = new Date(Date.UTC(target.getUTCFullYear(), 0, 4));
-  const week = 1 + Math.round(((target - firstThursday) / 86400000 - 3 + ((firstThursday.getUTCDay() + 6) % 7)) / 7);
-  return `${target.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+// One month's live KPI numbers from the incentive site's own endpoint —
+// sequential by design, never called in parallel with itself or across
+// months. Confirmed directly with them: their own KPI page fetches the
+// same way internally, because Atlas's own rate limit is shared across
+// every caller at once, not per-caller, so firing several months (or
+// years) simultaneously draws from the same shared ceiling their own
+// background jobs depend on.
+//
+// A 502 means "this month is genuinely unknown right now," never
+// "zero" — their own endpoint's internal retry is short and fails fast
+// on purpose, so one retry here, with a short pause, matches that same
+// philosophy rather than trying to ride out a real rate-limit
+// exhaustion ourselves.
+async function fetchLiveMonthlyKPI(year, month) {
+  const monthKey = `${year}-${String(month).padStart(2, "0")}`;
+  const url = `${INCENTIVE_LEAGUE_BASE}/api/league?action=kpi-live-monthly&year=${year}&month=${month}`;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) {
+        const body = await res.json();
+        return (body.monthly && body.monthly[monthKey]) || {};
+      }
+    } catch (e) {
+      // Network-level failure — treated the same as a non-OK response below, not a crash.
+    }
+    if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+  return null; // genuinely unavailable after one retry — the caller must treat this as unknown, never as zero
 }
-const ATLAS_TALLY_PREFIX = "atlas-tally"; // atlas-tally:{isoWeekKey} — shared with the incentive site, read only, new as of this fix
 
 // An ISO week string like "2026-W35" identifies a week, not a specific
 // date — bucketing it into a calendar month requires picking one real
-// day from within it. This app's established convention, used for
-// reload-league-weeks already, is that a week belongs to whichever month
-// its SUNDAY falls in, not its Monday. ISO weeks run Monday to Sunday,
-// so the Sunday is the week's last day, not its first.
+// day from within it. This app's established convention, still used
+// below for Ringover's own weekly data, is that a week belongs to
+// whichever month its SUNDAY falls in, not its Monday. ISO weeks run
+// Monday to Sunday, so the Sunday is the week's last day, not its first.
 //
 // Standard ISO 8601 rule: January 4th always falls in week 1. Find that
 // week's Monday, add (week-1) full weeks to reach the target week's
@@ -109,9 +138,8 @@ function monthKeyFromDate(d) {
 // need the same real activity and revenue data — Ask a Question, for
 // one — without duplicating this logic a second time, which is exactly
 // how earlier bugs in this codebase have happened before.
-async function computeConsultantStatsForYear(year) {
-  const [weeks, teamOverrides, records, placements, ringover, kpiOverrides, fxRates, revenueUpliftOverrides] = await Promise.all([
-    kv.get(WEEKS_KEY).then((v) => v || []),
+async function computeConsultantStatsForYear(year, { skipLiveKpi = false } = {}) {
+  const [teamOverrides, records, placements, ringover, kpiOverrides, fxRates, revenueUpliftOverrides] = await Promise.all([
     kv.get(TEAMS_KEY).then((v) => v || {}),
     kv.get(RECORDS_KEY).then((v) => v || []),
     kv.get(PLACEMENTS_KEY).then((v) => v || {}),
@@ -140,83 +168,31 @@ async function computeConsultantStatsForYear(year) {
     perConsultant[cid] = { consultantId: cid, consultantName: TEAM_LEAD_NAMES[cid], isTeamLead: true, monthly: {}, yearTotal: emptyYearTotal() };
   }
 
-  // CVs, interviews, onsite, offers — from the incentive site's weekly
-  // tracking. Deliberately does NOT check the week's "excluded" flag —
-  // that flag only affects league ranking for that week, it doesn't mean
-  // the consultant's real activity didn't happen.
-  //
-  // Onsite and offers specifically need one more check first: a week
-  // created automatically the instant it rolled over (`autoFinalized:
-  // true`) can have those two fields silently frozen at whatever they
-  // were the moment it finalized, never catching up with real activity
-  // afterward. A week a director actually created or edited by hand in
-  // Matchday Setup carries no such risk — that's a genuine, deliberate
-  // correction, and gets trusted directly, exactly as before. CVs and
-  // interviews aren't affected by this and are read the same way
-  // regardless, matching the incentive site's own fix exactly.
-  const liveTallyByWeekKey = {};
-  async function liveTallyFor(week) {
-    if (!week.date) return null;
-    const key = isoWeekKey(week.date);
-    if (!(key in liveTallyByWeekKey)) {
-      liveTallyByWeekKey[key] = (await kv.get(`${ATLAS_TALLY_PREFIX}:${key}`)) || {};
-    }
-    return liveTallyByWeekKey[key];
-  }
-
-  for (const week of weeks) {
-    if (!week.date || !week.date.startsWith(String(year))) continue;
-    const monthKey = week.date.slice(0, 7); // YYYY-MM
-    const liveTally = week.autoFinalized ? await liveTallyFor(week) : null;
-
-    for (const [consultantId, row] of Object.entries(week.rows || {})) {
-      if (!perConsultant[consultantId]) continue;
-      if (!perConsultant[consultantId].monthly[monthKey]) perConsultant[consultantId].monthly[monthKey] = emptyMonthEntry(monthKey);
-      const m = perConsultant[consultantId].monthly[monthKey];
-      const cvs = Number(row.cvs) || 0;
-      const interviews = Number(row.interviews) || 0;
-      const onsite = liveTally ? (Number((liveTally[consultantId] || {}).onsite) || 0) : (Number(row.onsite) || 0);
-      const offers = liveTally ? (Number((liveTally[consultantId] || {}).offers) || 0) : (Number(row.offers) || 0);
-      m.cvs += cvs; m.interviews += interviews; m.onsite += onsite; m.offers += offers;
-      const yt = perConsultant[consultantId].yearTotal;
-      yt.cvs += cvs; yt.interviews += interviews; yt.onsite += onsite; yt.offers += offers;
-    }
-
-    // Separate pass over leadRows — deliberately its own loop, reading a
-    // field that only ever contains James's and Josh's own numbers.
-    for (const [consultantId, row] of Object.entries(week.leadRows || {})) {
-      if (!perConsultant[consultantId]) continue;
-      if (!perConsultant[consultantId].monthly[monthKey]) perConsultant[consultantId].monthly[monthKey] = emptyMonthEntry(monthKey);
-      const m = perConsultant[consultantId].monthly[monthKey];
-      const cvs = Number(row.cvs) || 0;
-      const interviews = Number(row.interviews) || 0;
-      const onsite = liveTally ? (Number((liveTally[consultantId] || {}).onsite) || 0) : (Number(row.onsite) || 0);
-      const offers = liveTally ? (Number((liveTally[consultantId] || {}).offers) || 0) : (Number(row.offers) || 0);
-      m.cvs += cvs; m.interviews += interviews; m.onsite += onsite; m.offers += offers;
-      const yt = perConsultant[consultantId].yearTotal;
-      yt.cvs += cvs; yt.interviews += interviews; yt.onsite += onsite; yt.offers += offers;
-    }
-  }
-
-  // The current, still-open week has no row in reload-league-weeks at
-  // all yet — autoFinalizePastWeeks() only ever creates a row for the
-  // week that just ended, never the one still running. That's not the
-  // same situation as an existing row flagged autoFinalized: true; it's
-  // a third case, no row to check the flag on in the first place. Read
-  // live tally directly for it, covering cvs/interviews too this time,
-  // since there's no row here to fall back to for those either.
-  const nowIsoWeekKey = isoWeekKey(new Date().toISOString());
-  const alreadyHasRowForCurrentWeek = weeks.some((w) => w.date && isoWeekKey(w.date) === nowIsoWeekKey);
-  if (!alreadyHasRowForCurrentWeek) {
-    const currentWeekSunday = isoWeekToSunday(nowIsoWeekKey);
-    if (currentWeekSunday && currentWeekSunday.getUTCFullYear() === year) {
-      const monthKey = monthKeyFromDate(currentWeekSunday);
-      const liveTally = (await kv.get(`${ATLAS_TALLY_PREFIX}:${nowIsoWeekKey}`)) || {};
+  // CVs, interviews, onsite, offers — read live from the incentive
+  // site's own endpoint, one real month at a time, sequential, never in
+  // parallel. Skipped entirely for years before Atlas existed, and never
+  // fetched past the current month, since there's genuinely nothing
+  // there yet to find either way.
+  if (!skipLiveKpi && year >= EARLIEST_LIVE_KPI_YEAR) {
+    const now = new Date();
+    const currentYear = now.getUTCFullYear();
+    const maxMonth = year < currentYear ? 12 : (year === currentYear ? now.getUTCMonth() + 1 : 0);
+    for (let month = 1; month <= maxMonth; month++) {
+      const monthKey = `${year}-${String(month).padStart(2, "0")}`;
+      const liveMonthData = await fetchLiveMonthlyKPI(year, month);
       for (const consultantId of Object.keys(perConsultant)) {
-        const live = liveTally[consultantId];
-        if (!live) continue; // genuinely no live activity yet this week — leave at zero, not an error
         if (!perConsultant[consultantId].monthly[monthKey]) perConsultant[consultantId].monthly[monthKey] = emptyMonthEntry(monthKey);
         const m = perConsultant[consultantId].monthly[monthKey];
+        if (liveMonthData === null) {
+          // Genuinely unavailable after one retry — flagged, never
+          // silently treated as zero activity, the exact mistake this
+          // whole change exists to move away from.
+          m.kpiDataUnavailable = true;
+          continue;
+        }
+        // Their own field name is cvsOut; ours is cvs — mapped
+        // explicitly rather than assumed, since the names don't line up.
+        const live = liveMonthData[consultantId] || {};
         const cvs = Number(live.cvsOut) || 0;
         const interviews = Number(live.interviews) || 0;
         const onsite = Number(live.onsite) || 0;
@@ -359,7 +335,7 @@ function revenueDateFor(record, placement) {
       // Not an override-able KPI field, carried through exactly as
       // computed — dropped entirely if left out of this object here,
       // since everything below is rebuilt fresh from OVERRIDE_FIELDS only.
-      finalMonthly[monthKey] = { month: monthKey, ...resolved, placementRevenueGBP: m.placementRevenueGBP, totalRevenueGBP: m.totalRevenueGBP, overrides: overrideFlags };
+      finalMonthly[monthKey] = { month: monthKey, ...resolved, placementRevenueGBP: m.placementRevenueGBP, totalRevenueGBP: m.totalRevenueGBP, overrides: overrideFlags, kpiDataUnavailable: !!m.kpiDataUnavailable };
     }
     c.monthly = finalMonthly;
     c.yearTotal = OVERRIDE_FIELDS.reduce((acc, field) => {
@@ -395,7 +371,8 @@ module.exports = async (req, res) => {
   if (!director) return res.status(401).json({ error: "Director access required." });
 
   const year = req.query.year ? parseInt(req.query.year, 10) : new Date().getUTCFullYear();
-  const result = await computeConsultantStatsForYear(year);
+  const skipLiveKpi = req.query.skipKpi === "1" || req.query.skipKpi === "true";
+  const result = await computeConsultantStatsForYear(year, { skipLiveKpi });
   return res.status(200).json(result);
 };
 
