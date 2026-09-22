@@ -13,11 +13,13 @@ const MANUAL_METRICS_KEY = "company-manual-metrics";
 const COMMISSION_SETTINGS_KEY = "commission-settings";
 const CACHED_SPEND_KEY = "profitability-cached-spend"; // same cache Profitability's own Cost per Person reads from — never a fresh Xero call from here
 const EARLIEST_YEAR = 2019;
-// The conversation itself only ever lived in the browser's own memory
-// for that one page visit before this — leaving the tab and coming back
-// genuinely lost it, the same way "Check spend" used to before that got
-// fixed the same way this does: saved here, per director, so it
-// survives navigating away and back. { [directorEmail]: [{role, content}] }
+// Multiple separate, resumable conversation threads per director, not
+// just one running conversation that starting fresh would quietly
+// overwrite. Each thread carries its own id, an automatic title from
+// whatever the first question was, and its own timestamps, so a past
+// conversation can be listed, reopened, and continued at any point,
+// while starting a genuinely new one never loses the others.
+// { [directorEmail]: [{ id, title, createdAt, updatedAt, messages: [{role, content}] }] }
 const CONVERSATIONS_KEY = "ask-conversations";
 
 // A genuinely different kind of feature from everything else on this
@@ -42,20 +44,34 @@ module.exports = async (req, res) => {
   const director = await getDirectorFromRequest(req);
   if (!director) return res.status(401).json({ error: "Director access required." });
 
-  // The saved conversation, loaded once when the page opens — cheap,
-  // no Xero or Claude call involved, just reading back whatever this
-  // director last had going.
+  // With no conversationId, this is the list — summaries only (id,
+  // title, timestamps, message count), never the full message content,
+  // so this stays cheap to load even once there's real history built
+  // up. With a conversationId, this returns that one thread's complete
+  // messages, ready to continue exactly where it left off.
   if (req.method === "GET") {
     const allConversations = (await kv.get(CONVERSATIONS_KEY)) || {};
-    return res.status(200).json({ messages: allConversations[director.email] || [] });
+    const directorConversations = allConversations[director.email] || [];
+    const conversationId = req.query.conversationId;
+    if (conversationId) {
+      const found = directorConversations.find((c) => c.id === conversationId);
+      if (!found) return res.status(404).json({ error: "That conversation doesn't exist, or was deleted." });
+      return res.status(200).json({ conversation: found });
+    }
+    const summaries = directorConversations
+      .map((c) => ({ id: c.id, title: c.title, createdAt: c.createdAt, updatedAt: c.updatedAt, messageCount: c.messages.length }))
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    return res.status(200).json({ conversations: summaries });
   }
 
-  // Starting fresh clears the real saved copy too, not just whatever's
-  // showing in the browser right now — otherwise it would quietly come
-  // back the next time this director opened the page.
+  // Deletes exactly one thread by id, never the whole history at once —
+  // the other saved conversations stay untouched.
   if (req.method === "DELETE") {
+    const conversationId = req.query.conversationId || (req.body && req.body.conversationId);
+    if (!conversationId) return res.status(400).json({ error: "A conversationId is required to delete a specific conversation." });
     const allConversations = (await kv.get(CONVERSATIONS_KEY)) || {};
-    delete allConversations[director.email];
+    const directorConversations = allConversations[director.email] || [];
+    allConversations[director.email] = directorConversations.filter((c) => c.id !== conversationId);
     await kv.set(CONVERSATIONS_KEY, allConversations);
     return res.status(200).json({ ok: true });
   }
@@ -68,6 +84,9 @@ module.exports = async (req, res) => {
   if (!question || typeof question !== "string" || !question.trim()) {
     return res.status(400).json({ error: "A question is required." });
   }
+  // Present when continuing an existing thread; absent means this
+  // question starts a genuinely new one.
+  const requestedConversationId = req.body && req.body.conversationId;
 
   // A follow-up question continues the same real conversation, not a
   // fresh one each time — the frontend sends back everything said so
@@ -324,14 +343,31 @@ Today's date is ${new Date().toISOString().slice(0, 10)}.`;
       return res.status(502).json({ error: `Claude didn't return a visible answer that time (stop reason: ${data.stop_reason || "unknown"}). Try a shorter or more specific question, or try again.` });
     }
 
-    // Saved here, per director, so this exact exchange is still there
-    // the next time this page opens, not just for the rest of this one
-    // visit.
+    // Saved into this thread specifically — an existing one continued,
+    // or a brand new one started, never overwriting any other saved
+    // conversation the way a single flat history used to.
     const allConversations = (await kv.get(CONVERSATIONS_KEY)) || {};
-    allConversations[director.email] = [...validHistory, { role: "user", content: question }, { role: "assistant", content: answer }];
+    const directorConversations = allConversations[director.email] || [];
+    const now = new Date().toISOString();
+    const newMessages = [...validHistory, { role: "user", content: question }, { role: "assistant", content: answer }];
+
+    let conversationId = requestedConversationId;
+    const existing = conversationId ? directorConversations.find((c) => c.id === conversationId) : null;
+    if (existing) {
+      existing.messages = newMessages;
+      existing.updatedAt = now;
+    } else {
+      // Either no id was given, or the id given no longer exists (say,
+      // deleted in another tab) — either way, start a genuinely new
+      // thread rather than silently failing.
+      conversationId = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+      const title = question.trim().length > 60 ? `${question.trim().slice(0, 60)}…` : question.trim();
+      directorConversations.push({ id: conversationId, title, createdAt: now, updatedAt: now, messages: newMessages });
+    }
+    allConversations[director.email] = directorConversations;
     await kv.set(CONVERSATIONS_KEY, allConversations);
 
-    return res.status(200).json({ answer, dealCount: deals.length, staffCount: staff.length });
+    return res.status(200).json({ answer, conversationId, dealCount: deals.length, staffCount: staff.length });
   } catch (e) {
     console.error("[ask] request failed:", e);
     return res.status(500).json({ error: "Something went wrong reaching Claude. Check the Vercel logs for details." });
