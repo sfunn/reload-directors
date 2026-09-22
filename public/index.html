@@ -2840,7 +2840,7 @@ function ProfitabilityPage({ token }) {
     setOverallError(""); setOverallLoading(true);
     try {
       const [revResults, headResults, salResults, spendResults, ...commissionResults] = await Promise.all([
-        Promise.all(YEAR_OPTIONS.map((y) => fetch(`/api/consultant-stats?year=${y}`, { headers: { Authorization: `Bearer ${token}` } }))),
+        Promise.all(YEAR_OPTIONS.map((y) => fetch(`/api/consultant-stats?year=${y}&skipKpi=1`, { headers: { Authorization: `Bearer ${token}` } }))),
         Promise.all(YEAR_OPTIONS.map((y) => fetch(`/api/headcount?action=monthly&year=${y}`, { headers: { Authorization: `Bearer ${token}` } }))),
         Promise.all(YEAR_OPTIONS.map((y) => fetch(`/api/roster?action=monthly-salary&year=${y}`, { headers: { Authorization: `Bearer ${token}` } }))),
         Promise.all(YEAR_OPTIONS.map((y) => fetch(`/api/xero-reports?action=cached-spend&year=${y}`, { headers: { Authorization: `Bearer ${token}` } }))),
