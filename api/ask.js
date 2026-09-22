@@ -184,10 +184,32 @@ module.exports = async (req, res) => {
   // hours, month by month, every real year. Uses the exact same
   // computation Consultant Stats itself calls, manual KPI corrections
   // and the Deals Agreed methodology already correctly applied.
+  //
+  // The four funnel ratios below are computed here using the EXACT same
+  // formula Consultant Stats itself displays (numerator / denominator *
+  // 100, null when the denominator is zero, never a made-up 0% or a
+  // divide-by-zero) — added specifically so answering "who has the best
+  // X rate" never requires the model to invent its own ratio definition
+  // on the fly, which risks a different, inconsistent answer from what
+  // the actual page would show for the same question.
+  function funnelPercentage(numerator, denominator) {
+    if (!denominator) return null;
+    return Math.round((numerator / denominator) * 1000) / 10; // one decimal place, matching the page's own rounding
+  }
   const activityByYear = {};
   for (const y of allYears) {
     const result = await computeConsultantStatsForYear(y);
-    if (result.consultants.some((c) => c.monthly.length > 0)) activityByYear[y] = result.consultants;
+    const withRatios = result.consultants.map((c) => ({
+      ...c,
+      monthly: c.monthly.map((m) => ({
+        ...m,
+        cvToInterviewPercent: funnelPercentage(m.interviews, m.cvs),
+        interviewToOnsitePercent: funnelPercentage(m.onsite, m.interviews),
+        onsiteToOfferPercent: funnelPercentage(m.offers, m.onsite),
+        offerToPlacementPercent: funnelPercentage(m.placements, m.offers),
+      })),
+    }));
+    if (withRatios.some((c) => c.monthly.length > 0)) activityByYear[y] = withRatios;
   }
 
   // Supplier-level costs — whichever years have actually been checked
@@ -220,7 +242,7 @@ FINANCIALS below is company-wide, not derived from individual deals — Gross Pr
 
 COMMISSION is what was actually paid out to a consultant or coordinator on their own deals, computed separately for each real year since bands and targets reset annually — never sum figures from different years together as if they were computed under one shared bracket, they weren't.
 
-ACTIVITY is month-by-month CVs sent, interviews, onsite visits, offers, calls, and phone hours per consultant — a different question from revenue or placements above, this is funnel activity, not money.
+ACTIVITY is month-by-month CVs sent, interviews, onsite visits, offers, calls, and phone hours per consultant — a different question from revenue or placements above, this is funnel activity, not money. Each month also carries cvToInterviewPercent, interviewToOnsitePercent, onsiteToOfferPercent, and offerToPlacementPercent — the SAME conversion-rate figures Consultant Stats itself displays, computed the identical way (a null value means the denominator was genuinely zero that month, not a 0% rate — say so plainly rather than treating it as zero). Use these fields directly whenever a question is about a rate, a ratio, or "who's best at converting X to Y" — never compute your own version of these from the raw counts, since a different rounding or edge-case choice would silently disagree with what the actual page shows for the same month. A rate over 100% (more interviews than CVs in the same month, say) is a real, valid figure under this same formula, not an error — it usually just means some of that activity carried over from a previous month's cohort, mention that if it comes up rather than treating the number itself as broken.
 
 SUPPLIER_COSTS is Reload's own overhead spend by supplier (Atlas, LinkedIn, and so on), only for years a director has actually pulled fresh figures from Xero — a year missing from this list was simply never checked, it is NOT the same as that year having zero costs, say so plainly if asked about a year that isn't here.
 
