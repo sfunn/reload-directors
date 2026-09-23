@@ -3323,6 +3323,26 @@ function AskAQuestionPage({ token }) {
   }
 
   return React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 20 } },
+    React.createElement(Panel, null,
+      React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 } },
+        React.createElement(SectionTitle, { title: "Ask a Question" }),
+        (messages.length > 0 || activeConversationId) && React.createElement("button", { onClick: startNewConversation, style: { ...ghostStyle, padding: "7px 12px", fontSize: 12 } }, "Start new conversation")
+      ),
+      React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Ask anything about Reload's real data, deals and revenue, staff and salary, commission, activity, tenure, tracked supplier spend, and company financials. It only knows what's actually tracked here, so it can't answer things this system never captured, role type, seniority, candidate location, technology or skill tags, whether a placed candidate stayed at the client, or what kind of firm a client is. It'll say so plainly rather than guess. A follow-up question continues this same conversation, so feel free to dig deeper into an answer rather than starting fresh each time — and past conversations above are saved, so you can pick one back up later."),
+      switchingConversation && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14, marginBottom: 10 } }, "Loading…"),
+      React.createElement("textarea", {
+        value: question,
+        onChange: (e) => setQuestion(e.target.value),
+        onKeyDown: (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submitQuestion(); },
+        placeholder: messages.length > 0 ? "Ask a follow-up…" : "e.g. How much revenue has Natasha brought in this year? Which client has James placed the most people with?",
+        style: { ...inputStyle, width: "100%", minHeight: 80, fontFamily: "'Work Sans', sans-serif", resize: "vertical", marginBottom: 8 },
+      }),
+      React.createElement("button", {
+        onClick: submitQuestion, disabled: loading || !question.trim(),
+        style: { ...ghostStyle, padding: "9px 16px", opacity: (loading || !question.trim()) ? 0.5 : 1 }
+      }, loading ? "Asking…" : (messages.length > 0 ? "Ask follow-up" : "Ask")),
+      error && React.createElement("div", { style: { ...errorStyle, marginTop: 10 } }, error)
+    ),
     conversationsLoaded && conversations.length > 0 && React.createElement(Panel, null,
       React.createElement(SectionTitle, { title: "Past Conversations" }),
       React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
@@ -3345,26 +3365,6 @@ function AskAQuestionPage({ token }) {
           }, "delete")
         ))
       )
-    ),
-    React.createElement(Panel, null,
-      React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 } },
-        React.createElement(SectionTitle, { title: "Ask a Question" }),
-        (messages.length > 0 || activeConversationId) && React.createElement("button", { onClick: startNewConversation, style: { ...ghostStyle, padding: "7px 12px", fontSize: 12 } }, "Start new conversation")
-      ),
-      React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginBottom: 12 } }, "Ask anything about Reload's real data, deals and revenue, staff and salary, commission, activity, tenure, tracked supplier spend, and company financials. It only knows what's actually tracked here, so it can't answer things this system never captured, role type, seniority, candidate location, technology or skill tags, whether a placed candidate stayed at the client, or what kind of firm a client is. It'll say so plainly rather than guess. A follow-up question continues this same conversation, so feel free to dig deeper into an answer rather than starting fresh each time — and past conversations above are saved, so you can pick one back up later."),
-      switchingConversation && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14, marginBottom: 10 } }, "Loading…"),
-      React.createElement("textarea", {
-        value: question,
-        onChange: (e) => setQuestion(e.target.value),
-        onKeyDown: (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) submitQuestion(); },
-        placeholder: messages.length > 0 ? "Ask a follow-up…" : "e.g. How much revenue has Natasha brought in this year? Which client has James placed the most people with?",
-        style: { ...inputStyle, width: "100%", minHeight: 80, fontFamily: "'Work Sans', sans-serif", resize: "vertical", marginBottom: 8 },
-      }),
-      React.createElement("button", {
-        onClick: submitQuestion, disabled: loading || !question.trim(),
-        style: { ...ghostStyle, padding: "9px 16px", opacity: (loading || !question.trim()) ? 0.5 : 1 }
-      }, loading ? "Asking…" : (messages.length > 0 ? "Ask follow-up" : "Ask")),
-      error && React.createElement("div", { style: { ...errorStyle, marginTop: 10 } }, error)
     ),
     messages.length > 0 && React.createElement(Panel, null,
       messages.map((m, i) => React.createElement("div", { key: i, style: { marginBottom: i < messages.length - 1 ? 20 : 0 } },
