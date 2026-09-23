@@ -22,6 +22,37 @@ const EARLIEST_YEAR = 2019;
 // { [directorEmail]: [{ id, title, createdAt, updatedAt, messages: [{role, content}] }] }
 const CONVERSATIONS_KEY = "ask-conversations";
 
+// Before this feature existed, a director's conversations were stored as
+// one flat array of {role, content} messages directly — no id, no
+// title, nothing to distinguish separate threads. That data is still
+// sitting in production for anyone who used Ask a Question before this
+// shipped, and reading it with the current logic unchanged doesn't just
+// show an empty list, it crashes outright the moment anything tries to
+// read .messages off what's actually a message itself.
+//
+// This migrates that old shape into a single, properly-formed
+// conversation — and critically, persists that migration immediately
+// rather than just normalizing in memory on each read. Without that,
+// the generated id would be different every single request (since it's
+// derived from the current timestamp), meaning a conversation opened
+// from the list could never actually be found again on the very next
+// request. Migrating once and saving it is what keeps the id stable.
+async function getDirectorConversations(directorEmail, allConversations) {
+  const raw = allConversations[directorEmail];
+  if (!Array.isArray(raw) || raw.length === 0) return [];
+  if (raw[0] && typeof raw[0] === "object" && "id" in raw[0] && Array.isArray(raw[0].messages)) {
+    return raw; // already the current shape
+  }
+  const firstQuestion = raw.find((m) => m && m.role === "user" && m.content);
+  const rawTitle = firstQuestion ? firstQuestion.content.trim() : "Previous conversation";
+  const title = rawTitle.length > 60 ? `${rawTitle.slice(0, 60)}…` : rawTitle;
+  const now = new Date().toISOString();
+  const migrated = [{ id: `legacy-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`, title, createdAt: now, updatedAt: now, messages: raw }];
+  allConversations[directorEmail] = migrated;
+  await kv.set(CONVERSATIONS_KEY, allConversations);
+  return migrated;
+}
+
 // A genuinely different kind of feature from everything else on this
 // site — every other page answers one specific, pre-built question.
 // This one takes whatever question a director actually types, gathers
@@ -51,7 +82,7 @@ module.exports = async (req, res) => {
   // messages, ready to continue exactly where it left off.
   if (req.method === "GET") {
     const allConversations = (await kv.get(CONVERSATIONS_KEY)) || {};
-    const directorConversations = allConversations[director.email] || [];
+    const directorConversations = await getDirectorConversations(director.email, allConversations);
     const conversationId = req.query.conversationId;
     if (conversationId) {
       const found = directorConversations.find((c) => c.id === conversationId);
@@ -70,7 +101,7 @@ module.exports = async (req, res) => {
     const conversationId = req.query.conversationId || (req.body && req.body.conversationId);
     if (!conversationId) return res.status(400).json({ error: "A conversationId is required to delete a specific conversation." });
     const allConversations = (await kv.get(CONVERSATIONS_KEY)) || {};
-    const directorConversations = allConversations[director.email] || [];
+    const directorConversations = await getDirectorConversations(director.email, allConversations);
     allConversations[director.email] = directorConversations.filter((c) => c.id !== conversationId);
     await kv.set(CONVERSATIONS_KEY, allConversations);
     return res.status(200).json({ ok: true });
@@ -347,7 +378,7 @@ Today's date is ${new Date().toISOString().slice(0, 10)}.`;
     // or a brand new one started, never overwriting any other saved
     // conversation the way a single flat history used to.
     const allConversations = (await kv.get(CONVERSATIONS_KEY)) || {};
-    const directorConversations = allConversations[director.email] || [];
+    const directorConversations = await getDirectorConversations(director.email, allConversations);
     const now = new Date().toISOString();
     const newMessages = [...validHistory, { role: "user", content: question }, { role: "assistant", content: answer }];
 
