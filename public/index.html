@@ -304,6 +304,17 @@ function DealsPage({ token }) {
   const [areaConcentrationData, setAreaConcentrationData] = useState(null);
   const [areaConcentrationLoading, setAreaConcentrationLoading] = useState(false);
   const [areaConcentrationAllTime, setAreaConcentrationAllTime] = useState(false);
+  // A separate group-by for this panel specifically — "area" is the
+  // original revenue breakdown, "candidate" mirrors the exact same
+  // per-person view already built for "Where Candidates Came From",
+  // reusing that same backend action rather than a second copy of it.
+  const [areaConcentrationGroupBy, setAreaConcentrationGroupBy] = useState("area");
+  // Its own independent year, same pattern as the explorer's own —
+  // decoupled from the page's own year selector entirely.
+  const [areaConcentrationYear, setAreaConcentrationYear] = useState(() => new Date().getUTCFullYear());
+  const [areaConcentrationCandidateData, setAreaConcentrationCandidateData] = useState(null);
+  const [areaConcentrationCandidateLoading, setAreaConcentrationCandidateLoading] = useState(false);
+  const [areaConcentrationCandidateSort, setAreaConcentrationCandidateSort] = useState(null);
   const [unmappedTexts, setUnmappedTexts] = useState([]);
   const [renamingArea, setRenamingArea] = useState(null);
   const [renameText, setRenameText] = useState("");
@@ -469,7 +480,7 @@ function DealsPage({ token }) {
     if (!client) { setAreaConcentrationData(null); setUnmappedTexts([]); return; }
     setAreaConcentrationLoading(true);
     try {
-      const yearParam = areaConcentrationAllTime ? "all" : year;
+      const yearParam = areaConcentrationAllTime ? "all" : areaConcentrationYear;
       const [concRes, unmappedRes] = await Promise.all([
         fetch(`/api/deals?action=area-concentration&client=${encodeURIComponent(client)}&year=${yearParam}`, { headers: { Authorization: `Bearer ${token}` } }),
         fetch(`/api/deals?action=unmapped-notes&client=${encodeURIComponent(client)}`, { headers: { Authorization: `Bearer ${token}` } }),
@@ -479,9 +490,30 @@ function DealsPage({ token }) {
       if (unmappedRes.ok) { const body = await unmappedRes.json(); setUnmappedTexts(body.unmappedTexts || []); }
     } catch (e) { /* non-critical */ }
     finally { if (requestId === areaConcentrationRequestId.current) setAreaConcentrationLoading(false); }
-  }, [token, year, areaConcentrationAllTime]);
+  }, [token, areaConcentrationYear, areaConcentrationAllTime]);
 
   useEffect(() => { loadAreaConcentration(areaConcentrationClient); }, [areaConcentrationClient, loadAreaConcentration]);
+
+  // Candidate mode reuses the exact same backend action "Where
+  // Candidates Came From" already calls — same shape, same real data,
+  // scoped to this panel's own selected client instead of "all clients."
+  const areaConcentrationCandidateRequestId = useRef(0);
+  const loadAreaConcentrationCandidates = useCallback(async (client) => {
+    const requestId = ++areaConcentrationCandidateRequestId.current;
+    if (!client) { setAreaConcentrationCandidateData(null); return; }
+    setAreaConcentrationCandidateLoading(true);
+    try {
+      const yearParam = areaConcentrationAllTime ? "all" : areaConcentrationYear;
+      const res = await fetch(`/api/deals?action=origin-explorer&groupBy=candidate&client=${encodeURIComponent(client)}&year=${yearParam}`, { headers: { Authorization: `Bearer ${token}` } });
+      if (requestId !== areaConcentrationCandidateRequestId.current) return;
+      if (res.ok) setAreaConcentrationCandidateData(await res.json());
+    } catch (e) { /* non-critical */ }
+    finally { if (requestId === areaConcentrationCandidateRequestId.current) setAreaConcentrationCandidateLoading(false); }
+  }, [token, areaConcentrationYear, areaConcentrationAllTime]);
+
+  useEffect(() => {
+    if (areaConcentrationGroupBy === "candidate") loadAreaConcentrationCandidates(areaConcentrationClient);
+  }, [areaConcentrationClient, areaConcentrationGroupBy, loadAreaConcentrationCandidates]);
 
   // Remembered across a refresh — selecting a client here is a genuine,
   // deliberate choice worth keeping, not something to lose the moment
@@ -893,29 +925,36 @@ function DealsPage({ token }) {
       React.createElement(Panel, { style: { flex: 1, minWidth: 320 } },
         React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, marginBottom: 10 } },
           React.createElement(SectionTitle, { title: "Citadel Area Concentration" }),
-          React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
-            // Deliberately just these two — area tracking only ever
-            // applies to Citadel and Citadel Securities, so there's no
-            // reason to surface every other client as an option here.
-            AREA_TRACKED_CLIENTS.map((c) => React.createElement("button", {
-              key: c, onClick: () => setAreaConcentrationClient(c),
-              style: { ...chipStyle, background: areaConcentrationClient === c ? INDIGO : "rgba(46,64,91,0.06)", color: areaConcentrationClient === c ? WHITE : INDIGO, fontWeight: areaConcentrationClient === c ? 700 : 500 }
-            }, c))
+          React.createElement("div", { style: { display: "flex", gap: 6 } },
+            [["area", "By Area"], ["candidate", "By Candidate"]].map(([g, label]) => React.createElement("button", {
+              key: g, onClick: () => setAreaConcentrationGroupBy(g),
+              style: { ...chipStyle, padding: "6px 12px", fontSize: 12, background: areaConcentrationGroupBy === g ? INDIGO : "rgba(46,64,91,0.06)", color: areaConcentrationGroupBy === g ? WHITE : INDIGO, fontWeight: areaConcentrationGroupBy === g ? 700 : 500 }
+            }, label))
           )
         ),
-        areaConcentrationClient && React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 10 } },
-          React.createElement("button", {
-            onClick: () => setAreaConcentrationAllTime(false),
-            style: { ...chipStyle, padding: "6px 12px", fontSize: 12, background: !areaConcentrationAllTime ? INDIGO : "rgba(46,64,91,0.06)", color: !areaConcentrationAllTime ? WHITE : INDIGO, fontWeight: !areaConcentrationAllTime ? 700 : 500 }
-          }, String(year)),
+        React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 } },
+          // Deliberately just these two — area tracking only ever
+          // applies to Citadel and Citadel Securities, so there's no
+          // reason to surface every other client as an option here.
+          AREA_TRACKED_CLIENTS.map((c) => React.createElement("button", {
+            key: c, onClick: () => setAreaConcentrationClient(c),
+            style: { ...chipStyle, background: areaConcentrationClient === c ? INDIGO : "rgba(46,64,91,0.06)", color: areaConcentrationClient === c ? WHITE : INDIGO, fontWeight: areaConcentrationClient === c ? 700 : 500 }
+          }, c))
+        ),
+        areaConcentrationClient && React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 } },
+          YEAR_OPTIONS.map((y) => React.createElement("button", {
+            key: y, onClick: () => { setAreaConcentrationAllTime(false); setAreaConcentrationYear(y); },
+            style: { ...chipStyle, padding: "6px 12px", fontSize: 12, background: (!areaConcentrationAllTime && areaConcentrationYear === y) ? INDIGO : "rgba(46,64,91,0.06)", color: (!areaConcentrationAllTime && areaConcentrationYear === y) ? WHITE : INDIGO, fontWeight: (!areaConcentrationAllTime && areaConcentrationYear === y) ? 700 : 500 }
+          }, String(y))),
           React.createElement("button", {
             onClick: () => setAreaConcentrationAllTime(true),
             style: { ...chipStyle, padding: "6px 12px", fontSize: 12, background: areaConcentrationAllTime ? INDIGO : "rgba(46,64,91,0.06)", color: areaConcentrationAllTime ? WHITE : INDIGO, fontWeight: areaConcentrationAllTime ? 700 : 500 }
           }, "All Time")
         ),
         !areaConcentrationClient && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Pick a client above to see how its own placements split across the areas tracked for it."),
-        areaConcentrationLoading && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Loading…"),
-        areaConcentrationClient && !areaConcentrationLoading && areaConcentrationData && React.createElement(React.Fragment, null,
+        areaConcentrationGroupBy === "area" && areaConcentrationLoading && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Loading…"),
+        areaConcentrationGroupBy === "area" && areaConcentrationClient && !areaConcentrationLoading && areaConcentrationData && React.createElement(React.Fragment, null,
+
           areaConcentrationData.untaggedCount > 0 && React.createElement("div", { style: { fontSize: 11, color: MELON_LINK, marginBottom: 8 } },
             `${areaConcentrationData.untaggedCount} placement${areaConcentrationData.untaggedCount === 1 ? "" : "s"} at ${areaConcentrationClient} ${areaConcentrationData.untaggedCount === 1 ? "hasn't" : "haven't"} been tagged with an area yet, so ${areaConcentrationData.untaggedCount === 1 ? "it isn't" : "they aren't"} reflected below.`
           ),
@@ -987,7 +1026,29 @@ function DealsPage({ token }) {
                   React.createElement("span", { style: { width: 50, flexShrink: 0 } }, `${areaConcentrationData.areaBreakdown.reduce((s, a) => s + a.percentage, 0).toFixed(0)}%`)
                 )
               )
-        )
+        ),
+        areaConcentrationGroupBy === "candidate" && areaConcentrationClient && areaConcentrationCandidateLoading && React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Loading…"),
+        areaConcentrationGroupBy === "candidate" && areaConcentrationClient && !areaConcentrationCandidateLoading && areaConcentrationCandidateData && (() => {
+          const showAreaColumn = areaConcentrationCandidateData.candidates.some((c) => c.area);
+          return areaConcentrationCandidateData.candidates.length === 0
+            ? React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, `No placements yet at ${areaConcentrationClient} ${areaConcentrationAllTime ? "at all" : "this year"}.`)
+            : React.createElement("div", { style: { overflowX: "auto" } },
+                React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 11, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, color: INDIGO_MUTED, textTransform: "uppercase", letterSpacing: "0.05em", padding: "0 0 6px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, marginBottom: 4 } },
+                  React.createElement(SortableHeaderCell, { label: "Candidate", column: "candidateName", width: 130, sortState: areaConcentrationCandidateSort, onSort: (c) => toggleSort(areaConcentrationCandidateSort, setAreaConcentrationCandidateSort, c) }),
+                  showAreaColumn && React.createElement(SortableHeaderCell, { label: "Area", column: "area", width: 100, sortState: areaConcentrationCandidateSort, onSort: (c) => toggleSort(areaConcentrationCandidateSort, setAreaConcentrationCandidateSort, c) }),
+                  React.createElement(SortableHeaderCell, { label: "Previous Employer", column: "previousEmployer", width: 130, sortState: areaConcentrationCandidateSort, onSort: (c) => toggleSort(areaConcentrationCandidateSort, setAreaConcentrationCandidateSort, c) }),
+                  React.createElement(SortableHeaderCell, { label: "Start Date", column: "startDate", width: 90, sortState: areaConcentrationCandidateSort, onSort: (c) => toggleSort(areaConcentrationCandidateSort, setAreaConcentrationCandidateSort, c) })
+                ),
+                sortRows(areaConcentrationCandidateData.candidates, areaConcentrationCandidateSort, { candidateName: (c) => c.candidateName, area: (c) => c.area, previousEmployer: (c) => c.previousEmployer, startDate: (c) => c.startDate }).map((c, i) => React.createElement("div", {
+                  key: i, style: { display: "flex", alignItems: "baseline", gap: 4, fontSize: 13.5, padding: "4px 0", color: INDIGO }
+                },
+                  React.createElement("span", { style: { width: 130, flexShrink: 0 } }, c.candidateName),
+                  showAreaColumn && React.createElement("span", { style: { width: 100, flexShrink: 0, color: c.area ? INDIGO : INDIGO_MUTED } }, c.area || "—"),
+                  React.createElement("span", { style: { width: 130, flexShrink: 0, color: c.previousEmployer ? INDIGO : INDIGO_MUTED } }, c.previousEmployer || "—"),
+                  React.createElement("span", { style: { width: 90, flexShrink: 0, color: INDIGO_MUTED } }, c.startDate ? new Date(c.startDate).toLocaleDateString("en-GB") : "—")
+                ))
+              );
+        })()
       )
     ),
     !loading && data && React.createElement(Panel, null,
