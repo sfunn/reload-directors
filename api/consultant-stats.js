@@ -10,7 +10,13 @@ const FX_KEY = "atlas-fx-rates";
 // source: internal staff-to-staff calls are excluded, and answering-
 // machine calls count the same as real conversations, so no further
 // filtering happens on this end.
-const RINGOVER_KEY = "ringover-tally"; // { [isoWeek]: { [consultantId]: { calls, seconds, ... } } }
+// Ringover's own per-month tally, attributed to each call's true month
+// at the moment it's recorded — never derived from a week's own Sunday,
+// which is exactly what caused a genuine bug: a week straddling a month
+// boundary had its entire total misattributed to one side, the other
+// month missing that data entirely. Shared with the incentive site,
+// read only, never written here.
+const RINGOVER_MONTHLY_KEY = "ringover-monthly-tally"; // { [monthKey]: { [consultantId]: { calls, seconds, inboundCalls, inboundSeconds, outboundCalls, outboundSeconds } } }
 // Entirely separate from the raw tracked data — a manual correction never
 // touches ringover-tally, it lives in its own key and is checked
 // afterward, computed value never mutated.
@@ -139,11 +145,11 @@ function monthKeyFromDate(d) {
 // one — without duplicating this logic a second time, which is exactly
 // how earlier bugs in this codebase have happened before.
 async function computeConsultantStatsForYear(year, { skipLiveKpi = false } = {}) {
-  const [teamOverrides, records, placements, ringover, kpiOverrides, fxRates, revenueUpliftOverrides] = await Promise.all([
+  const [teamOverrides, records, placements, ringoverMonthly, kpiOverrides, fxRates, revenueUpliftOverrides] = await Promise.all([
     kv.get(TEAMS_KEY).then((v) => v || {}),
     kv.get(RECORDS_KEY).then((v) => v || []),
     kv.get(PLACEMENTS_KEY).then((v) => v || {}),
-    kv.get(RINGOVER_KEY).then((v) => v || {}),
+    kv.get(RINGOVER_MONTHLY_KEY).then((v) => v || {}),
     kv.get(OVERRIDES_KEY).then((v) => v || {}),
     kv.get(FX_KEY).then((v) => v || {}),
     getOverrides(),
@@ -204,13 +210,14 @@ async function computeConsultantStatsForYear(year, { skipLiveKpi = false } = {})
     }
   }
 
-  // Ringover call tracking — each ISO week is bucketed by its Sunday,
-  // same convention as everything else in this app for deciding which
-  // calendar month a week belongs to.
-  for (const [isoWeek, byConsultant] of Object.entries(ringover)) {
-    const sunday = isoWeekToSunday(isoWeek);
-    if (!sunday || sunday.getUTCFullYear() !== year) continue;
-    const monthKey = monthKeyFromDate(sunday);
+  // Ringover call tracking — read directly per month now, no week-to-
+  // month derivation at all. That derivation used to be the actual bug:
+  // a week straddling a month boundary got its entire total attributed
+  // to whichever month its Sunday fell in, silently losing the other
+  // month's real share of it. This data is already correctly bucketed
+  // by the time it's stored, so there's nothing left to derive.
+  for (const [monthKey, byConsultant] of Object.entries(ringoverMonthly)) {
+    if (!monthKey.startsWith(String(year))) continue;
     for (const [consultantId, stats] of Object.entries(byConsultant || {})) {
       if (!perConsultant[consultantId]) continue;
       if (!perConsultant[consultantId].monthly[monthKey]) perConsultant[consultantId].monthly[monthKey] = emptyMonthEntry(monthKey);
