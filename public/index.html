@@ -1489,10 +1489,31 @@ function formatDateUK(isoDateStr) {
 function ConsultantStatsPage({ token }) {
   const [year, setYear] = useState(new Date().getUTCFullYear());
   const [month, setMonth] = useState(String(new Date().getUTCMonth() + 1).padStart(2, "0"));
+  // "month" shows the single selected month; "quarter" shows one of
+  // Q1–Q4; "year" shows the whole year. All three ultimately reduce to
+  // the same underlying calculation, just with a different set of month
+  // keys fed into it.
+  const [period, setPeriod] = useState("month");
+  const [quarter, setQuarter] = useState(() => `Q${Math.floor(new Date().getUTCMonth() / 3) + 1}`);
+  // "everyone" shows the full roster; "james"/"josh" scope the table to
+  // just that team's own consultants, though the lead's own row still
+  // shows even when viewing their own team, matching how the incentive
+  // site's own page does this.
+  const [teamFilter, setTeamFilter] = useState("everyone");
   const [selectedConsultant, setSelectedConsultant] = useState("everyone");
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [sort, setSort] = useState(null);
+
+  function toggleSort(currentSort, setSortFn, column) {
+    if (currentSort && currentSort.column === column) {
+      setSortFn({ column, direction: currentSort.direction === "asc" ? "desc" : "asc" });
+    } else {
+      setSortFn({ column, direction: "asc" });
+    }
+  }
+
 
   const load = useCallback(async () => {
     setError(""); setLoading(true);
@@ -1510,61 +1531,90 @@ function ConsultantStatsPage({ token }) {
 
   useEffect(() => { load(); }, [load]);
 
-  // Builds one person's figures for one specific month — deliberately
-  // parameterised by month rather than always reading the currently
-  // selected chip, since the per-person year detail view below needs
-  // this same logic run for all twelve months at once, not just whatever
-  // month happens to be selected.
-  function buildMonthRow(consultantId, consultantName, isTeamLead, monthlyEntries, targetMonthKey) {
-    const entry = monthlyEntries.find((m) => m.month === targetMonthKey);
-    const cvs = entry ? entry.cvs : 0;
-    const interviews = entry ? entry.interviews : 0;
-    const onsite = entry ? entry.onsite : 0;
-    const offers = entry ? entry.offers : 0;
-    const placements = entry ? entry.placements : 0;
-    return {
-      consultantId, consultantName, isTeamLead,
-      calls: entry ? entry.calls : 0,
-      phoneHours: entry ? entry.phoneHours : 0,
-      overrides: entry ? entry.overrides : {},
-      cvs, interviews, onsite, offers, placements,
-      cvToInterview: computePercentage(interviews, cvs),
-      interviewToOnsite: computePercentage(onsite, interviews),
-      onsiteToOffer: computePercentage(offers, onsite),
-      offerToPlacement: computePercentage(placements, offers),
-    };
+  // Every month key that makes up the currently selected period — a
+  // single month, one specific quarter's three months, or the whole
+  // year's twelve. Everything else downstream (the real calculation,
+  // not just the UI) is built from this one list, so "month" is really
+  // just "a period with exactly one month in it," not a separate code
+  // path with its own rules to keep in sync.
+  function periodMonthKeys(targetPeriod, targetMonth, targetQuarter) {
+    if (targetPeriod === "month") return [`${year}-${targetMonth}`];
+    if (targetPeriod === "quarter") {
+      const qNum = parseInt(targetQuarter.slice(1), 10);
+      const startMonth = (qNum - 1) * 3 + 1;
+      return [0, 1, 2].map((i) => `${year}-${String(startMonth + i).padStart(2, "0")}`);
+    }
+    return MONTH_OPTIONS.map((mm) => `${year}-${mm}`);
   }
 
-  // Builds one person's figures for the whole year — raw counts are a
-  // genuine sum, but a year's percentage is the average of each month's
-  // own genuine percentage, never recalculated by pooling every month's
-  // counts into one number first. A month with huge volume would
-  // otherwise silently dominate the year figure instead of counting as
-  // just one month among many.
-  function buildYearRow(consultantId, consultantName, isTeamLead, monthlyEntries) {
-    const yearEntries = monthlyEntries.filter((m) => m.month.startsWith(`${year}-`));
+  // How many of a period's own months have genuinely started as of
+  // right now — never assumed to be the full length of the period
+  // (never "divide by 12" for a year that's only half happened, never
+  // "divide by 3" for a quarter still in progress). A partial period
+  // must never look artificially low just because it hasn't finished.
+  function monthsStartedInPeriod(keys) {
+    const now = new Date();
+    const currentMonthKey = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
+    return keys.filter((k) => k <= currentMonthKey).length;
+  }
+
+  // Builds one person's figures for whatever period is currently
+  // selected — a single month, a quarter, or a whole year all reduce to
+  // this same one function, since all three follow the identical rule,
+  // just with a different set of months fed in.
+  //
+  // CVs, interviews, calls, and phone hours are ALWAYS a genuine average
+  // per month, at every level, never a period total. For a single month
+  // this is just that month's own number (divide by one genuinely-
+  // started month), for a quarter or year it's the sum across however
+  // many of that period's own months have genuinely started so far,
+  // divided by that same count — never divided by 3 or 12 regardless of
+  // how much of the period has actually happened, so a partial period
+  // never looks artificially low.
+  //
+  // Onsite, offers, and placements are different — this person's own
+  // row shows their real period total (a concrete "3 onsites this
+  // quarter"), not a confusing fraction for numbers this small and
+  // infrequent. Percentages are always the average of each month's own
+  // genuine ratio, never recalculated from the period's pooled sums.
+  function buildPeriodRow(consultantId, consultantName, isTeamLead, team, monthlyEntries, keys) {
+    const periodEntries = monthlyEntries.filter((m) => keys.includes(m.month));
+    const startedCount = monthsStartedInPeriod(keys);
+    const divisor = startedCount > 0 ? startedCount : 1;
+    const avgOf = (key) => Math.round((periodEntries.reduce((s, m) => s + (Number(m[key]) || 0), 0) / divisor) * 10) / 10;
     return {
-      consultantId, consultantName, isTeamLead,
-      calls: yearEntries.reduce((s, m) => s + m.calls, 0),
-      phoneHours: Math.round(yearEntries.reduce((s, m) => s + m.phoneHours, 0) * 10) / 10,
-      overrides: {},
-      cvs: yearEntries.reduce((s, m) => s + m.cvs, 0),
-      interviews: yearEntries.reduce((s, m) => s + m.interviews, 0),
-      onsite: yearEntries.reduce((s, m) => s + m.onsite, 0),
-      offers: yearEntries.reduce((s, m) => s + m.offers, 0),
-      placements: yearEntries.reduce((s, m) => s + m.placements, 0),
-      cvToInterview: averageMonthlyPercentage(yearEntries, "interviews", "cvs"),
-      interviewToOnsite: averageMonthlyPercentage(yearEntries, "onsite", "interviews"),
-      onsiteToOffer: averageMonthlyPercentage(yearEntries, "offers", "onsite"),
-      offerToPlacement: averageMonthlyPercentage(yearEntries, "placements", "offers"),
+      consultantId, consultantName, isTeamLead, team,
+      calls: avgOf("calls"),
+      phoneHours: avgOf("phoneHours"),
+      cvs: avgOf("cvs"),
+      interviews: avgOf("interviews"),
+      onsite: periodEntries.reduce((s, m) => s + (Number(m.onsite) || 0), 0),
+      offers: periodEntries.reduce((s, m) => s + (Number(m.offers) || 0), 0),
+      placements: periodEntries.reduce((s, m) => s + (Number(m.placements) || 0), 0),
+      // A single-month period has one genuine override to flag; a
+      // multi-month period has no single "the" override, so there's
+      // nothing honest to show there.
+      overrides: periodEntries.length === 1 ? periodEntries[0].overrides : {},
+      cvToInterview: averageMonthlyPercentage(periodEntries, "interviews", "cvs"),
+      interviewToOnsite: averageMonthlyPercentage(periodEntries, "onsite", "interviews"),
+      onsiteToOffer: averageMonthlyPercentage(periodEntries, "offers", "onsite"),
+      offerToPlacement: averageMonthlyPercentage(periodEntries, "placements", "offers"),
     };
   }
 
   // Averages a set of rows across PEOPLE — the same "average, don't pool"
   // principle applied to people instead of months, reused for every team
-  // figure below (the Everyone row, and the per-month and year team
-  // averages inside the individual detail view), so all three can never
-  // silently compute this differently from each other.
+  // figure below (the Everyone/Team row, and the per-period team average
+  // inside the individual detail view), so all of them can never silently
+  // compute this differently from each other.
+  //
+  // Team leads are deliberately excluded from every average here — their
+  // own activity differs in kind from a full-time consultant's and
+  // shouldn't pull the number up or down, even though their own row
+  // still shows when their team is selected. This reverses an earlier,
+  // confirmed decision to include them — the rule has since changed,
+  // confirmed directly, not a guess.
+  //
   // A genuine average across people, never a sum mislabeled as one — a
   // count with zero activity for someone that period is a real data
   // point (they were employed and did nothing), so it always counts
@@ -1572,13 +1622,14 @@ function ConsultantStatsPage({ token }) {
   // has nothing meaningful to average when there's no real denominator
   // for that person that period.
   function averageAcrossPeople(peopleRows) {
+    const nonLeadRows = peopleRows.filter((r) => !r.isTeamLead);
     const avgPercentage = (key) => {
-      const values = peopleRows.map((r) => r[key]).filter((v) => v !== null);
+      const values = nonLeadRows.map((r) => r[key]).filter((v) => v !== null);
       return values.length > 0 ? values.reduce((s, v) => s + v, 0) / values.length : null;
     };
     const avgCount = (key) => {
-      if (peopleRows.length === 0) return 0;
-      return peopleRows.reduce((s, r) => s + r[key], 0) / peopleRows.length;
+      if (nonLeadRows.length === 0) return 0;
+      return nonLeadRows.reduce((s, r) => s + r[key], 0) / nonLeadRows.length;
     };
     return {
       calls: avgCount("calls"),
@@ -1595,52 +1646,65 @@ function ConsultantStatsPage({ token }) {
     };
   }
 
-  const monthKey = `${year}-${month}`;
+  const currentKeys = periodMonthKeys(period, month, quarter);
+  const yearKeys = periodMonthKeys("year", month, quarter);
 
-  const allRows = data ? STATS_CONSULTANTS.map((sc) => {
+  const allRowsUnfiltered = data ? STATS_CONSULTANTS.map((sc) => {
     const c = data.consultants.find((x) => x.consultantId === sc.id);
     const isTeamLead = c ? c.isTeamLead : (sc.id === "james-lancer" || sc.id === "josh-stark");
-    return buildMonthRow(sc.id, sc.name, isTeamLead, c ? c.monthly : [], monthKey);
+    const team = c ? c.team : null;
+    return buildPeriodRow(sc.id, sc.name, isTeamLead, team, c ? c.monthly : [], currentKeys);
   }) : [];
 
-  // "Everyone" shows the full table for whichever month is selected, same
-  // as before. Selecting one specific person switches to a completely
-  // different view — their whole year, month by month, handled below —
-  // rather than just filtering this same table down to one row.
-  const rows = selectedConsultant === "everyone" ? allRows : [];
+  // Team scoping — "everyone" keeps the full roster; picking a team
+  // narrows it to that team's own consultants, but the lead's own row
+  // still shows alongside them, same as the incentive site's own page.
+  const allRows = teamFilter === "everyone" ? allRowsUnfiltered : allRowsUnfiltered.filter((r) => r.team === teamFilter);
 
-  // Company-wide "Everyone" row — built from allRows above, this month
-  // only, shown at the bottom of the Everyone table. Team leads' own
-  // personal figures are included here, confirmed directly by Scott —
-  // both sites do this the same way for the KPI/Consultant Stats team
-  // average. Not a divergence between the two sites, they agree.
+  // "Everyone" (or the selected team) shows the full table for whichever
+  // period is selected. Selecting one specific person switches to a
+  // completely different view — their whole year, month by month,
+  // handled below — rather than just filtering this same table to one row.
+  const sortedRows = sortRows(selectedConsultant === "everyone" ? allRows : [], sort, {
+    consultantName: (r) => r.consultantName, calls: (r) => r.calls, phoneHours: (r) => r.phoneHours,
+    cvs: (r) => r.cvs, interviews: (r) => r.interviews, onsite: (r) => r.onsite, offers: (r) => r.offers,
+    placements: (r) => r.placements, cvToInterview: (r) => r.cvToInterview, interviewToOnsite: (r) => r.interviewToOnsite,
+    onsiteToOffer: (r) => r.onsiteToOffer, offerToPlacement: (r) => r.offerToPlacement,
+  });
+  const rows = sortedRows;
+
+  // Company/team-wide average row — built from allRows above (already
+  // scoped to the selected team if one is chosen), this period only,
+  // shown at the bottom of the table. Team leads are excluded from this
+  // average inside averageAcrossPeople itself, though their own row
+  // still appears above it when relevant.
   const everyoneRow = data ? averageAcrossPeople(allRows) : null;
 
-  // The per-individual year detail view — twelve month rows for the one
-  // selected person, each with a team-average alongside it for that same
-  // month, and a Total row at the bottom showing the team's own year
-  // average, not the selected person's year total again, which would
-  // just be redundant with what's already visible summed across the
-  // twelve rows above it.
+  // The per-individual year detail view — every month of the year for
+  // the one selected person, each with a team-average alongside it for
+  // that same month, and a Total row at the bottom showing the team's
+  // own year average, not the selected person's year total again, which
+  // would just be redundant with what's already visible summed across
+  // the twelve rows above it.
   const individualDetail = (data && selectedConsultant !== "everyone") ? (() => {
     const c = data.consultants.find((x) => x.consultantId === selectedConsultant);
     const isTeamLead = c ? c.isTeamLead : (selectedConsultant === "james-lancer" || selectedConsultant === "josh-stark");
     const personName = STATS_CONSULTANTS.find((sc) => sc.id === selectedConsultant)?.name || selectedConsultant;
     const monthRows = MONTH_OPTIONS.map((mm) => {
       const targetMonthKey = `${year}-${mm}`;
-      const personRow = buildMonthRow(selectedConsultant, personName, isTeamLead, c ? c.monthly : [], targetMonthKey);
+      const personRow = buildPeriodRow(selectedConsultant, personName, isTeamLead, c ? c.team : null, c ? c.monthly : [], [targetMonthKey]);
       const everyoneThisMonth = STATS_CONSULTANTS.map((sc) => {
         const sc2 = data.consultants.find((x) => x.consultantId === sc.id);
         const scIsTeamLead = sc2 ? sc2.isTeamLead : (sc.id === "james-lancer" || sc.id === "josh-stark");
-        return buildMonthRow(sc.id, sc.name, scIsTeamLead, sc2 ? sc2.monthly : [], targetMonthKey);
+        return buildPeriodRow(sc.id, sc.name, scIsTeamLead, sc2 ? sc2.team : null, sc2 ? sc2.monthly : [], [targetMonthKey]);
       });
       return { monthKey: targetMonthKey, person: personRow, teamAverage: averageAcrossPeople(everyoneThisMonth) };
     });
-    const personYearRow = buildYearRow(selectedConsultant, personName, isTeamLead, c ? c.monthly : []);
+    const personYearRow = buildPeriodRow(selectedConsultant, personName, isTeamLead, c ? c.team : null, c ? c.monthly : [], yearKeys);
     const everyoneYearRows = STATS_CONSULTANTS.map((sc) => {
       const sc2 = data.consultants.find((x) => x.consultantId === sc.id);
       const scIsTeamLead = sc2 ? sc2.isTeamLead : (sc.id === "james-lancer" || sc.id === "josh-stark");
-      return buildYearRow(sc.id, sc.name, scIsTeamLead, sc2 ? sc2.monthly : []);
+      return buildPeriodRow(sc.id, sc.name, scIsTeamLead, sc2 ? sc2.team : null, sc2 ? sc2.monthly : [], yearKeys);
     });
     return { personName, isTeamLead, monthRows, teamYearAverage: averageAcrossPeople(everyoneYearRows), personYearRow };
   })() : null;
@@ -1656,17 +1720,19 @@ function ConsultantStatsPage({ token }) {
           }, y))
         )
       ),
-      React.createElement("div", { style: { marginTop: 12, display: "flex", flexWrap: "wrap", gap: 6 } },
-        React.createElement("button", {
-          onClick: () => setSelectedConsultant("everyone"),
-          style: { ...chipStyle, background: selectedConsultant === "everyone" ? MELON : "rgba(255,176,140,0.14)", fontWeight: selectedConsultant === "everyone" ? 700 : 500 }
-        }, "Everyone"),
-        STATS_CONSULTANTS.map(sc => React.createElement("button", {
-          key: sc.id, onClick: () => setSelectedConsultant(sc.id),
-          style: { ...chipStyle, background: selectedConsultant === sc.id ? MELON : "rgba(255,176,140,0.14)", fontWeight: selectedConsultant === sc.id ? 700 : 500 }
-        }, sc.name))
+      selectedConsultant === "everyone" && React.createElement("div", { style: { marginTop: 12, display: "flex", flexWrap: "wrap", gap: 6 } },
+        [["month", "Month"], ["quarter", "Quarter"], ["year", "Year"]].map(([p, label]) => React.createElement("button", {
+          key: p, onClick: () => setPeriod(p),
+          style: { ...chipStyle, padding: "6px 12px", fontSize: 12, background: period === p ? INDIGO : "rgba(46,64,91,0.06)", color: period === p ? WHITE : INDIGO, fontWeight: period === p ? 700 : 500 }
+        }, label))
       ),
-      selectedConsultant === "everyone" && React.createElement("div", { style: { marginTop: 10, display: "flex", flexWrap: "wrap", gap: 6 } },
+      selectedConsultant === "everyone" && period === "quarter" && React.createElement("div", { style: { marginTop: 10, display: "flex", flexWrap: "wrap", gap: 6 } },
+        ["Q1", "Q2", "Q3", "Q4"].map(q => React.createElement("button", {
+          key: q, onClick: () => setQuarter(q),
+          style: { ...chipStyle, background: quarter === q ? MELON : "rgba(255,176,140,0.14)", fontWeight: quarter === q ? 700 : 500 }
+        }, q))
+      ),
+      selectedConsultant === "everyone" && period === "month" && React.createElement("div", { style: { marginTop: 10, display: "flex", flexWrap: "wrap", gap: 6 } },
         MONTH_OPTIONS.map(mm => React.createElement("button", {
           key: mm, onClick: () => setMonth(mm),
           style: {
@@ -1677,36 +1743,54 @@ function ConsultantStatsPage({ token }) {
           }
         }, MONTH_LABELS[mm]))
       ),
-      selectedConsultant !== "everyone" && React.createElement("div", { style: { marginTop: 10, fontSize: 12, color: INDIGO_MUTED } }, `Every month of ${year} for this one person — "avg" beneath each figure is the team average across all ten consultants for that same month.`)
+      selectedConsultant === "everyone" && React.createElement("div", { style: { marginTop: 10, display: "flex", flexWrap: "wrap", gap: 6 } },
+        [["everyone", "Everyone"], ["james", "Team James"], ["josh", "Team Josh"]].map(([t, label]) => React.createElement("button", {
+          key: t, onClick: () => setTeamFilter(t),
+          style: { ...chipStyle, padding: "6px 12px", fontSize: 12, background: teamFilter === t ? INDIGO : "rgba(46,64,91,0.06)", color: teamFilter === t ? WHITE : INDIGO, fontWeight: teamFilter === t ? 700 : 500 }
+        }, label))
+      ),
+      React.createElement("div", { style: { marginTop: 12, display: "flex", flexWrap: "wrap", gap: 6 } },
+        React.createElement("button", {
+          onClick: () => setSelectedConsultant("everyone"),
+          style: { ...chipStyle, background: selectedConsultant === "everyone" ? MELON : "rgba(255,176,140,0.14)", fontWeight: selectedConsultant === "everyone" ? 700 : 500 }
+        }, "Everyone"),
+        STATS_CONSULTANTS.map(sc => React.createElement("button", {
+          key: sc.id, onClick: () => setSelectedConsultant(sc.id),
+          style: { ...chipStyle, background: selectedConsultant === sc.id ? MELON : "rgba(255,176,140,0.14)", fontWeight: selectedConsultant === sc.id ? 700 : 500 }
+        }, sc.name))
+      ),
+      selectedConsultant !== "everyone" && React.createElement("div", { style: { marginTop: 10, fontSize: 12, color: INDIGO_MUTED } }, `Every month of ${year} for this one person — "avg" beneath each figure is the team average for that same month, excluding team leads.`)
     ),
     error && React.createElement("div", { style: errorStyle }, error),
     loading && React.createElement(Panel, null, React.createElement("div", { style: { padding: 20, textAlign: "center", color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif" } }, "Loading…")),
 
     !loading && data && selectedConsultant === "everyone" && React.createElement(Panel, null,
       React.createElement("div", { style: { overflowX: "auto" } },
-        React.createElement(TableHeader, { cols: [
-          { label: "Consultant", width: 160 },
-          { label: "Calls", width: 70 },
-          { label: "Phone Hrs", width: 80 },
-          { label: "CVs Out", width: 80 },
-          { label: "Interviews", width: 90 },
-          { label: "Onsite", width: 70 },
-          { label: "Offers", width: 70 },
-          { label: "Placements", width: 90 },
-          { label: "CV : Interview", width: 110 },
-          { label: "Interview : Onsite", width: 130 },
-          { label: "Onsite : Offer", width: 110 },
-          { label: "Offer : Placement", width: 120 },
-        ] }),
+        React.createElement("div", {
+          style: { display: "flex", gap: 10, padding: "0 0 8px", borderBottom: `1px solid ${INDIGO_HAIRLINE}`, fontFamily: "'Work Sans', sans-serif", fontWeight: 600, fontSize: 11, letterSpacing: "0.06em", color: INDIGO_MUTED, textTransform: "uppercase" }
+        },
+          React.createElement(SortableHeaderCell, { label: "Consultant", column: "consultantName", width: 160, sortState: sort, onSort: (c) => toggleSort(sort, setSort, c) }),
+          React.createElement(SortableHeaderCell, { label: "Calls", column: "calls", width: 70, sortState: sort, onSort: (c) => toggleSort(sort, setSort, c) }),
+          React.createElement(SortableHeaderCell, { label: "Phone Hrs", column: "phoneHours", width: 80, sortState: sort, onSort: (c) => toggleSort(sort, setSort, c) }),
+          React.createElement(SortableHeaderCell, { label: "CVs Out", column: "cvs", width: 80, sortState: sort, onSort: (c) => toggleSort(sort, setSort, c) }),
+          React.createElement(SortableHeaderCell, { label: "Interviews", column: "interviews", width: 90, sortState: sort, onSort: (c) => toggleSort(sort, setSort, c) }),
+          React.createElement(SortableHeaderCell, { label: "Onsite", column: "onsite", width: 70, sortState: sort, onSort: (c) => toggleSort(sort, setSort, c) }),
+          React.createElement(SortableHeaderCell, { label: "Offers", column: "offers", width: 70, sortState: sort, onSort: (c) => toggleSort(sort, setSort, c) }),
+          React.createElement(SortableHeaderCell, { label: "Placements", column: "placements", width: 90, sortState: sort, onSort: (c) => toggleSort(sort, setSort, c) }),
+          React.createElement(SortableHeaderCell, { label: "CV : Interview", column: "cvToInterview", width: 110, sortState: sort, onSort: (c) => toggleSort(sort, setSort, c) }),
+          React.createElement(SortableHeaderCell, { label: "Interview : Onsite", column: "interviewToOnsite", width: 130, sortState: sort, onSort: (c) => toggleSort(sort, setSort, c) }),
+          React.createElement(SortableHeaderCell, { label: "Onsite : Offer", column: "onsiteToOffer", width: 110, sortState: sort, onSort: (c) => toggleSort(sort, setSort, c) }),
+          React.createElement(SortableHeaderCell, { label: "Offer : Placement", column: "offerToPlacement", width: 120, sortState: sort, onSort: (c) => toggleSort(sort, setSort, c) })
+        ),
         rows.map(r => React.createElement(RowLine, { key: r.consultantId },
           React.createElement(Cell, { width: 160 },
             r.consultantName,
             r.isTeamLead && React.createElement("div", { style: { fontSize: 10, color: MELON, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase" } }, "Team lead")
           ),
-          React.createElement(Cell, { width: 70 }, overrideValue(r.overrides, "calls", r.calls)),
+          React.createElement(Cell, { width: 70 }, overrideValue(r.overrides, "calls", r.calls.toFixed(1))),
           React.createElement(Cell, { width: 80 }, overrideValue(r.overrides, "phoneHours", r.phoneHours.toFixed(1))),
-          React.createElement(Cell, { width: 80 }, overrideValue(r.overrides, "cvs", r.cvs)),
-          React.createElement(Cell, { width: 90 }, overrideValue(r.overrides, "interviews", r.interviews)),
+          React.createElement(Cell, { width: 80 }, overrideValue(r.overrides, "cvs", r.cvs.toFixed(1))),
+          React.createElement(Cell, { width: 90 }, overrideValue(r.overrides, "interviews", r.interviews.toFixed(1))),
           React.createElement(Cell, { width: 70 }, overrideValue(r.overrides, "onsite", r.onsite)),
           React.createElement(Cell, { width: 70 }, overrideValue(r.overrides, "offers", r.offers)),
           React.createElement(Cell, { width: 90 }, overrideValue(r.overrides, "placements", r.placements)),
@@ -1729,6 +1813,11 @@ function ConsultantStatsPage({ token }) {
           React.createElement(Cell, { width: 110, bold: true }, formatPercentage(everyoneRow.onsiteToOffer)),
           React.createElement(Cell, { width: 120, bold: true }, formatPercentage(everyoneRow.offerToPlacement))
         )
+      ),
+      React.createElement("div", { style: { marginTop: 10, fontSize: 12, color: INDIGO_MUTED } },
+        period === "month"
+          ? "Calls, Phone Hrs, CVs Out and Interviews are this month's own real figures. Onsite, Offers and Placements are this month's real totals."
+          : `Calls, Phone Hrs, CVs Out and Interviews are a genuine per-month average across ${period === "quarter" ? "this quarter's" : "this year's"} own months that have actually started so far, never divided by a fixed ${period === "quarter" ? "3" : "12"} regardless of how much of the period has really happened. Onsite, Offers and Placements are each person's real period total, not an average. The Average row below genuinely averages across people, excluding James and Josh.`
       )
     ),
 
@@ -1778,11 +1867,11 @@ function ConsultantStatsPage({ token }) {
           React.createElement(Cell, { width: 120, bold: true }, formatPercentage(individualDetail.teamYearAverage.offerToPlacement))
         )
       ),
-      React.createElement("div", { style: { marginTop: 10, fontSize: 12, color: INDIGO_MUTED } }, "Average is the team's own average for the year, across all ten consultants including James and Josh — not this person's own year total, which is already visible summed across the twelve months above.")
+      React.createElement("div", { style: { marginTop: 10, fontSize: 12, color: INDIGO_MUTED } }, "Average is the team's own average for the year, excluding James and Josh — not this person's own year total, which is already visible summed across the twelve months above.")
     ),
 
     !loading && data && React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif" } },
-      "CVs, interviews, onsite and offer counts come from the incentive site's finalized weekly records — only complete weeks are counted. Placements are genuine deals agreed, bucketed by the date signed, not the candidate's start date. Onsite and Offer tracking only started recently, so months before that will show zero there even if real activity happened, since there's nothing to backfill. \"Everyone\" includes James and Josh's own personal figures, averaged the same way as everyone else's."
+      "CVs, interviews, onsite and offer counts come from the incentive site's own live monthly figures. Placements are genuine deals agreed, bucketed by the date signed, not the candidate's start date. Onsite and Offer tracking only started recently, so months before that will show zero there even if real activity happened, since there's nothing to backfill. James and Josh's own rows show their real figures, but they're excluded from every Average shown here, since their activity differs in kind from a full-time consultant's."
     )
   );
 }
