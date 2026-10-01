@@ -165,13 +165,14 @@ async function computeConsultantStatsForYear(year, { skipLiveKpi = false } = {})
 
   const perConsultant = {};
   for (const cid of roster) {
-    perConsultant[cid] = { consultantId: cid, consultantName: CONSULTANT_NAMES[cid] || cid, monthly: {}, yearTotal: emptyYearTotal() };
+    perConsultant[cid] = { consultantId: cid, consultantName: CONSULTANT_NAMES[cid] || cid, team: teamOverrides[cid] || DEFAULT_TEAM_BY_CONSULTANT[cid] || null, monthly: {}, yearTotal: emptyYearTotal() };
   }
   // Team leads get their own entries too, built and populated in an
   // entirely separate pass below — never sharing a loop with the regular
   // consultant roster, so there's no code path where a mix-up could occur.
+  const TEAM_LEAD_OWN_TEAM = { "james-lancer": "james", "josh-stark": "josh" };
   for (const cid of Object.keys(TEAM_LEAD_NAMES)) {
-    perConsultant[cid] = { consultantId: cid, consultantName: TEAM_LEAD_NAMES[cid], isTeamLead: true, monthly: {}, yearTotal: emptyYearTotal() };
+    perConsultant[cid] = { consultantId: cid, consultantName: TEAM_LEAD_NAMES[cid], isTeamLead: true, team: TEAM_LEAD_OWN_TEAM[cid] || null, monthly: {}, yearTotal: emptyYearTotal() };
   }
 
   // CVs, interviews, onsite, offers — read live from the incentive
@@ -357,6 +358,7 @@ function revenueDateFor(record, placement) {
     consultantId: c.consultantId,
     consultantName: c.consultantName,
     isTeamLead: !!c.isTeamLead,
+    team: c.team || null,
     monthly: Object.values(c.monthly).sort((a, b) => a.month.localeCompare(b.month)),
     yearTotal: c.yearTotal,
   }));
