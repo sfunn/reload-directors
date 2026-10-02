@@ -445,6 +445,29 @@ function buildChanges(current, comparison) {
   return changes;
 }
 
+// Attaches each row's own revenue change to a concentration table —
+// matched by the entity itself (client name, or consultantId), never by
+// position in the list, since who's in 3rd place can genuinely differ
+// between two periods even when nothing about any one client's own
+// revenue changed. A client or consultant with no row at all in the
+// comparison period (a brand new client this period, say) correctly
+// gets null rather than a misleading 0% or an invented "infinite"
+// increase from a zero base.
+function addEntityChanges(currentList, prevList, sameLastYearList, keyField) {
+  const findIn = (list, key) => (list || []).find((e) => e[keyField] === key);
+  return currentList.map((entity) => {
+    const prevMatch = findIn(prevList, entity[keyField]);
+    const sameLastYearMatch = findIn(sameLastYearList, entity[keyField]);
+    return {
+      ...entity,
+      changes: {
+        previousPeriod: prevMatch ? percentChange(entity.totalGBP, prevMatch.totalGBP) : null,
+        sameLastYear: sameLastYearMatch ? percentChange(entity.totalGBP, sameLastYearMatch.totalGBP) : null,
+      },
+    };
+  });
+}
+
 module.exports = async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -486,8 +509,23 @@ module.exports = async (req, res) => {
       sameLastYear ? computeOverviewForPeriod(sameLastYear.year, sameLastYear.period, sameLastYear.month, sameLastYear.quarter, shared) : Promise.resolve(null),
     ]);
 
+    const clientConcentrationWithChanges = addEntityChanges(
+      current.clientConcentration,
+      prevMetrics.clientConcentration,
+      sameLastYearMetrics ? sameLastYearMetrics.clientConcentration : null,
+      "client"
+    );
+    const consultantConcentrationWithChanges = addEntityChanges(
+      current.consultantConcentration,
+      prevMetrics.consultantConcentration,
+      sameLastYearMetrics ? sameLastYearMetrics.consultantConcentration : null,
+      "consultantId"
+    );
+
     return res.status(200).json({
       ...current,
+      clientConcentration: clientConcentrationWithChanges,
+      consultantConcentration: consultantConcentrationWithChanges,
       changes: {
         previousPeriod: buildChanges(current, prevMetrics),
         sameLastYear: buildChanges(current, sameLastYearMetrics),
