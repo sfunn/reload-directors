@@ -183,28 +183,15 @@ function convertToGBP(record, allRates) {
 
 // --- End direct port ---
 
-module.exports = async (req, res) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-  if (req.method === "OPTIONS") return res.status(200).end();
-
-  const director = await getDirectorFromRequest(req);
-  if (!director) return res.status(401).json({ error: "Director access required." });
-
-  const action = req.query.action;
-
-  if (req.method === "GET" && (!action || action === "overview")) {
-    const year = parseInt(req.query.year, 10) || new Date().getUTCFullYear();
-    const { period, month, quarter } = req.query;
+// Computes the full set of overview figures for one specific period —
+// a single month, a quarter, or the whole year — given data already
+// fetched once and shared across however many periods need computing
+// (the period itself, plus whatever it's being compared against), so
+// records/placements/rates/manual metrics are never re-fetched per
+// comparison period.
+async function computeOverviewForPeriod(year, period, month, quarter, shared) {
     const QUARTER_MONTHS_LOOKUP = { Q1: ["01", "02", "03"], Q2: ["04", "05", "06"], Q3: ["07", "08", "09"], Q4: ["10", "11", "12"] };
-    const [records, placements, allRates, manualMetrics, overrides] = await Promise.all([
-      kv.get(RECORDS_KEY).then((v) => v || []),
-      kv.get(PLACEMENTS_KEY).then((v) => v || {}),
-      kv.get(FX_KEY).then((v) => v || {}),
-      kv.get(MANUAL_METRICS_KEY).then((v) => v || {}),
-      getOverrides(),
-    ]);
+    const { records, placements, allRates, manualMetrics, overrides, employment } = shared;
 
     const monthsToInclude = period === "month" ? [month] : period === "quarter" ? (QUARTER_MONTHS_LOOKUP[quarter] || []) : null;
     const yearRecords = records.filter((r) => {
@@ -356,7 +343,6 @@ module.exports = async (req, res) => {
     // start date, there's honestly nothing to divide by, so this returns
     // null rather than silently using today's headcount for a period it
     // never applied to.
-    const employment = (await kv.get(EMPLOYMENT_KEY)) || {};
     const feeEarningTimeline = buildTimeline(employment, "feeEarning");
     const periodEndMonth = period === "month" ? month : period === "quarter" ? (QUARTER_MONTHS_LOOKUP[quarter] || [])[2] : "12";
     const periodEndLastDay = periodEndMonth ? new Date(Date.UTC(year, parseInt(periodEndMonth, 10), 0)).getUTCDate() : 31;
@@ -365,7 +351,7 @@ module.exports = async (req, res) => {
     const revenuePerHeadGBP = headcountForYear > 0 ? totalRevenueGBP / headcountForYear : null;
     const revenuePerHeadUSD = headcountForYear > 0 ? totalRevenueUSD / headcountForYear : null;
 
-    return res.status(200).json({
+    return {
       year,
       period: period || "year",
       month: period === "month" ? month : null,
@@ -409,6 +395,107 @@ module.exports = async (req, res) => {
       taxNotes: manual.taxNotes || null,
       ebitdaAmount,
       ebitdaUSDEquivalent: await usdEquivalentFor(ebitdaAmount, "GBP"),
+    };
+}
+
+// Resolves the identifiers for whichever period comes immediately
+// before the one requested — the previous month, the previous quarter,
+// or the previous year — correctly rolling over a year boundary where
+// needed (January's previous month is December of last year; Q1's
+// previous quarter is Q4 of last year).
+function previousPeriodOf(year, period, month, quarter) {
+  if (period === "month") {
+    const m = parseInt(month, 10);
+    return m === 1 ? { year: year - 1, period: "month", month: "12" } : { year, period: "month", month: String(m - 1).padStart(2, "0") };
+  }
+  if (period === "quarter") {
+    const qNum = parseInt(quarter.slice(1), 10);
+    return qNum === 1 ? { year: year - 1, period: "quarter", quarter: "Q4" } : { year, period: "quarter", quarter: `Q${qNum - 1}` };
+  }
+  return { year: year - 1, period: "year" };
+}
+
+// The same calendar period one year earlier — month-for-month or
+// quarter-for-quarter, not just "the previous period," since a
+// recruitment business can have real seasonal patterns a plain
+// previous-period comparison would miss entirely (December vs November
+// says much less than December vs December last year).
+function samePeriodLastYear(year, period, month, quarter) {
+  return { year: year - 1, period, month, quarter };
+}
+
+// null when there's genuinely nothing to compare against (no prior
+// figure at all, or a prior figure of exactly zero, which would make
+// any "% change" either meaningless or a division by zero), never a
+// fake 0% standing in for "no comparison available."
+function percentChange(current, previous) {
+  if (current === null || current === undefined || previous === null || previous === undefined || previous === 0) return null;
+  return ((current - previous) / Math.abs(previous)) * 100;
+}
+
+// The handful of headline figures worth a % change at all — the ones
+// shown as a single, standalone number on the page. The concentration
+// tables get their own, separate per-entity change, not this.
+const COMPARABLE_FIELDS = ["totalRevenueGBP", "averageFeeGBP", "revenuePerHeadGBP", "grossProfitAmount", "cashAmount", "totalExpensesAmount", "ebitdaAmount"];
+
+function buildChanges(current, comparison) {
+  if (!comparison) return null;
+  const changes = {};
+  for (const field of COMPARABLE_FIELDS) changes[field] = percentChange(current[field], comparison[field]);
+  return changes;
+}
+
+module.exports = async (req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  if (req.method === "OPTIONS") return res.status(200).end();
+
+  const director = await getDirectorFromRequest(req);
+  if (!director) return res.status(401).json({ error: "Director access required." });
+
+  const action = req.query.action;
+
+  if (req.method === "GET" && (!action || action === "overview")) {
+    const year = parseInt(req.query.year, 10) || new Date().getUTCFullYear();
+    const { period, month, quarter } = req.query;
+
+    const [records, placements, allRates, manualMetrics, overrides, employment] = await Promise.all([
+      kv.get(RECORDS_KEY).then((v) => v || []),
+      kv.get(PLACEMENTS_KEY).then((v) => v || {}),
+      kv.get(FX_KEY).then((v) => v || {}),
+      kv.get(MANUAL_METRICS_KEY).then((v) => v || {}),
+      getOverrides(),
+      kv.get(EMPLOYMENT_KEY).then((v) => v || {}),
+    ]);
+    const shared = { records, placements, allRates, manualMetrics, overrides, employment };
+
+    const current = await computeOverviewForPeriod(year, period, month, quarter, shared);
+
+    // Two comparisons, computed the same way as the period itself, not
+    // approximated — the previous period immediately before this one,
+    // and the same period a year ago. For the year view these are
+    // actually identical (both are simply last year), so the same-
+    // last-year comparison is left out entirely there rather than
+    // showing the same number twice under two different labels.
+    const prev = previousPeriodOf(year, period || "year", month, quarter);
+    const sameLastYear = (period === "month" || period === "quarter") ? samePeriodLastYear(year, period, month, quarter) : null;
+
+    const [prevMetrics, sameLastYearMetrics] = await Promise.all([
+      computeOverviewForPeriod(prev.year, prev.period, prev.month, prev.quarter, shared),
+      sameLastYear ? computeOverviewForPeriod(sameLastYear.year, sameLastYear.period, sameLastYear.month, sameLastYear.quarter, shared) : Promise.resolve(null),
+    ]);
+
+    return res.status(200).json({
+      ...current,
+      changes: {
+        previousPeriod: buildChanges(current, prevMetrics),
+        sameLastYear: buildChanges(current, sameLastYearMetrics),
+      },
+      comparisonPeriods: {
+        previousPeriod: { year: prev.year, period: prev.period, month: prev.month || null, quarter: prev.quarter || null },
+        sameLastYear: sameLastYear ? { year: sameLastYear.year, period: sameLastYear.period, month: sameLastYear.month || null, quarter: sameLastYear.quarter || null } : null,
+      },
     });
   }
 
