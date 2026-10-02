@@ -19,12 +19,21 @@ const MANUAL_METRICS_KEY = "company-manual-metrics"; // { [year]: { [periodKey]:
 // granularity over time. This treats the old flat shape as exactly
 // equivalent to a "year" period entry, so every year of real data
 // already entered keeps working untouched, nothing to migrate.
-const FIELD_NAMES_INDICATING_OLD_SHAPE = ["grossProfitAmount", "grossProfitUSD", "cashAmount", "totalExpensesAmount", "notes"];
+// The full, fixed set of valid period keys — checking against this
+// exhaustive set, rather than trying to list every possible old-shape
+// field name, is what makes this detection reliable. A field-name list
+// risks missing one (interestAmount and taxAmount were both missing
+// from an earlier version of this check, a real bug caught by testing
+// a year that had only one of those fields set), where the period-key
+// set can't be incomplete, since it's the same known list used
+// everywhere else in this file.
+const VALID_PERIOD_KEYS = new Set(["year", "Q1", "Q2", "Q3", "Q4", "01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"]);
 function normalizeYearMetrics(raw) {
   if (!raw || typeof raw !== "object") return {};
-  const looksOld = FIELD_NAMES_INDICATING_OLD_SHAPE.some((f) => f in raw);
-  if (looksOld) return { year: raw };
-  return raw;
+  const keys = Object.keys(raw);
+  const looksNew = keys.length > 0 && keys.every((k) => VALID_PERIOD_KEYS.has(k));
+  if (looksNew) return raw;
+  return { year: raw };
 }
 
 // Combines several period entries (whichever months or quarters were
