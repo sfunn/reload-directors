@@ -2213,8 +2213,51 @@ function StaffInfoPage({ token }) {
   );
 }
 
+// Shows both comparisons for one figure — vs the period right before it,
+// and vs the same period a year ago — side by side, each colored by
+// direction. Either or both can genuinely have nothing to show (a brand
+// new figure with no prior period to compare against), in which case
+// that one comparison is simply left out rather than shown as a
+// confusing dash or a fake 0%.
+function PercentChangeDisplay({ changes, field }) {
+  if (!changes) return null;
+  const pop = changes.previousPeriod ? changes.previousPeriod[field] : null;
+  const yoy = changes.sameLastYear ? changes.sameLastYear[field] : null;
+  if ((pop === null || pop === undefined) && (yoy === null || yoy === undefined)) return null;
+  function formatChange(v) {
+    const color = v > 0 ? VERDIGRIS : v < 0 ? "#c0392b" : INDIGO_MUTED;
+    const arrow = v > 0 ? "▲" : v < 0 ? "▼" : "";
+    return React.createElement("span", { style: { color, fontWeight: 600 } }, `${arrow} ${Math.abs(v).toFixed(1)}%`);
+  }
+  return React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 4, display: "flex", gap: 12, flexWrap: "wrap" } },
+    (pop !== null && pop !== undefined) && React.createElement("span", null, "vs last: ", formatChange(pop)),
+    (yoy !== null && yoy !== undefined) && React.createElement("span", null, "vs last yr: ", formatChange(yoy))
+  );
+}
+
+// A compact version of PercentChangeDisplay for table rows, where
+// there's only room for a small column rather than a full line of text.
+// Still shows both comparisons, just abbreviated and stacked tightly.
+function CompactChange({ changes }) {
+  if (!changes) return React.createElement("span", { style: { color: INDIGO_MUTED } }, "—");
+  const { previousPeriod: pop, sameLastYear: yoy } = changes;
+  if ((pop === null || pop === undefined) && (yoy === null || yoy === undefined)) return React.createElement("span", { style: { color: INDIGO_MUTED } }, "—");
+  function formatChange(v) {
+    const color = v > 0 ? VERDIGRIS : v < 0 ? "#c0392b" : INDIGO_MUTED;
+    const arrow = v > 0 ? "▲" : v < 0 ? "▼" : "";
+    return React.createElement("span", { style: { color } }, `${arrow}${Math.abs(v).toFixed(0)}%`);
+  }
+  return React.createElement("div", { style: { display: "flex", flexDirection: "column", fontSize: 11, lineHeight: 1.5 } },
+    (pop !== null && pop !== undefined) && formatChange(pop),
+    (yoy !== null && yoy !== undefined) && formatChange(yoy)
+  );
+}
+
 function CompanyOverviewPage({ token }) {
   const [year, setYear] = useState(new Date().getUTCFullYear());
+  const [period, setPeriod] = useState("year");
+  const [month, setMonth] = useState(String(new Date().getUTCMonth() + 1).padStart(2, "0"));
+  const [quarter, setQuarter] = useState(() => `Q${Math.floor(new Date().getUTCMonth() / 3) + 1}`);
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -2268,10 +2311,19 @@ function CompanyOverviewPage({ token }) {
 
   useEffect(() => { loadXeroStatus(); }, [loadXeroStatus]);
 
+  // Builds the period part of the query string consistently everywhere
+  // it's needed — the overview itself, the Xero pull, and the save —
+  // so all three always agree on which period is actually selected.
+  function periodQueryParams() {
+    if (period === "month") return `&period=month&month=${month}`;
+    if (period === "quarter") return `&period=quarter&quarter=${quarter}`;
+    return "";
+  }
+
   const load = useCallback(async () => {
     setError(""); setLoading(true);
     try {
-      const res = await fetch(`/api/company-overview?year=${year}`, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch(`/api/company-overview?year=${year}${periodQueryParams()}`, { headers: { Authorization: `Bearer ${token}` } });
       const body = await res.json();
       if (!res.ok) { setError(body.error || "Couldn't load company figures."); return; }
       setData(body);
@@ -2292,7 +2344,7 @@ function CompanyOverviewPage({ token }) {
     } finally {
       setLoading(false);
     }
-  }, [token, year]);
+  }, [token, year, period, month, quarter]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -2305,7 +2357,8 @@ function CompanyOverviewPage({ token }) {
         body: JSON.stringify({
           // Currency is fixed at GBP — Reload's own real accounting
           // currency, per Scott's explicit confirmation, not guessed.
-          year, grossProfitAmount: grossProfitInput, grossProfitCurrency: "GBP", notes: notesInput,
+          year, period, month: period === "month" ? month : undefined, quarter: period === "quarter" ? quarter : undefined,
+          grossProfitAmount: grossProfitInput, grossProfitCurrency: "GBP", notes: notesInput,
           cashAmount: cashInput, cashCurrency: "GBP", cashNotes: cashNotesInput,
           totalExpensesAmount: totalExpensesInput, totalExpensesCurrency: "GBP", totalExpensesNotes: totalExpensesNotesInput,
           depreciationAmortisationAmount: depreciationAmortisationInput, depreciationAmortisationCurrency: "GBP", depreciationAmortisationNotes: depreciationAmortisationNotesInput,
@@ -2380,7 +2433,8 @@ function CompanyOverviewPage({ token }) {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
-          year, grossProfitAmount: fields.grossProfitAmount, grossProfitCurrency: "GBP", notes: fields.grossProfitNotes,
+          year, period, month: period === "month" ? month : undefined, quarter: period === "quarter" ? quarter : undefined,
+          grossProfitAmount: fields.grossProfitAmount, grossProfitCurrency: "GBP", notes: fields.grossProfitNotes,
           cashAmount: fields.cashAmount, cashCurrency: "GBP", cashNotes: fields.cashNotes,
           totalExpensesAmount: fields.totalExpensesAmount, totalExpensesCurrency: "GBP", totalExpensesNotes: fields.totalExpensesNotes,
           depreciationAmortisationAmount: fields.depreciationAmortisationAmount, depreciationAmortisationCurrency: "GBP", depreciationAmortisationNotes: fields.depreciationAmortisationNotes,
@@ -2400,7 +2454,7 @@ function CompanyOverviewPage({ token }) {
   async function pullFromXero() {
     setXeroPullError(""); setXeroPulling(true); setXeroPull(null);
     try {
-      const res = await fetch(`/api/xero-reports?year=${year}`, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch(`/api/xero-reports?year=${year}${periodQueryParams()}`, { headers: { Authorization: `Bearer ${token}` } });
       const body = await res.json();
       if (!res.ok) { setXeroPullError(body.error || "Couldn't pull from Xero."); return; }
       setXeroPull(body);
@@ -2437,6 +2491,24 @@ function CompanyOverviewPage({ token }) {
                 style: ghostStyle
               }, "Connect to Xero")
         )
+      ),
+      React.createElement("div", { style: { marginTop: 12, display: "flex", flexWrap: "wrap", gap: 6 } },
+        [["month", "Month"], ["quarter", "Quarter"], ["year", "Year"]].map(([p, label]) => React.createElement("button", {
+          key: p, onClick: () => setPeriod(p),
+          style: { ...chipStyle, padding: "6px 12px", fontSize: 12, background: period === p ? INDIGO : "rgba(46,64,91,0.06)", color: period === p ? WHITE : INDIGO, fontWeight: period === p ? 700 : 500 }
+        }, label))
+      ),
+      period === "quarter" && React.createElement("div", { style: { marginTop: 10, display: "flex", flexWrap: "wrap", gap: 6 } },
+        ["Q1", "Q2", "Q3", "Q4"].map(q => React.createElement("button", {
+          key: q, onClick: () => setQuarter(q),
+          style: { ...chipStyle, background: quarter === q ? MELON : "rgba(255,176,140,0.14)", fontWeight: quarter === q ? 700 : 500 }
+        }, q))
+      ),
+      period === "month" && React.createElement("div", { style: { marginTop: 10, display: "flex", flexWrap: "wrap", gap: 6 } },
+        MONTH_OPTIONS.map(mm => React.createElement("button", {
+          key: mm, onClick: () => setMonth(mm),
+          style: { ...chipStyle, background: month === mm ? INDIGO : "rgba(46,64,91,0.06)", color: month === mm ? WHITE : INDIGO, fontWeight: month === mm ? 700 : 500 }
+        }, MONTH_LABELS[mm]))
       )
     ),
     error && React.createElement("div", { style: errorStyle }, error),
@@ -2450,7 +2522,8 @@ function CompanyOverviewPage({ token }) {
               React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO } }, `£${Math.round(data.totalRevenueGBP).toLocaleString()}`),
               React.createElement("div", { style: { fontSize: 13, color: INDIGO_MUTED } }, `$${Math.round(data.totalRevenueUSD).toLocaleString()}`)
             ),
-            React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginTop: 2 } }, `${data.countedDeals} deals counted`)
+            React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginTop: 2 } }, `${data.countedDeals} deals counted`),
+            React.createElement(PercentChangeDisplay, { changes: data.changes, field: "totalRevenueGBP" })
           ),
           React.createElement("div", { style: { flex: 1, minWidth: 160 } },
             React.createElement("div", { style: labelStyle }, "Average Fee"),
@@ -2458,7 +2531,8 @@ function CompanyOverviewPage({ token }) {
               React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO } }, `£${Math.round(data.averageFeeGBP).toLocaleString()}`),
               React.createElement("div", { style: { fontSize: 13, color: INDIGO_MUTED } }, `$${Math.round(data.averageFeeUSD).toLocaleString()}`)
             ),
-            React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 2 } }, `Genuine placements only — ${data.averageFeePlacementCount} this year, onsite fees excluded`)
+            React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 2 } }, `Genuine placements only — ${data.averageFeePlacementCount} this year, onsite fees excluded`),
+            React.createElement(PercentChangeDisplay, { changes: data.changes, field: "averageFeeGBP" })
           ),
           React.createElement("div", { style: { flex: 1, minWidth: 160 } },
             React.createElement("div", { style: labelStyle }, "Revenue per Head"),
@@ -2468,34 +2542,44 @@ function CompanyOverviewPage({ token }) {
                     React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO } }, `£${Math.round(data.revenuePerHeadGBP).toLocaleString()}`),
                     React.createElement("div", { style: { fontSize: 13, color: INDIGO_MUTED } }, `$${Math.round(data.revenuePerHeadUSD).toLocaleString()}`)
                   ),
-                  React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 2 } }, `Based on ${data.headcountUsedForPerHead} fee-earning staff`)
+                  React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 2 } }, `Based on ${data.headcountUsedForPerHead} fee-earning staff`),
+                  React.createElement(PercentChangeDisplay, { changes: data.changes, field: "revenuePerHeadGBP" })
                 )
               : React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO_MUTED } }, "Not available")
           ),
           React.createElement("div", { style: { flex: 1, minWidth: 160 } },
             React.createElement("div", { style: labelStyle }, "Gross Profit"),
             data.grossProfitAmount !== null
-              ? React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" } },
-                  React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: VERDIGRIS } }, `£${Math.round(data.grossProfitAmount).toLocaleString()}`),
-                  data.grossProfitUSDEquivalent !== null && data.grossProfitCurrency !== "USD" && React.createElement("div", { style: { fontSize: 13, color: INDIGO_MUTED } }, `$${Math.round(data.grossProfitUSDEquivalent).toLocaleString()}`)
+              ? React.createElement(React.Fragment, null,
+                  React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" } },
+                    React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: VERDIGRIS } }, `£${Math.round(data.grossProfitAmount).toLocaleString()}`),
+                    data.grossProfitUSDEquivalent !== null && data.grossProfitCurrency !== "USD" && React.createElement("div", { style: { fontSize: 13, color: INDIGO_MUTED } }, `$${Math.round(data.grossProfitUSDEquivalent).toLocaleString()}`)
+                  ),
+                  React.createElement(PercentChangeDisplay, { changes: data.changes, field: "grossProfitAmount" })
                 )
               : React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO_MUTED } }, "Not set")
           ),
           React.createElement("div", { style: { flex: 1, minWidth: 160 } },
             React.createElement("div", { style: labelStyle }, "Cash"),
             data.cashAmount !== null
-              ? React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" } },
-                  React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: VERDIGRIS } }, `£${Math.round(data.cashAmount).toLocaleString()}`),
-                  data.cashUSDEquivalent !== null && data.cashCurrency !== "USD" && React.createElement("div", { style: { fontSize: 13, color: INDIGO_MUTED } }, `$${Math.round(data.cashUSDEquivalent).toLocaleString()}`)
+              ? React.createElement(React.Fragment, null,
+                  React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" } },
+                    React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: VERDIGRIS } }, `£${Math.round(data.cashAmount).toLocaleString()}`),
+                    data.cashUSDEquivalent !== null && data.cashCurrency !== "USD" && React.createElement("div", { style: { fontSize: 13, color: INDIGO_MUTED } }, `$${Math.round(data.cashUSDEquivalent).toLocaleString()}`)
+                  ),
+                  React.createElement(PercentChangeDisplay, { changes: data.changes, field: "cashAmount" })
                 )
               : React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO_MUTED } }, "Not set")
           ),
           React.createElement("div", { style: { flex: 1, minWidth: 160 } },
             React.createElement("div", { style: labelStyle }, "Total Expenses"),
             data.totalExpensesAmount !== null
-              ? React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" } },
-                  React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: MELON } }, `£${Math.round(data.totalExpensesAmount).toLocaleString()}`),
-                  data.totalExpensesUSDEquivalent !== null && data.totalExpensesCurrency !== "USD" && React.createElement("div", { style: { fontSize: 13, color: INDIGO_MUTED } }, `$${Math.round(data.totalExpensesUSDEquivalent).toLocaleString()}`)
+              ? React.createElement(React.Fragment, null,
+                  React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" } },
+                    React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: MELON } }, `£${Math.round(data.totalExpensesAmount).toLocaleString()}`),
+                    data.totalExpensesUSDEquivalent !== null && data.totalExpensesCurrency !== "USD" && React.createElement("div", { style: { fontSize: 13, color: INDIGO_MUTED } }, `$${Math.round(data.totalExpensesUSDEquivalent).toLocaleString()}`)
+                  ),
+                  React.createElement(PercentChangeDisplay, { changes: data.changes, field: "totalExpensesAmount" })
                 )
               : React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO_MUTED } }, "Not set")
           )
@@ -2514,7 +2598,8 @@ function CompanyOverviewPage({ token }) {
                     (data.depreciationAmortisationAmount ? ` + D&A ${Math.round(data.depreciationAmortisationAmount).toLocaleString()}` : "") +
                     (data.interestAmount ? ` + Interest ${Math.round(data.interestAmount).toLocaleString()}` : "") +
                     (data.taxAmount ? ` + Tax ${Math.round(data.taxAmount).toLocaleString()}` : "")
-                  )
+                  ),
+                  React.createElement(PercentChangeDisplay, { changes: data.changes, field: "ebitdaAmount" })
                 )
               : React.createElement("div", null,
                   React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO_MUTED } }, "Not available"),
@@ -2536,7 +2621,8 @@ function CompanyOverviewPage({ token }) {
             React.createElement("span", { style: { width: 90, flexShrink: 0 } }, "GBP"),
             React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Deals"),
             React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Onsites"),
-            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "%")
+            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "%"),
+            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Change")
           ),
           data.clientConcentration.length === 0
             ? React.createElement("div", { style: { color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif", fontSize: 14, padding: "6px 0" } }, "No deals recorded yet for this year.")
@@ -2549,7 +2635,8 @@ function CompanyOverviewPage({ token }) {
                   React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(c.totalGBP).toLocaleString()}`),
                   React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, c.deals),
                   React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, c.onsites),
-                  React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, `${c.percentage.toFixed(1)}%`)
+                  React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, `${c.percentage.toFixed(1)}%`),
+                  React.createElement("span", { style: { width: 50, flexShrink: 0 } }, React.createElement(CompactChange, { changes: c.changes }))
                 )),
                 React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, padding: "6px 0 0", marginTop: 4, borderTop: `1px solid ${INDIGO_HAIRLINE}`, fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, fontWeight: 700, color: INDIGO } },
                   React.createElement("span", { style: { width: 180, flexShrink: 0 } }, "Total"),
@@ -2557,7 +2644,8 @@ function CompanyOverviewPage({ token }) {
                   React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(data.clientConcentration.reduce((s, c) => s + c.totalGBP, 0)).toLocaleString()}`),
                   React.createElement("span", { style: { width: 50, flexShrink: 0 } }, data.clientConcentration.reduce((s, c) => s + c.deals, 0)),
                   React.createElement("span", { style: { width: 50, flexShrink: 0 } }, data.clientConcentration.reduce((s, c) => s + c.onsites, 0)),
-                  React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "100%")
+                  React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "100%"),
+                  React.createElement("span", { style: { width: 50, flexShrink: 0 } }, React.createElement(CompactChange, { changes: data.changes ? data.changes.previousPeriod ? { previousPeriod: data.changes.previousPeriod.totalRevenueGBP, sameLastYear: data.changes.sameLastYear ? data.changes.sameLastYear.totalRevenueGBP : null } : null : null }))
                 )
               )
         ),
@@ -2573,7 +2661,8 @@ function CompanyOverviewPage({ token }) {
             React.createElement("span", { style: { width: 90, flexShrink: 0 } }, "GBP"),
             React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Deals"),
             React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Onsites"),
-            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "%")
+            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "%"),
+            React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "Change")
           ),
           data.consultantConcentration.length === 0
             ? React.createElement("div", { style: { color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif", fontSize: 14, padding: "6px 0" } }, "No deals recorded yet for this year.")
@@ -2586,7 +2675,8 @@ function CompanyOverviewPage({ token }) {
                   React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(c.totalGBP).toLocaleString()}`),
                   React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, c.deals),
                   React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, c.onsites),
-                  React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, `${c.percentage.toFixed(1)}%`)
+                  React.createElement("span", { style: { width: 50, flexShrink: 0, color: INDIGO_MUTED } }, `${c.percentage.toFixed(1)}%`),
+                  React.createElement("span", { style: { width: 50, flexShrink: 0 } }, React.createElement(CompactChange, { changes: c.changes }))
                 )),
                 React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 4, padding: "6px 0 0", marginTop: 4, borderTop: `1px solid ${INDIGO_HAIRLINE}`, fontFamily: "'Work Sans', sans-serif", fontSize: 13.5, fontWeight: 700, color: INDIGO } },
                   React.createElement("span", { style: { width: 180, flexShrink: 0 } }, "Total"),
@@ -2594,7 +2684,8 @@ function CompanyOverviewPage({ token }) {
                   React.createElement("span", { style: { width: 90, flexShrink: 0 } }, `£${Math.round(data.consultantConcentration.reduce((s, c) => s + c.totalGBP, 0)).toLocaleString()}`),
                   React.createElement("span", { style: { width: 50, flexShrink: 0 } }, data.consultantConcentration.reduce((s, c) => s + c.deals, 0)),
                   React.createElement("span", { style: { width: 50, flexShrink: 0 } }, data.consultantConcentration.reduce((s, c) => s + c.onsites, 0)),
-                  React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "100%")
+                  React.createElement("span", { style: { width: 50, flexShrink: 0 } }, "100%"),
+                  React.createElement("span", { style: { width: 50, flexShrink: 0 } }, React.createElement(CompactChange, { changes: data.changes ? data.changes.previousPeriod ? { previousPeriod: data.changes.previousPeriod.totalRevenueGBP, sameLastYear: data.changes.sameLastYear ? data.changes.sameLastYear.totalRevenueGBP : null } : null : null }))
                 )
               )
         )
