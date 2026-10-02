@@ -2219,18 +2219,19 @@ function StaffInfoPage({ token }) {
 // new figure with no prior period to compare against), in which case
 // that one comparison is simply left out rather than shown as a
 // confusing dash or a fake 0%.
-function PercentChangeDisplay({ changes, field }) {
+function PercentChangeDisplay({ changes, field, period }) {
   if (!changes) return null;
   const pop = changes.previousPeriod ? changes.previousPeriod[field] : null;
   const yoy = changes.sameLastYear ? changes.sameLastYear[field] : null;
   if ((pop === null || pop === undefined) && (yoy === null || yoy === undefined)) return null;
+  const prevLabel = period === "month" ? "vs last month" : period === "quarter" ? "vs last Qtr" : "vs last year";
   function formatChange(v) {
     const color = v > 0 ? VERDIGRIS : v < 0 ? "#c0392b" : INDIGO_MUTED;
     const arrow = v > 0 ? "▲" : v < 0 ? "▼" : "";
     return React.createElement("span", { style: { color, fontWeight: 600 } }, `${arrow} ${Math.abs(v).toFixed(1)}%`);
   }
   return React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 4, display: "flex", gap: 12, flexWrap: "wrap" } },
-    (pop !== null && pop !== undefined) && React.createElement("span", null, "vs last: ", formatChange(pop)),
+    (pop !== null && pop !== undefined) && React.createElement("span", null, `${prevLabel}: `, formatChange(pop)),
     (yoy !== null && yoy !== undefined) && React.createElement("span", null, "vs last yr: ", formatChange(yoy))
   );
 }
@@ -2523,7 +2524,7 @@ function CompanyOverviewPage({ token }) {
               React.createElement("div", { style: { fontSize: 13, color: INDIGO_MUTED } }, `$${Math.round(data.totalRevenueUSD).toLocaleString()}`)
             ),
             React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED, marginTop: 2 } }, `${data.countedDeals} deals counted`),
-            React.createElement(PercentChangeDisplay, { changes: data.changes, field: "totalRevenueGBP" })
+            React.createElement(PercentChangeDisplay, { changes: data.changes, field: "totalRevenueGBP", period })
           ),
           React.createElement("div", { style: { flex: 1, minWidth: 160 } },
             React.createElement("div", { style: labelStyle }, "Average Fee"),
@@ -2532,7 +2533,7 @@ function CompanyOverviewPage({ token }) {
               React.createElement("div", { style: { fontSize: 13, color: INDIGO_MUTED } }, `$${Math.round(data.averageFeeUSD).toLocaleString()}`)
             ),
             React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 2 } }, `Genuine placements only — ${data.averageFeePlacementCount} this year, onsite fees excluded`),
-            React.createElement(PercentChangeDisplay, { changes: data.changes, field: "averageFeeGBP" })
+            React.createElement(PercentChangeDisplay, { changes: data.changes, field: "averageFeeGBP", period })
           ),
           React.createElement("div", { style: { flex: 1, minWidth: 160 } },
             React.createElement("div", { style: labelStyle }, "Revenue per Head"),
@@ -2543,7 +2544,7 @@ function CompanyOverviewPage({ token }) {
                     React.createElement("div", { style: { fontSize: 13, color: INDIGO_MUTED } }, `$${Math.round(data.revenuePerHeadUSD).toLocaleString()}`)
                   ),
                   React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 2 } }, `Based on ${data.headcountUsedForPerHead} fee-earning staff`),
-                  React.createElement(PercentChangeDisplay, { changes: data.changes, field: "revenuePerHeadGBP" })
+                  React.createElement(PercentChangeDisplay, { changes: data.changes, field: "revenuePerHeadGBP", period })
                 )
               : React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO_MUTED } }, "Not available")
           ),
@@ -2555,7 +2556,7 @@ function CompanyOverviewPage({ token }) {
                     React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: VERDIGRIS } }, `£${Math.round(data.grossProfitAmount).toLocaleString()}`),
                     data.grossProfitUSDEquivalent !== null && data.grossProfitCurrency !== "USD" && React.createElement("div", { style: { fontSize: 13, color: INDIGO_MUTED } }, `$${Math.round(data.grossProfitUSDEquivalent).toLocaleString()}`)
                   ),
-                  React.createElement(PercentChangeDisplay, { changes: data.changes, field: "grossProfitAmount" })
+                  React.createElement(PercentChangeDisplay, { changes: data.changes, field: "grossProfitAmount", period })
                 )
               : React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO_MUTED } }, "Not set")
           ),
@@ -2567,7 +2568,7 @@ function CompanyOverviewPage({ token }) {
                     React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: VERDIGRIS } }, `£${Math.round(data.cashAmount).toLocaleString()}`),
                     data.cashUSDEquivalent !== null && data.cashCurrency !== "USD" && React.createElement("div", { style: { fontSize: 13, color: INDIGO_MUTED } }, `$${Math.round(data.cashUSDEquivalent).toLocaleString()}`)
                   ),
-                  React.createElement(PercentChangeDisplay, { changes: data.changes, field: "cashAmount" })
+                  React.createElement(PercentChangeDisplay, { changes: data.changes, field: "cashAmount", period })
                 )
               : React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO_MUTED } }, "Not set")
           ),
@@ -2579,7 +2580,7 @@ function CompanyOverviewPage({ token }) {
                     React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: MELON } }, `£${Math.round(data.totalExpensesAmount).toLocaleString()}`),
                     data.totalExpensesUSDEquivalent !== null && data.totalExpensesCurrency !== "USD" && React.createElement("div", { style: { fontSize: 13, color: INDIGO_MUTED } }, `$${Math.round(data.totalExpensesUSDEquivalent).toLocaleString()}`)
                   ),
-                  React.createElement(PercentChangeDisplay, { changes: data.changes, field: "totalExpensesAmount" })
+                  React.createElement(PercentChangeDisplay, { changes: data.changes, field: "totalExpensesAmount", period })
                 )
               : React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO_MUTED } }, "Not set")
           )
@@ -2599,7 +2600,7 @@ function CompanyOverviewPage({ token }) {
                     (data.interestAmount ? ` + Interest ${Math.round(data.interestAmount).toLocaleString()}` : "") +
                     (data.taxAmount ? ` + Tax ${Math.round(data.taxAmount).toLocaleString()}` : "")
                   ),
-                  React.createElement(PercentChangeDisplay, { changes: data.changes, field: "ebitdaAmount" })
+                  React.createElement(PercentChangeDisplay, { changes: data.changes, field: "ebitdaAmount", period })
                 )
               : React.createElement("div", null,
                   React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO_MUTED } }, "Not available"),
