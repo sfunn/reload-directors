@@ -192,6 +192,27 @@ function fiscalYearRange(year) {
   return { fromDate: `${year - 1}-08-01`, periodEndDate: `${year}-07-31` };
 }
 
+// A plain calendar month or quarter — deliberately independent of
+// fiscalYearRange above. Reload's own fiscal year has its own, genuinely
+// different boundaries (and a one-off 17-month bridge year), but Revenue
+// and everything else on Company Overview already uses plain calendar
+// months, so a month/quarter pull here means the same thing a person
+// would expect from a wall calendar, not whatever Xero's own fiscal
+// period happens to be.
+function calendarMonthRange(year, month) {
+  const m = parseInt(month, 10);
+  const lastDay = new Date(Date.UTC(year, m, 0)).getUTCDate(); // day 0 of next month = last real day of this one
+  const mm = String(m).padStart(2, "0");
+  return { fromDate: `${year}-${mm}-01`, periodEndDate: `${year}-${mm}-${String(lastDay).padStart(2, "0")}` };
+}
+function calendarQuarterRange(year, quarter) {
+  const qNum = parseInt(String(quarter).replace(/[^0-9]/g, ""), 10);
+  const startMonth = (qNum - 1) * 3 + 1;
+  const endMonth = startMonth + 2;
+  const lastDay = new Date(Date.UTC(year, endMonth, 0)).getUTCDate();
+  return { fromDate: `${year}-${String(startMonth).padStart(2, "0")}-01`, periodEndDate: `${year}-${String(endMonth).padStart(2, "0")}-${String(lastDay).padStart(2, "0")}` };
+}
+
 // Xero's Profit and Loss report rejects any single request spanning more
 // than 365 days ("The fromDate and toDate parameters must be within 365
 // days of each other" — confirmed directly from a real failed request,
@@ -511,7 +532,14 @@ module.exports = async (req, res) => {
   }
 
   try {
-    const { fromDate, periodEndDate } = fiscalYearRange(year);
+    // A specific calendar month or quarter narrows the pull; with
+    // neither given, this is unchanged — the existing "Pull latest from
+    // Xero" button on the whole-year view never passes these at all.
+    const { period, month, quarter } = req.query;
+    const { fromDate, periodEndDate } =
+      period === "month" ? calendarMonthRange(year, month) :
+      period === "quarter" ? calendarQuarterRange(year, quarter) :
+      fiscalYearRange(year);
 
     // Three genuinely different cases, not just "cap at today":
     // the period could be fully in the past, still in progress, or hasn't
@@ -519,7 +547,8 @@ module.exports = async (req, res) => {
     // middle case — for a future period, fromDate would end up AFTER
     // toDate, an inverted range Xero would either reject or misreport.
     if (currentDateStr < fromDate) {
-      return res.status(400).json({ error: `That financial year hasn't started yet — it begins ${fromDate}.` });
+      const periodNoun = period === "month" ? "That month" : period === "quarter" ? "That quarter" : "That financial year";
+      return res.status(400).json({ error: `${periodNoun} hasn't started yet — it begins ${fromDate}.` });
     }
     const toDate = currentDateStr < periodEndDate ? currentDateStr : periodEndDate;
     const asAtDate = toDate; // Balance Sheet is a snapshot as at the end of whatever window we just computed
@@ -604,6 +633,9 @@ module.exports = async (req, res) => {
 
     return res.status(200).json({
       year,
+      period: period || "year",
+      month: period === "month" ? month : null,
+      quarter: period === "quarter" ? quarter : null,
       tenantName,
       periodStart: fromDate,
       periodEnd: toDate,
