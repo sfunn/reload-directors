@@ -9,7 +9,92 @@ const FX_KEY = "atlas-fx-rates";
 // This key's ownership belongs fully to this site now — the incentive
 // site's own Company Overview page (and this key) were deleted from that
 // codebase entirely when the two sites split. Nothing else touches it.
-const MANUAL_METRICS_KEY = "company-manual-metrics"; // { [year]: { grossProfitUSD, notes } }
+const MANUAL_METRICS_KEY = "company-manual-metrics"; // { [year]: { [periodKey]: { grossProfitAmount, notes, ... } } } — periodKey is "year", "Q1".."Q4", or "01".."12"
+
+// Before period-level tracking existed, each year held one flat object
+// of fields directly — { grossProfitAmount, cashAmount, ... }. The new
+// shape nests those same fields under a period key instead — "year",
+// "Q1".."Q4", or "01".."12" — so a year can hold a whole-year figure, a
+// quarter's, a month's, or any mix, as more gets entered at finer
+// granularity over time. This treats the old flat shape as exactly
+// equivalent to a "year" period entry, so every year of real data
+// already entered keeps working untouched, nothing to migrate.
+const FIELD_NAMES_INDICATING_OLD_SHAPE = ["grossProfitAmount", "grossProfitUSD", "cashAmount", "totalExpensesAmount", "notes"];
+function normalizeYearMetrics(raw) {
+  if (!raw || typeof raw !== "object") return {};
+  const looksOld = FIELD_NAMES_INDICATING_OLD_SHAPE.some((f) => f in raw);
+  if (looksOld) return { year: raw };
+  return raw;
+}
+
+// Combines several period entries (whichever months or quarters were
+// actually saved) into one figure. Gross Profit, Total Expenses, D&A,
+// Interest, and Tax are all genuine flows over time, so summing them
+// across a span is correct. Cash is a point-in-time balance, not a
+// flow — summing twelve months of "cash in the bank" would be nonsense,
+// so this always takes the latest period's own cash figure instead,
+// never a sum of several.
+function aggregatePeriodEntries(entries) {
+  if (entries.length === 0) return null;
+  const sumField = (field) => {
+    const values = entries.map((e) => e[field]).filter((v) => v !== null && v !== undefined);
+    return values.length > 0 ? values.reduce((s, v) => s + v, 0) : null;
+  };
+  const latestCashEntry = [...entries].reverse().find((e) => e.cashAmount !== null && e.cashAmount !== undefined);
+  return {
+    grossProfitAmount: sumField("grossProfitAmount"),
+    grossProfitCurrency: "GBP",
+    notes: entries.map((e) => e.notes).filter(Boolean).join("; ") || null,
+    cashAmount: latestCashEntry ? latestCashEntry.cashAmount : null,
+    cashCurrency: "GBP",
+    cashNotes: latestCashEntry ? latestCashEntry.cashNotes : null,
+    totalExpensesAmount: sumField("totalExpensesAmount"),
+    totalExpensesCurrency: "GBP",
+    totalExpensesNotes: entries.map((e) => e.totalExpensesNotes).filter(Boolean).join("; ") || null,
+    depreciationAmortisationAmount: sumField("depreciationAmortisationAmount"),
+    depreciationAmortisationCurrency: "GBP",
+    depreciationAmortisationNotes: entries.map((e) => e.depreciationAmortisationNotes).filter(Boolean).join("; ") || null,
+    interestAmount: sumField("interestAmount"),
+    interestCurrency: "GBP",
+    interestNotes: entries.map((e) => e.interestNotes).filter(Boolean).join("; ") || null,
+    taxAmount: sumField("taxAmount"),
+    taxCurrency: "GBP",
+    taxNotes: entries.map((e) => e.taxNotes).filter(Boolean).join("; ") || null,
+  };
+}
+
+// Resolves whichever period was asked for down to an actual set of
+// figures, preferring the most direct, exact entry over an aggregated
+// one: an exact quarter entry beats summing its three months; an exact
+// year entry (how every year's figure has always been entered so far)
+// beats summing quarters or months. Returns null only when genuinely
+// nothing was ever entered for that period at any granularity.
+function resolveManualMetricsForPeriod(yearMetrics, period, month, quarter) {
+  const QUARTER_MONTHS = { Q1: ["01", "02", "03"], Q2: ["04", "05", "06"], Q3: ["07", "08", "09"], Q4: ["10", "11", "12"] };
+  if (period === "month") {
+    return yearMetrics[month] || null;
+  }
+  if (period === "quarter") {
+    if (yearMetrics[quarter]) return yearMetrics[quarter];
+    const monthsInQuarter = QUARTER_MONTHS[quarter] || [];
+    const monthEntries = monthsInQuarter.map((m) => yearMetrics[m]).filter(Boolean);
+    if (monthEntries.length === monthsInQuarter.length && monthEntries.length > 0) return aggregatePeriodEntries(monthEntries);
+    return null;
+  }
+  // Year (the default) — an exact year entry first, since that's how
+  // every year of real data has always been entered up to now.
+  if (yearMetrics.year) return yearMetrics.year;
+  const allQuarters = ["Q1", "Q2", "Q3", "Q4"].map((q) => yearMetrics[q]).filter(Boolean);
+  if (allQuarters.length === 4) return aggregatePeriodEntries(allQuarters);
+  const allMonths = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"].map((m) => yearMetrics[m]).filter(Boolean);
+  if (allMonths.length === 12) return aggregatePeriodEntries(allMonths);
+  // Partial data entered so far this year (some months but not all
+  // twelve) still genuinely exists — showing nothing at all would be
+  // less honest than showing what's actually been entered to date.
+  if (allMonths.length > 0) return aggregatePeriodEntries(allMonths);
+  if (allQuarters.length > 0) return aggregatePeriodEntries(allQuarters);
+  return null;
+}
 
 // EBITDA = operating profit (Gross Profit minus Total Expenses) with
 // Depreciation & Amortisation, Interest, and Tax all added back — only
@@ -32,6 +117,20 @@ function effectiveYear(record, placements) {
   const dateStr = (placement && placement.startDate) || record.feeDate;
   const d = dateStr ? new Date(dateStr) : null;
   return d && !isNaN(d.getTime()) ? d.getUTCFullYear() : record.year;
+}
+
+// Same date resolution as effectiveYear above, but returns "MM" rather
+// than just the year — used to narrow revenue down to a specific month
+// or quarter, which effectiveYear alone can't do. Returns null for a
+// record with no real resolvable date, since there's nothing honest to
+// attribute it to at this finer grain (effectiveYear would silently
+// fall back to record.year for these, which isn't precise enough to
+// place within a specific month).
+function effectiveMonth(record, placements) {
+  const placement = record.placementId ? placements[record.placementId] : null;
+  const dateStr = (placement && placement.startDate) || record.feeDate;
+  const d = dateStr ? new Date(dateStr) : null;
+  return d && !isNaN(d.getTime()) ? String(d.getUTCMonth() + 1).padStart(2, "0") : null;
 }
 
 function monthKeyFromDateStr(dateStr) {
@@ -97,6 +196,8 @@ module.exports = async (req, res) => {
 
   if (req.method === "GET" && (!action || action === "overview")) {
     const year = parseInt(req.query.year, 10) || new Date().getUTCFullYear();
+    const { period, month, quarter } = req.query;
+    const QUARTER_MONTHS_LOOKUP = { Q1: ["01", "02", "03"], Q2: ["04", "05", "06"], Q3: ["07", "08", "09"], Q4: ["10", "11", "12"] };
     const [records, placements, allRates, manualMetrics, overrides] = await Promise.all([
       kv.get(RECORDS_KEY).then((v) => v || []),
       kv.get(PLACEMENTS_KEY).then((v) => v || {}),
@@ -105,7 +206,12 @@ module.exports = async (req, res) => {
       getOverrides(),
     ]);
 
-    const yearRecords = records.filter((r) => effectiveYear(r, placements) === year && !isExcludedProjectRecord(r));
+    const monthsToInclude = period === "month" ? [month] : period === "quarter" ? (QUARTER_MONTHS_LOOKUP[quarter] || []) : null;
+    const yearRecords = records.filter((r) => {
+      if (effectiveYear(r, placements) !== year || isExcludedProjectRecord(r)) return false;
+      if (monthsToInclude) return monthsToInclude.includes(effectiveMonth(r, placements));
+      return true;
+    });
     let totalRevenueGBP = 0;
     let totalRevenueUSD = 0;
     let countedDeals = 0;
@@ -213,7 +319,8 @@ module.exports = async (req, res) => {
     const consultantTop3Percentage = consultantConcentration.slice(0, 3).reduce((s, c) => s + c.percentage, 0);
     const consultantTop5Percentage = consultantConcentration.slice(0, 5).reduce((s, c) => s + c.percentage, 0);
 
-    const manual = manualMetrics[year] || {};
+    const yearMetrics = normalizeYearMetrics(manualMetrics[year]);
+    const manual = resolveManualMetricsForPeriod(yearMetrics, period, month, quarter) || {};
 
     // A small USD reference figure alongside Gross Profit/Cash, reusing
     // the exact same rate-lookup logic above rather than a new one — only
@@ -251,13 +358,18 @@ module.exports = async (req, res) => {
     // never applied to.
     const employment = (await kv.get(EMPLOYMENT_KEY)) || {};
     const feeEarningTimeline = buildTimeline(employment, "feeEarning");
-    const yearEndDate = `${year}-12-31`;
+    const periodEndMonth = period === "month" ? month : period === "quarter" ? (QUARTER_MONTHS_LOOKUP[quarter] || [])[2] : "12";
+    const periodEndLastDay = periodEndMonth ? new Date(Date.UTC(year, parseInt(periodEndMonth, 10), 0)).getUTCDate() : 31;
+    const yearEndDate = periodEndMonth ? `${year}-${periodEndMonth}-${String(periodEndLastDay).padStart(2, "0")}` : `${year}-12-31`;
     const headcountForYear = countAsOf(feeEarningTimeline, yearEndDate);
     const revenuePerHeadGBP = headcountForYear > 0 ? totalRevenueGBP / headcountForYear : null;
     const revenuePerHeadUSD = headcountForYear > 0 ? totalRevenueUSD / headcountForYear : null;
 
     return res.status(200).json({
       year,
+      period: period || "year",
+      month: period === "month" ? month : null,
+      quarter: period === "quarter" ? quarter : null,
       totalRevenueGBP, totalRevenueUSD, countedDeals,
       averageFeePlacementCount: placementCount,
       averageFeeGBP, averageFeeUSD,
@@ -302,7 +414,8 @@ module.exports = async (req, res) => {
 
   if (req.method === "POST" && action === "set-manual-metric") {
     const {
-      year, grossProfitAmount, grossProfitCurrency, notes, cashAmount, cashCurrency, cashNotes,
+      year, period, month, quarter,
+      grossProfitAmount, grossProfitCurrency, notes, cashAmount, cashCurrency, cashNotes,
       totalExpensesAmount, totalExpensesCurrency, totalExpensesNotes,
       depreciationAmortisationAmount, depreciationAmortisationCurrency, depreciationAmortisationNotes,
       interestAmount, interestCurrency, interestNotes,
@@ -310,41 +423,50 @@ module.exports = async (req, res) => {
     } = req.body || {};
     const y = parseInt(year, 10);
     if (!y) return res.status(400).json({ error: "A valid year is required." });
+    // Which period key this save actually belongs to — "year" (the
+    // default, how every figure has been entered up to now), "Q1".."Q4",
+    // or "01".."12".
+    const periodKey = period === "month" ? month : period === "quarter" ? quarter : "year";
+    if (period === "month" && !/^(0[1-9]|1[0-2])$/.test(month || "")) return res.status(400).json({ error: "A valid month is required." });
+    if (period === "quarter" && !/^Q[1-4]$/.test(quarter || "")) return res.status(400).json({ error: "A valid quarter is required." });
+
     const all = (await kv.get(MANUAL_METRICS_KEY)) || {};
-    all[y] = {
-      ...all[y],
+    const yearMetrics = normalizeYearMetrics(all[y]);
+    const existing = yearMetrics[periodKey] || {};
+    yearMetrics[periodKey] = {
       // Gross Profit is now deliberately kept in whatever currency it was
       // entered in, same reasoning as Cash below — never force-converted
       // or silently assumed to be USD.
-      grossProfitAmount: grossProfitAmount === "" || grossProfitAmount === undefined ? (all[y] && (all[y].grossProfitAmount ?? all[y].grossProfitUSD)) || null : Number(grossProfitAmount),
-      grossProfitCurrency: grossProfitCurrency !== undefined ? grossProfitCurrency : (all[y] && all[y].grossProfitCurrency) || null,
-      notes: notes !== undefined ? notes : (all[y] && all[y].notes) || null,
+      grossProfitAmount: grossProfitAmount === "" || grossProfitAmount === undefined ? (existing.grossProfitAmount ?? existing.grossProfitUSD) || null : Number(grossProfitAmount),
+      grossProfitCurrency: grossProfitCurrency !== undefined ? grossProfitCurrency : existing.grossProfitCurrency || null,
+      notes: notes !== undefined ? notes : existing.notes || null,
       // Cash is deliberately kept in whatever currency it was entered in —
       // Reload's own reporting currency from Xero, most likely — rather
       // than force-converted to USD like the deal-based figures above.
-      cashAmount: cashAmount === "" || cashAmount === undefined ? (all[y] && all[y].cashAmount) || null : Number(cashAmount),
-      cashCurrency: cashCurrency !== undefined ? cashCurrency : (all[y] && all[y].cashCurrency) || null,
-      cashNotes: cashNotes !== undefined ? cashNotes : (all[y] && all[y].cashNotes) || null,
+      cashAmount: cashAmount === "" || cashAmount === undefined ? existing.cashAmount || null : Number(cashAmount),
+      cashCurrency: cashCurrency !== undefined ? cashCurrency : existing.cashCurrency || null,
+      cashNotes: cashNotes !== undefined ? cashNotes : existing.cashNotes || null,
       // Total Expenses — same reasoning again, kept in whatever currency
       // it was entered in.
-      totalExpensesAmount: totalExpensesAmount === "" || totalExpensesAmount === undefined ? (all[y] && all[y].totalExpensesAmount) || null : Number(totalExpensesAmount),
-      totalExpensesCurrency: totalExpensesCurrency !== undefined ? totalExpensesCurrency : (all[y] && all[y].totalExpensesCurrency) || null,
-      totalExpensesNotes: totalExpensesNotes !== undefined ? totalExpensesNotes : (all[y] && all[y].totalExpensesNotes) || null,
+      totalExpensesAmount: totalExpensesAmount === "" || totalExpensesAmount === undefined ? existing.totalExpensesAmount || null : Number(totalExpensesAmount),
+      totalExpensesCurrency: totalExpensesCurrency !== undefined ? totalExpensesCurrency : existing.totalExpensesCurrency || null,
+      totalExpensesNotes: totalExpensesNotes !== undefined ? totalExpensesNotes : existing.totalExpensesNotes || null,
       // The three pieces needed to reconstruct EBITDA from Gross Profit
       // and Total Expenses above — same currency-preserving reasoning
       // throughout.
-      depreciationAmortisationAmount: depreciationAmortisationAmount === "" || depreciationAmortisationAmount === undefined ? (all[y] && all[y].depreciationAmortisationAmount) || null : Number(depreciationAmortisationAmount),
-      depreciationAmortisationCurrency: depreciationAmortisationCurrency !== undefined ? depreciationAmortisationCurrency : (all[y] && all[y].depreciationAmortisationCurrency) || null,
-      depreciationAmortisationNotes: depreciationAmortisationNotes !== undefined ? depreciationAmortisationNotes : (all[y] && all[y].depreciationAmortisationNotes) || null,
-      interestAmount: interestAmount === "" || interestAmount === undefined ? (all[y] && all[y].interestAmount) || null : Number(interestAmount),
-      interestCurrency: interestCurrency !== undefined ? interestCurrency : (all[y] && all[y].interestCurrency) || null,
-      interestNotes: interestNotes !== undefined ? interestNotes : (all[y] && all[y].interestNotes) || null,
-      taxAmount: taxAmount === "" || taxAmount === undefined ? (all[y] && all[y].taxAmount) || null : Number(taxAmount),
-      taxCurrency: taxCurrency !== undefined ? taxCurrency : (all[y] && all[y].taxCurrency) || null,
-      taxNotes: taxNotes !== undefined ? taxNotes : (all[y] && all[y].taxNotes) || null,
+      depreciationAmortisationAmount: depreciationAmortisationAmount === "" || depreciationAmortisationAmount === undefined ? existing.depreciationAmortisationAmount || null : Number(depreciationAmortisationAmount),
+      depreciationAmortisationCurrency: depreciationAmortisationCurrency !== undefined ? depreciationAmortisationCurrency : existing.depreciationAmortisationCurrency || null,
+      depreciationAmortisationNotes: depreciationAmortisationNotes !== undefined ? depreciationAmortisationNotes : existing.depreciationAmortisationNotes || null,
+      interestAmount: interestAmount === "" || interestAmount === undefined ? existing.interestAmount || null : Number(interestAmount),
+      interestCurrency: interestCurrency !== undefined ? interestCurrency : existing.interestCurrency || null,
+      interestNotes: interestNotes !== undefined ? interestNotes : existing.interestNotes || null,
+      taxAmount: taxAmount === "" || taxAmount === undefined ? existing.taxAmount || null : Number(taxAmount),
+      taxCurrency: taxCurrency !== undefined ? taxCurrency : existing.taxCurrency || null,
+      taxNotes: taxNotes !== undefined ? taxNotes : existing.taxNotes || null,
     };
+    all[y] = yearMetrics;
     await kv.set(MANUAL_METRICS_KEY, all);
-    return res.status(200).json({ ok: true, year: y, metrics: all[y] });
+    return res.status(200).json({ ok: true, year: y, period: period || "year", month: period === "month" ? month : null, quarter: period === "quarter" ? quarter : null, metrics: yearMetrics[periodKey] });
   }
 
   // Repeat Client Rate — deliberately NOT scoped to a single year, unlike
