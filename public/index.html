@@ -2322,6 +2322,81 @@ function CompanyOverviewPage({ token }) {
     }
   }
 
+  // One click applies every field Xero actually found and saves
+  // immediately — rather than six separate "use" links followed by a
+  // separate Save button. Reads straight from the Xero pull itself, not
+  // the input fields, since a state update from a "use" click wouldn't
+  // actually be visible yet within this same handler. A field Xero
+  // didn't find (shows "No X line found") is left exactly as it already
+  // was, never overwritten with nothing, same as the old per-field
+  // "use" links never touched a field that had nothing to use.
+  async function useAndSaveFromXero() {
+    if (!xeroPull) return;
+    const fields = {
+      grossProfitAmount: grossProfitInput, grossProfitNotes: notesInput,
+      cashAmount: cashInput, cashNotes: cashNotesInput,
+      totalExpensesAmount: totalExpensesInput, totalExpensesNotes: totalExpensesNotesInput,
+      depreciationAmortisationAmount: depreciationAmortisationInput, depreciationAmortisationNotes: depreciationAmortisationNotesInput,
+      interestAmount: interestInput, interestNotes: interestNotesInput,
+      taxAmount: taxInput, taxNotes: taxNotesInput,
+    };
+    if (xeroPull.grossProfit !== null) {
+      fields.grossProfitAmount = String(Math.round(xeroPull.grossProfit));
+      fields.grossProfitNotes = `Pulled from Xero P&L, ${xeroPull.periodStart} to ${xeroPull.periodEnd}`;
+    }
+    if (xeroPull.cash !== null) {
+      fields.cashAmount = String(Math.round(xeroPull.cash));
+      fields.cashNotes = `Pulled from Xero Balance Sheet, as at ${xeroPull.asAtDate}`;
+    }
+    if (xeroPull.totalExpenses !== null) {
+      fields.totalExpensesAmount = String(Math.round(xeroPull.totalExpenses));
+      fields.totalExpensesNotes = `Pulled from Xero P&L, ${xeroPull.periodStart} to ${xeroPull.periodEnd}`;
+    }
+    if (xeroPull.depreciationAmortisation !== null) {
+      fields.depreciationAmortisationAmount = String(Math.round(xeroPull.depreciationAmortisation));
+      fields.depreciationAmortisationNotes = `Pulled from Xero P&L, ${xeroPull.periodStart} to ${xeroPull.periodEnd}`;
+    }
+    if (xeroPull.interest !== null) {
+      fields.interestAmount = String(Math.round(xeroPull.interest));
+      fields.interestNotes = `Pulled from Xero P&L, ${xeroPull.periodStart} to ${xeroPull.periodEnd}`;
+    }
+    if (xeroPull.tax !== null) {
+      fields.taxAmount = String(Math.round(xeroPull.tax));
+      fields.taxNotes = `Pulled from Xero P&L, ${xeroPull.periodStart} to ${xeroPull.periodEnd}`;
+    }
+    // Reflect what was actually used back into the visible input fields
+    // too, so the screen honestly shows what just got saved, not just
+    // the database.
+    setGrossProfitInput(fields.grossProfitAmount); setNotesInput(fields.grossProfitNotes);
+    setCashInput(fields.cashAmount); setCashNotesInput(fields.cashNotes);
+    setTotalExpensesInput(fields.totalExpensesAmount); setTotalExpensesNotesInput(fields.totalExpensesNotes);
+    setDepreciationAmortisationInput(fields.depreciationAmortisationAmount); setDepreciationAmortisationNotesInput(fields.depreciationAmortisationNotes);
+    setInterestInput(fields.interestAmount); setInterestNotesInput(fields.interestNotes);
+    setTaxInput(fields.taxAmount); setTaxNotesInput(fields.taxNotes);
+
+    setSaveError(""); setSaving(true);
+    try {
+      const res = await fetch("/api/company-overview?action=set-manual-metric", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          year, grossProfitAmount: fields.grossProfitAmount, grossProfitCurrency: "GBP", notes: fields.grossProfitNotes,
+          cashAmount: fields.cashAmount, cashCurrency: "GBP", cashNotes: fields.cashNotes,
+          totalExpensesAmount: fields.totalExpensesAmount, totalExpensesCurrency: "GBP", totalExpensesNotes: fields.totalExpensesNotes,
+          depreciationAmortisationAmount: fields.depreciationAmortisationAmount, depreciationAmortisationCurrency: "GBP", depreciationAmortisationNotes: fields.depreciationAmortisationNotes,
+          interestAmount: fields.interestAmount, interestCurrency: "GBP", interestNotes: fields.interestNotes,
+          taxAmount: fields.taxAmount, taxCurrency: "GBP", taxNotes: fields.taxNotes,
+        }),
+      });
+      if (!res.ok) { const body = await res.json(); setSaveError(body.error || "Couldn't save."); return; }
+      await load();
+    } catch (e) {
+      setSaveError("Couldn't reach the server.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   async function pullFromXero() {
     setXeroPullError(""); setXeroPulling(true); setXeroPull(null);
     try {
@@ -2568,59 +2643,27 @@ function CompanyOverviewPage({ token }) {
         xeroPull && React.createElement("div", { style: { display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap", padding: "8px 10px", marginBottom: 14, background: "rgba(142,185,176,0.10)", borderRadius: 6, fontSize: 12.5 } },
           React.createElement("span", { style: { color: INDIGO_MUTED } }, "Xero:"),
           xeroPull.grossProfit !== null
-            ? React.createElement("span", null,
-                `Gross Profit ${Math.round(xeroPull.grossProfit).toLocaleString()} `,
-                React.createElement("span", {
-                  onClick: () => { setGrossProfitInput(String(Math.round(xeroPull.grossProfit))); setNotesInput(`Pulled from Xero P&L, ${xeroPull.periodStart} to ${xeroPull.periodEnd}`); },
-                  style: { color: VERDIGRIS, textDecoration: "underline", cursor: "pointer" }
-                }, "use")
-              )
+            ? React.createElement("span", null, `Gross Profit ${Math.round(xeroPull.grossProfit).toLocaleString()}`)
             : React.createElement("span", { style: { color: MELON_LINK } }, "No Gross Profit line found"),
           xeroPull.cash !== null
-            ? React.createElement("span", null,
-                `Cash ${Math.round(xeroPull.cash).toLocaleString()} `,
-                React.createElement("span", {
-                  onClick: () => { setCashInput(String(Math.round(xeroPull.cash))); setCashNotesInput(`Pulled from Xero Balance Sheet, as at ${xeroPull.asAtDate}`); },
-                  style: { color: VERDIGRIS, textDecoration: "underline", cursor: "pointer" }
-                }, "use")
-              )
+            ? React.createElement("span", null, `Cash ${Math.round(xeroPull.cash).toLocaleString()}`)
             : React.createElement("span", { style: { color: MELON_LINK } }, "No Cash line found"),
           xeroPull.totalExpenses !== null
-            ? React.createElement("span", null,
-                `Total Expenses ${Math.round(xeroPull.totalExpenses).toLocaleString()} `,
-                React.createElement("span", {
-                  onClick: () => { setTotalExpensesInput(String(Math.round(xeroPull.totalExpenses))); setTotalExpensesNotesInput(`Pulled from Xero P&L, ${xeroPull.periodStart} to ${xeroPull.periodEnd}`); },
-                  style: { color: VERDIGRIS, textDecoration: "underline", cursor: "pointer" }
-                }, "use")
-              )
+            ? React.createElement("span", null, `Total Expenses ${Math.round(xeroPull.totalExpenses).toLocaleString()}`)
             : React.createElement("span", { style: { color: MELON_LINK } }, "No Total Expenses line found"),
           xeroPull.depreciationAmortisation !== null
-            ? React.createElement("span", null,
-                `D&A ${Math.round(xeroPull.depreciationAmortisation).toLocaleString()} `,
-                React.createElement("span", {
-                  onClick: () => { setDepreciationAmortisationInput(String(Math.round(xeroPull.depreciationAmortisation))); setDepreciationAmortisationNotesInput(`Pulled from Xero P&L, ${xeroPull.periodStart} to ${xeroPull.periodEnd}`); },
-                  style: { color: VERDIGRIS, textDecoration: "underline", cursor: "pointer" }
-                }, "use")
-              )
+            ? React.createElement("span", null, `D&A ${Math.round(xeroPull.depreciationAmortisation).toLocaleString()}`)
             : React.createElement("span", { style: { color: MELON_LINK } }, "No D&A line found"),
           xeroPull.interest !== null
-            ? React.createElement("span", null,
-                `Interest ${Math.round(xeroPull.interest).toLocaleString()} `,
-                React.createElement("span", {
-                  onClick: () => { setInterestInput(String(Math.round(xeroPull.interest))); setInterestNotesInput(`Pulled from Xero P&L, ${xeroPull.periodStart} to ${xeroPull.periodEnd}`); },
-                  style: { color: VERDIGRIS, textDecoration: "underline", cursor: "pointer" }
-                }, "use")
-              )
+            ? React.createElement("span", null, `Interest ${Math.round(xeroPull.interest).toLocaleString()}`)
             : React.createElement("span", { style: { color: MELON_LINK } }, "No Interest line found"),
           xeroPull.tax !== null
-            ? React.createElement("span", null,
-                `Tax ${Math.round(xeroPull.tax).toLocaleString()} `,
-                React.createElement("span", {
-                  onClick: () => { setTaxInput(String(Math.round(xeroPull.tax))); setTaxNotesInput(`Pulled from Xero P&L, ${xeroPull.periodStart} to ${xeroPull.periodEnd}`); },
-                  style: { color: VERDIGRIS, textDecoration: "underline", cursor: "pointer" }
-                }, "use")
-              )
-            : React.createElement("span", { style: { color: MELON_LINK } }, "No Tax line found")
+            ? React.createElement("span", null, `Tax ${Math.round(xeroPull.tax).toLocaleString()}`)
+            : React.createElement("span", { style: { color: MELON_LINK } }, "No Tax line found"),
+          React.createElement("button", {
+            onClick: useAndSaveFromXero, disabled: saving,
+            style: { ...ghostStyle, padding: "6px 12px", fontSize: 12 }
+          }, saving ? "Saving…" : "Use and save")
         ),
         saveError && React.createElement("div", { style: errorStyle }, saveError),
         React.createElement("div", { style: { display: "flex", gap: 10, flexWrap: "wrap", alignItems: "flex-end", marginBottom: 10 } },
