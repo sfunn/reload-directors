@@ -3851,6 +3851,92 @@ function BpKpi({ label, value, sub, extra, color }) {
   );
 }
 
+// ---- Debtors and creditors -------------------------------------------
+const BP_AGE_BUCKETS = [
+  { key: "current", label: "Current", color: INDIGO },
+  { key: "d1_30", label: "1-30 days", color: VERDIGRIS },
+  { key: "d31_60", label: "31-60 days", color: MELON },
+  { key: "d61_90", label: "61-90 days", color: HEATHER },
+  { key: "older", label: "Over 90 days", color: "#c0392b" },
+];
+
+function BpAgeBar({ totals }) {
+  const total = totals.total;
+  if (!(total > 0)) return React.createElement("div", { style: { fontSize: 13, color: INDIGO_MUTED } }, "Nothing outstanding.");
+  return React.createElement("div", null,
+    React.createElement("div", { style: { display: "flex", height: 26, borderRadius: 4, overflow: "hidden" } },
+      ...BP_AGE_BUCKETS.filter((b) => totals[b.key] > 0).map((b) => React.createElement("div", { key: b.key, title: `${b.label}: ${bpFmtGBP(totals[b.key])}`, style: { width: `${(totals[b.key] / total) * 100}%`, background: b.color } }))),
+    React.createElement("div", { style: { display: "flex", marginTop: 8 } },
+      ...BP_AGE_BUCKETS.map((b) => React.createElement("div", { key: b.key, style: { flex: 1, color: INDIGO } },
+        React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: INDIGO_MUTED } },
+          React.createElement("span", { style: { display: "inline-block", width: 9, height: 9, background: b.color } }), b.label),
+        React.createElement("div", { style: { fontSize: 16, fontFamily: "Georgia, serif" } }, `${Math.round((totals[b.key] / total) * 100)}%`),
+        React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED } }, bpFmtGBP(totals[b.key])))))
+  );
+}
+
+function BpAgeTable({ contacts, other, firstColumn }) {
+  const cell = (v, bold) => React.createElement("td", { style: { textAlign: "right", padding: "3px 4px", fontWeight: bold ? 700 : 400 } }, v > 0 ? bpFmtGBP(v) : "-");
+  const row = (c, key, label) => React.createElement("tr", { key, style: { borderTop: `1px solid ${INDIGO_HAIRLINE}` } },
+    React.createElement("td", { style: { padding: "3px 4px" } }, label),
+    ...BP_AGE_BUCKETS.map((b) => React.cloneElement(cell(c[b.key]), { key: b.key })),
+    React.cloneElement(cell(c.total, true), { key: "total" }));
+  return React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 11, fontFamily: "'Work Sans', sans-serif", color: INDIGO, marginTop: 12 } },
+    React.createElement("thead", null, React.createElement("tr", null,
+      React.createElement("th", { style: { textAlign: "left", padding: "3px 4px", color: INDIGO_MUTED, fontWeight: 600 } }, firstColumn),
+      ...BP_AGE_BUCKETS.map((b) => React.createElement("th", { key: b.key, style: { textAlign: "right", padding: "3px 4px", color: INDIGO_MUTED, fontWeight: 600 } }, b.label)),
+      React.createElement("th", { style: { textAlign: "right", padding: "3px 4px", color: INDIGO_MUTED, fontWeight: 600 } }, "Total"))),
+    React.createElement("tbody", null,
+      ...contacts.map((c) => row(c, c.name, c.name)),
+      other ? row(other, "other", `Other (${other.count})`) : null)
+  );
+}
+
+// The exchange-rate assumption is the part most likely to be wrong, so the
+// gap against Xero's own balance is shown on the page rather than hidden.
+function bpReconciliation(label, rec) {
+  if (!rec) return null;
+  const pct = rec.differencePct;
+  const large = pct !== null && Math.abs(pct) > 5;
+  return React.createElement("div", { style: { fontSize: 11, marginTop: 8, color: large ? "#c0392b" : INDIGO_MUTED, fontWeight: large ? 600 : 400 } },
+    `Xero's balance sheet shows ${bpFmtGBP(rec.xero)} ${label}. This ageing totals ${bpFmtGBP(rec.computed)}, a difference of ${bpFmtGBP(Math.abs(rec.difference))}. ` +
+    (large ? "That is larger than credit notes and currency revaluation would normally explain, so treat these figures with caution until it is checked." : "Small gaps are normal (credit notes, overpayments, currency revaluation)."));
+}
+
+function BpAgeBlock({ title, owedLabel, firstColumn, data, reconciliation, reconLabel }) {
+  const currencies = Object.entries(data.byCurrency).filter(([, b]) => b.total > 0);
+  const showCurrencies = currencies.some(([c]) => c !== data.baseCurrency);
+  return React.createElement("div", { style: { marginBottom: 26 } },
+    React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 8, flexWrap: "wrap", gap: 6 } },
+      React.createElement("div", { style: { fontFamily: "'Work Sans', sans-serif", fontSize: 13, color: INDIGO_MUTED } }, title),
+      React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 22, color: INDIGO } }, `${bpFmtGBP(data.totals.total)} `, React.createElement("span", { style: { fontSize: 12, color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif" } }, owedLabel))),
+    React.createElement(BpAgeBar, { totals: data.totals }),
+    showCurrencies && React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 8 } },
+      `Outstanding by invoice currency: ${currencies.map(([c, b]) => `${c} ${Math.round(b.total).toLocaleString()}`).join(", ")}. Foreign currency is converted to GBP at the rate on each invoice.`),
+    data.diagnostics.missingRate.length > 0 && React.createElement("div", { style: { fontSize: 11, marginTop: 6, color: "#c0392b", fontWeight: 600 } },
+      `${data.diagnostics.missingRate.length} foreign-currency invoice${data.diagnostics.missingRate.length === 1 ? " has" : "s have"} no exchange rate in Xero and ${data.diagnostics.missingRate.length === 1 ? "is" : "are"} left out of the GBP figures above.`),
+    data.contacts.length > 0 && React.createElement(BpAgeTable, { contacts: data.contacts, other: data.otherContacts, firstColumn }),
+    bpReconciliation(reconLabel, reconciliation)
+  );
+}
+
+function BpDebtorsSection({ aged, agedError, agedLoading }) {
+  let body;
+  if (agedError) {
+    body = React.createElement("div", { style: { ...errorStyle, marginBottom: 0 } }, `Debtors and creditors could not be loaded from Xero: ${agedError}`);
+  } else if (!aged) {
+    body = React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, agedLoading ? "Loading from Xero…" : "Not loaded.");
+  } else {
+    body = React.createElement(React.Fragment, null,
+      React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginBottom: 14 } }, `As at ${aged.asAt}, today. Xero cannot rewind unpaid invoices to a past month end, so this does not change with the month chosen above.`),
+      React.createElement(BpAgeBlock, { title: "Aged debtors", owedLabel: "owed to Reload", firstColumn: "Customer", data: aged.receivables, reconciliation: aged.reconciliation && aged.reconciliation.receivables, reconLabel: "receivable" }),
+      React.createElement(BpAgeBlock, { title: "Aged creditors", owedLabel: "owed by Reload", firstColumn: "Supplier", data: aged.payables, reconciliation: aged.reconciliation && aged.reconciliation.payables, reconLabel: "payable" }),
+      aged.truncated && React.createElement("div", { style: { fontSize: 11, color: "#c0392b", fontWeight: 600 } }, "There were more unpaid invoices than could be loaded, so these totals are incomplete.")
+    );
+  }
+  return React.createElement(BpSection, { title: "Debtors and Creditors", source: "Xero unpaid invoices" }, body);
+}
+
 function BoardPackPage({ token }) {
   const initial = bpDefaultPeriod(new Date());
   const [year, setYear] = useState(initial.year);
@@ -3881,6 +3967,31 @@ function BoardPackPage({ token }) {
     }
   }, [token, year, month]);
   useEffect(() => { load(); }, [load]);
+
+  // Debtors and creditors are as at today whatever month is chosen, so they
+  // are fetched once per visit, not on every month click: it saves repeated
+  // calls to Xero and avoids its rate limits.
+  const [aged, setAged] = useState(null);
+  const [agedError, setAgedError] = useState("");
+  const [agedLoading, setAgedLoading] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setAgedLoading(true); setAgedError("");
+      try {
+        const res = await fetch("/api/xero-reports?action=aged-balances", { headers: { Authorization: `Bearer ${token}` } });
+        const body = await res.json();
+        if (cancelled) return;
+        if (!res.ok) { setAgedError(body.error || "Couldn't load debtors and creditors."); return; }
+        setAged(body);
+      } catch (e) {
+        if (!cancelled) setAgedError("Couldn't reach the server.");
+      } finally {
+        if (!cancelled) setAgedLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [token]);
 
   const through = parseInt(month, 10);
   const s = (ov && series) ? computeBoardPackSeries(series.current, series.previous, through) : null;
@@ -3931,7 +4042,7 @@ function BoardPackPage({ token }) {
           xeroKpi("EBITDA", ov.ebitdaAmount, "ebitdaAmount", INDIGO),
           xeroKpi("Cash at month end", ov.cashAmount, "cashAmount", VERDIGRIS)
         ),
-        React.createElement("div", { style: { marginTop: 10, fontSize: 11, color: INDIGO_MUTED } }, "Xero figures come from the daily automated pull. A month's figures keep refreshing for ten days after it ends, while late journals land in Xero.")
+        React.createElement("div", { style: { marginTop: 10, fontSize: 11, color: INDIGO_MUTED } }, "Xero figures come from the daily automated pull. A month's figures keep refreshing for thirty days after it ends, while late journals land in Xero.")
       ),
 
       React.createElement(BpSection, { title: "Revenue Analysis", source: "Atlas placements, including uplift rules. Will not match Xero invoiced revenue." },
@@ -3974,8 +4085,10 @@ function BoardPackPage({ token }) {
         )
       ),
 
+      React.createElement(BpDebtorsSection, { aged, agedError, agedLoading }),
+
       React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, lineHeight: 1.5 } },
-        "Basis of preparation: revenue is on an Atlas placement basis, dated by start date where one exists, and includes the agreed uplift rules. Profit, cost and cash figures are taken from Xero. The two sources are not reconciled to each other, so margins should not be calculated across them.")
+        "Basis of preparation: revenue is on an Atlas placement basis, dated by start date where one exists, and includes the agreed uplift rules. Profit, cost, cash, debtor and creditor figures are taken from Xero. The two sources are not reconciled to each other, so margins should not be calculated across them.")
     )
   );
 }
