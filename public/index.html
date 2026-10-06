@@ -3894,13 +3894,21 @@ function BpAgeTable({ contacts, other, firstColumn }) {
 
 // The exchange-rate assumption is the part most likely to be wrong, so the
 // gap against Xero's own balance is shown on the page rather than hidden.
+// Red is reserved for a gap too big for ordinary causes: a wrong exchange
+// rate direction would put this out by tens of percent, while supplier
+// credits or currency revaluation move it by a few. Below that, the wording
+// says which way the gap points and what typically causes that direction.
 function bpReconciliation(label, rec) {
   if (!rec) return null;
   const pct = rec.differencePct;
-  const large = pct !== null && Math.abs(pct) > 5;
-  return React.createElement("div", { style: { fontSize: 11, marginTop: 8, color: large ? "#c0392b" : INDIGO_MUTED, fontWeight: large ? 600 : 400 } },
-    `Xero's balance sheet shows ${bpFmtGBP(rec.xero)} ${label}. This ageing totals ${bpFmtGBP(rec.computed)}, a difference of ${bpFmtGBP(Math.abs(rec.difference))}. ` +
-    (large ? "That is larger than credit notes and currency revaluation would normally explain, so treat these figures with caution until it is checked." : "Small gaps are normal (credit notes, overpayments, currency revaluation)."));
+  const large = pct !== null && Math.abs(pct) > 10 && Math.abs(rec.difference) > 5000;
+  const base = `Xero's balance sheet shows ${bpFmtGBP(rec.xero)} ${label}. This ageing totals ${bpFmtGBP(rec.computed)}, a difference of ${bpFmtGBP(Math.abs(rec.difference))}. `;
+  let why;
+  if (large) why = "That is larger than credit notes and currency revaluation would normally explain, so treat these figures with caution until it is checked.";
+  else if (Math.abs(rec.difference) < 1) why = "They agree.";
+  else if (rec.difference > 0) why = "This ageing is higher than Xero's balance, which is typically explained by credit notes, prepayments or overpayments held against these contacts, since a list of unpaid invoices does not include them.";
+  else why = "This ageing is lower than Xero's balance, which is typically explained by currency revaluation, since Xero values foreign-currency balances at today's rate and this uses each invoice's own rate.";
+  return React.createElement("div", { style: { fontSize: 11, marginTop: 8, color: large ? "#c0392b" : INDIGO_MUTED, fontWeight: large ? 600 : 400 } }, base + why);
 }
 
 function BpAgeBlock({ title, owedLabel, firstColumn, data, reconciliation, reconLabel }) {
@@ -3937,6 +3945,120 @@ function BpDebtorsSection({ aged, agedError, agedLoading }) {
   return React.createElement(BpSection, { title: "Debtors and Creditors", source: "Xero unpaid invoices" }, body);
 }
 
+// ---- Profit and loss (Xero) ------------------------------------------
+function bpFmtMoney(v) { return v < 0 ? `-£${Math.round(-v).toLocaleString()}` : `£${Math.round(v).toLocaleString()}`; }
+
+// Margins and operating profit are worked out here from Xero's own lines,
+// so a margin can never come from mixing two sources.
+function bpPlDerive(m) {
+  if (!m) return null;
+  const grossMargin = m.income > 0 && m.grossProfit !== null ? (m.grossProfit / m.income) * 100 : null;
+  const operatingProfit = m.grossProfit !== null && m.expenses !== null ? m.grossProfit - m.expenses : null;
+  const operatingMargin = m.income > 0 && operatingProfit !== null ? (operatingProfit / m.income) * 100 : null;
+  return { ...m, grossMargin, operatingProfit, operatingMargin };
+}
+
+function BpCostChart({ costOfSales, expenses, income, breakeven }) {
+  const W = 760, H = 250;
+  const totals = costOfSales.map((c, i) => (c === null && expenses[i] === null) ? null : (c || 0) + (expenses[i] || 0));
+  const beLine = totals.map((t) => (t === null || breakeven === null ? null : breakeven));
+  const f = bpFrame([...totals, ...income, ...beLine], W, H);
+  const barW = f.xStep * 0.58;
+  const bars = [];
+  totals.forEach((t, i) => {
+    if (t === null) return;
+    const cos = costOfSales[i] || 0;
+    bars.push(React.createElement("rect", { key: `c${i}`, x: f.cx(i) - barW / 2, y: f.y(cos), width: barW, height: Math.max(0, f.mt + f.ph - f.y(cos)), fill: MELON }));
+    bars.push(React.createElement("rect", { key: `e${i}`, x: f.cx(i) - barW / 2, y: f.y(t), width: barW, height: Math.max(0, f.y(cos) - f.y(t)), fill: INDIGO }));
+  });
+  return React.createElement("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", style: { display: "block" }, role: "img", "aria-label": "Monthly costs against income" },
+    ...f.grid, ...bars,
+    React.createElement("path", { key: "be", d: bpPath(beLine, f.cx, f.y), fill: "none", stroke: INDIGO_MUTED, strokeWidth: 2, strokeDasharray: "5 4" }),
+    React.createElement("path", { key: "inc", d: bpPath(income, f.cx, f.y), fill: "none", stroke: VERDIGRIS, strokeWidth: 2.5 }),
+    ...f.labels
+  );
+}
+
+function BpPlSection({ pl, plError, plLoading, year, month }) {
+  let body;
+  if (plError) {
+    body = React.createElement("div", { style: { ...errorStyle, marginBottom: 0 } }, `The profit and loss could not be loaded from Xero: ${plError}`);
+  } else if (!pl) {
+    body = React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, plLoading ? "Loading from Xero…" : "Not loaded.");
+  } else {
+    const through = parseInt(month, 10);
+    const byMonth = {};
+    pl.months.forEach((m) => { byMonth[m.month] = m; });
+    const curKey = `${year}-${month}`;
+    const prevKey = through === 1 ? `${year - 1}-12` : `${year}-${bpPad(through - 1)}`;
+    const cur = bpPlDerive(byMonth[curKey]);
+    const prev = bpPlDerive(byMonth[prevKey]);
+    const ytdMonths = Array.from({ length: through }, (_, i) => byMonth[`${year}-${bpPad(i + 1)}`]);
+    const ytdComplete = ytdMonths.every(Boolean);
+    const sumField = (k) => (ytdComplete && ytdMonths.every((m) => m[k] !== null)) ? ytdMonths.reduce((s, m) => s + m[k], 0) : null;
+    const ytd = ytdComplete ? bpPlDerive({ income: sumField("income"), costOfSales: sumField("costOfSales"), grossProfit: sumField("grossProfit"), expenses: sumField("expenses"), netProfit: sumField("netProfit") }) : null;
+
+    const costOfSales = [], expenses = [], income = [];
+    const totalCosts = [];
+    for (let i = 0; i < 12; i++) {
+      const m = i < through ? byMonth[`${year}-${bpPad(i + 1)}`] : null;
+      costOfSales.push(m ? m.costOfSales : null);
+      expenses.push(m ? m.expenses : null);
+      income.push(m ? m.income : null);
+      if (m && (m.costOfSales !== null || m.expenses !== null)) totalCosts.push((m.costOfSales || 0) + (m.expenses || 0));
+    }
+    const breakeven = totalCosts.length > 0 ? totalCosts.reduce((s, v) => s + v, 0) / totalCosts.length : null;
+
+    const rows = [
+      { label: "Income", key: "income", money: true },
+      { label: "Cost of sales", key: "costOfSales", money: true },
+      { label: "Gross profit", key: "grossProfit", money: true, bold: true },
+      { label: "Gross margin", key: "grossMargin" },
+      { label: "Operating expenses", key: "expenses", money: true },
+      { label: "Operating profit", key: "operatingProfit", money: true, bold: true },
+      { label: "Operating margin", key: "operatingMargin" },
+      { label: "Net profit, as reported by Xero", key: "netProfit", money: true, bold: true },
+    ];
+    const fmt = (r, m) => (!m || m[r.key] === null || m[r.key] === undefined) ? "n/a" : (r.money ? bpFmtMoney(m[r.key]) : `${m[r.key].toFixed(1)}%`);
+    const change = (r) => {
+      if (!cur || !prev || cur[r.key] === null || prev[r.key] === null || cur[r.key] === undefined || prev[r.key] === undefined) return "";
+      if (!r.money) { const d = cur[r.key] - prev[r.key]; return `${d >= 0 ? "▲" : "▼"} ${Math.abs(d).toFixed(1)} pts`; }
+      if (prev[r.key] === 0) return "";
+      const p = ((cur[r.key] - prev[r.key]) / Math.abs(prev[r.key])) * 100;
+      return `${p >= 0 ? "▲" : "▼"} ${Math.abs(p).toFixed(1)}%`;
+    };
+    const th = (t, right) => React.createElement("th", { style: { textAlign: right ? "right" : "left", padding: "4px 6px", color: INDIGO_MUTED, fontWeight: 600, fontSize: 11 } }, t);
+    const MISSING_NAMES = { income: "income", costOfSales: "cost of sales", grossProfit: "gross profit", expenses: "operating expenses", netProfit: "net profit" };
+    const cc = pl.crossCheck.find((c) => c.month === curKey);
+
+    body = !cur
+      ? React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Xero has no profit and loss column for this month yet.")
+      : React.createElement(React.Fragment, null,
+        React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 12.5, fontFamily: "'Work Sans', sans-serif", color: INDIGO } },
+          React.createElement("thead", null, React.createElement("tr", null, th(""), th(`${BP_MONTH_NAMES[through - 1]} ${year}`, true), th(prev ? `${BP_MONTH_NAMES[(through + 10) % 12]}` : "Previous month", true), th("Change", true), th(`Year to date`, true))),
+          React.createElement("tbody", null, ...rows.map((r) => React.createElement("tr", { key: r.key, style: { borderTop: `1px solid ${INDIGO_HAIRLINE}`, fontWeight: r.bold ? 700 : 400, color: r.money ? INDIGO : INDIGO_MUTED } },
+            React.createElement("td", { style: { padding: "5px 6px" } }, r.label),
+            React.createElement("td", { style: { textAlign: "right", padding: "5px 6px" } }, fmt(r, cur)),
+            React.createElement("td", { style: { textAlign: "right", padding: "5px 6px", color: INDIGO_MUTED } }, fmt(r, prev)),
+            React.createElement("td", { style: { textAlign: "right", padding: "5px 6px", color: INDIGO_MUTED } }, change(r)),
+            React.createElement("td", { style: { textAlign: "right", padding: "5px 6px" } }, fmt(r, ytd)))))
+        ),
+        !ytdComplete && React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 6 } }, "Year to date is blank because Xero did not return every month from January."),
+        React.createElement("div", { style: { fontFamily: "'Work Sans', sans-serif", fontSize: 13, color: INDIGO_MUTED, margin: "22px 0 4px" } }, "Monthly costs against income"),
+        React.createElement(BpLegend, { items: [{ label: "Cost of sales", color: MELON, bar: true }, { label: "Operating expenses", color: INDIGO, bar: true }, { label: "Income", color: VERDIGRIS }, { label: "Average monthly costs (breakeven)", color: INDIGO_MUTED, dashed: true }] }),
+        React.createElement(BpCostChart, { costOfSales, expenses, income, breakeven }),
+        breakeven !== null && React.createElement("div", { style: { marginTop: 8, fontSize: 12, color: INDIGO } }, `Average monthly costs so far this year are ${bpFmtGBP(breakeven)}. That is the income needed each month to break even.`),
+        pl.columnsParsedBy === "position" && React.createElement("div", { style: { marginTop: 8, fontSize: 11, color: "#c0392b", fontWeight: 600 } }, "Month columns were identified by position because Xero's column headings could not be read. Check these figures against Xero before relying on them."),
+        pl.missing.length > 0 && React.createElement("div", { style: { marginTop: 8, fontSize: 11, color: "#c0392b", fontWeight: 600 } }, `Xero's report has no row this page recognises for: ${pl.missing.map((k) => MISSING_NAMES[k] || k).join(", ")}. Those show as n/a.`),
+        cc && (Math.abs(cc.difference) <= 1
+          ? React.createElement("div", { style: { marginTop: 8, fontSize: 11, color: INDIGO_MUTED } }, `Gross profit for ${BP_MONTH_NAMES[through - 1]} agrees with the figure saved by the daily Xero pull.`)
+          : React.createElement("div", { style: { marginTop: 8, fontSize: 11, color: "#c0392b", fontWeight: 600 } }, `Gross profit for ${BP_MONTH_NAMES[through - 1]} is ${bpFmtMoney(cc.xero)} in the monthly report but ${bpFmtMoney(cc.saved)} in the figure saved by the daily pull. Check before relying on either.`)),
+        React.createElement("div", { style: { marginTop: 8, fontSize: 11, color: INDIGO_MUTED } }, "Income here is Xero's invoiced income. It will not match the Atlas revenue earlier in this pack.")
+      );
+  }
+  return React.createElement(BpSection, { title: "Profit and Loss", source: "Xero profit and loss, calendar months" }, body);
+}
+
 function BoardPackPage({ token }) {
   const initial = bpDefaultPeriod(new Date());
   const [year, setYear] = useState(initial.year);
@@ -3967,6 +4089,30 @@ function BoardPackPage({ token }) {
     }
   }, [token, year, month]);
   useEffect(() => { load(); }, [load]);
+
+  // One call returns every month of the chosen year, so changing the month
+  // is just reading another column. It only refetches when the year changes.
+  const [pl, setPl] = useState(null);
+  const [plError, setPlError] = useState("");
+  const [plLoading, setPlLoading] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      setPlLoading(true); setPlError(""); setPl(null);
+      try {
+        const res = await fetch(`/api/xero-reports?action=pl-monthly&year=${year}`, { headers: { Authorization: `Bearer ${token}` } });
+        const body = await res.json();
+        if (cancelled) return;
+        if (!res.ok) { setPlError(body.error || "Couldn't load the profit and loss."); return; }
+        setPl(body);
+      } catch (e) {
+        if (!cancelled) setPlError("Couldn't reach the server.");
+      } finally {
+        if (!cancelled) setPlLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [token, year]);
 
   // Debtors and creditors are as at today whatever month is chosen, so they
   // are fetched once per visit, not on every month click: it saves repeated
@@ -4084,6 +4230,8 @@ function BoardPackPage({ token }) {
             React.createElement("div", { style: { width: 130, textAlign: "right", flexShrink: 0 } }, `${bpFmtGBP(r.gbp)}  ${r.pct.toFixed(1)}%`)))
         )
       ),
+
+      React.createElement(BpPlSection, { pl, plError, plLoading, year, month }),
 
       React.createElement(BpDebtorsSection, { aged, agedError, agedLoading }),
 
