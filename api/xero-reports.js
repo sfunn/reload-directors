@@ -53,7 +53,7 @@ function buildAutoPullSaveFields(pulled) {
 // accruals land in Xero days after a period closes, so a figure frozen
 // at whatever Xero showed on the last day is not the final figure, and
 // a board pack built from it would be wrong.
-const CATCH_UP_DAYS = 10;
+const CATCH_UP_DAYS = 30;
 
 // Which periods one daily run refreshes: always the current month and
 // current quarter, plus, during the catch-up window, the month that
@@ -453,6 +453,111 @@ async function pullXeroFiguresForPeriod(year, period, month, quarter, xeroHeader
   }
 }
 
+// ---- Aged debtors and creditors -------------------------------------
+// Xero's own aged-receivables report only works one contact at a time, so
+// the ageing is calculated here from the list of unpaid invoices instead.
+// That also means it can only ever show the position as at today: Xero
+// cannot rewind unpaid invoices to a past month end, and the page says so.
+
+// Xero returns dates either as "/Date(1580515200000+0000)/" or as an ISO
+// string depending on the field, so both are handled and reduced to a
+// plain YYYY-MM-DD.
+function parseXeroDate(raw) {
+  if (!raw || typeof raw !== "string") return null;
+  const ms = /\/Date\((-?\d+)/.exec(raw);
+  if (ms) return new Date(parseInt(ms[1], 10)).toISOString().slice(0, 10);
+  const iso = /^(\d{4}-\d{2}-\d{2})/.exec(raw);
+  return iso ? iso[1] : null;
+}
+
+// Overdue days to bucket. Due today or in the future is "current".
+function ageBucketFor(daysOverdue) {
+  if (daysOverdue <= 0) return "current";
+  if (daysOverdue <= 30) return "d1_30";
+  if (daysOverdue <= 60) return "d31_60";
+  if (daysOverdue <= 90) return "d61_90";
+  return "older";
+}
+const emptyAgeBuckets = () => ({ current: 0, d1_30: 0, d31_60: 0, d61_90: 0, older: 0, total: 0 });
+
+// Turns a list of unpaid Xero invoices into ageing buckets. Totals are in
+// the base currency (GBP): a foreign-currency invoice is converted using
+// the rate Xero holds on that invoice, expressed as units of foreign
+// currency per 1 unit of base, so GBP = amount / rate. An invoice with no
+// usable rate is NOT guessed at: it's left out of the GBP totals, still
+// counted in its own currency's totals, and listed in diagnostics.
+function buildAgedBalances(invoices, asAt, baseCurrency) {
+  const base = baseCurrency || "GBP";
+  const asAtMs = Date.parse(`${asAt}T00:00:00Z`);
+  const totals = emptyAgeBuckets();
+  const byCurrency = {};
+  const byContact = {};
+  const diagnostics = { invoiceCount: 0, skippedNothingDue: 0, missingRate: [], missingDueDate: [] };
+
+  for (const inv of invoices || []) {
+    const amountDue = Number(inv.AmountDue);
+    if (!(amountDue > 0)) { diagnostics.skippedNothingDue++; continue; }
+    diagnostics.invoiceCount++;
+
+    // With no due date Xero treats the invoice as due on its own date.
+    let dueStr = parseXeroDate(inv.DueDateString || inv.DueDate);
+    if (!dueStr) dueStr = parseXeroDate(inv.DateString || inv.Date);
+    if (!dueStr) { diagnostics.missingDueDate.push(inv.InvoiceNumber || null); dueStr = asAt; }
+    const daysOverdue = Math.round((asAtMs - Date.parse(`${dueStr}T00:00:00Z`)) / 86400000);
+    const bucket = ageBucketFor(daysOverdue);
+
+    const currency = inv.CurrencyCode || base;
+    if (!byCurrency[currency]) byCurrency[currency] = emptyAgeBuckets();
+    byCurrency[currency][bucket] += amountDue;
+    byCurrency[currency].total += amountDue;
+
+    const rate = Number(inv.CurrencyRate);
+    const gbp = currency === base ? amountDue : (rate > 0 ? amountDue / rate : null);
+    if (gbp === null) { diagnostics.missingRate.push({ invoice: inv.InvoiceNumber || null, currency }); continue; }
+    totals[bucket] += gbp;
+    totals.total += gbp;
+
+    const name = (inv.Contact && inv.Contact.Name) || "Unknown";
+    if (!byContact[name]) byContact[name] = emptyAgeBuckets();
+    byContact[name][bucket] += gbp;
+    byContact[name].total += gbp;
+  }
+
+  const ranked = Object.entries(byContact).map(([name, b]) => ({ name, ...b })).sort((a, b) => b.total - a.total);
+  const top = ranked.slice(0, 10);
+  const rest = ranked.slice(10);
+  const otherContacts = rest.length === 0 ? null : rest.reduce((acc, c) => {
+    for (const k of Object.keys(emptyAgeBuckets())) acc[k] += c[k];
+    return acc;
+  }, { count: rest.length, ...emptyAgeBuckets() });
+  return { asAt, baseCurrency: base, totals, byCurrency, contacts: top, otherContacts, diagnostics };
+}
+
+// Every unpaid ("AUTHORISED") invoice or bill of one type, following
+// Xero's 100-per-page pagination. Capped, and says so if it hits the cap.
+async function fetchUnpaidInvoices(type, xeroHeaders) {
+  const MAX_PAGES = 40;
+  const where = encodeURIComponent(`Type=="${type}" AND Status=="AUTHORISED"`);
+  const invoices = [];
+  let pages = 0;
+  let truncated = false;
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const r = await fetch(`https://api.xero.com/api.xro/2.0/Invoices?where=${where}&page=${page}&summaryOnly=true`, { headers: xeroHeaders });
+    if (!r.ok) {
+      const body = await r.text();
+      console.error("[xero-reports] invoices fetch failed:", { type, page, status: r.status, body });
+      return { error: r.status === 429 ? "Xero is rate limiting requests right now. Try again in a minute." : "Xero rejected the invoices request. Check the Vercel logs for the exact response." };
+    }
+    const data = await r.json();
+    const batch = Array.isArray(data.Invoices) ? data.Invoices : [];
+    pages++;
+    invoices.push(...batch);
+    if (batch.length < 100) break;
+    if (page === MAX_PAGES) truncated = true;
+  }
+  return { invoices, pages, truncated };
+}
+
 module.exports = async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -598,6 +703,50 @@ module.exports = async (req, res) => {
     "Xero-tenant-id": tenantId,
     Accept: "application/json",
   };
+
+  if (req.query.action === "aged-balances") {
+    const asAt = new Date().toISOString().slice(0, 10);
+    try {
+      const recv = await fetchUnpaidInvoices("ACCREC", xeroHeaders);
+      if (recv.error) return res.status(502).json({ error: recv.error });
+      const pay = await fetchUnpaidInvoices("ACCPAY", xeroHeaders);
+      if (pay.error) return res.status(502).json({ error: pay.error });
+      const receivables = buildAgedBalances(recv.invoices, asAt, "GBP");
+      const payables = buildAgedBalances(pay.invoices, asAt, "GBP");
+
+      // Best-effort cross-check against the balances Xero itself reports.
+      // Credit notes, overpayments and revaluation of foreign-currency
+      // balances all sit outside a plain list of unpaid invoices, so a
+      // small gap is normal. A large one means something is wrong, most
+      // likely the exchange-rate assumption, and the page shows it.
+      let reconciliation = null;
+      try {
+        const bsRes = await fetch(`https://api.xero.com/api.xro/2.0/Reports/BalanceSheet?date=${asAt}`, { headers: xeroHeaders });
+        if (bsRes.ok) {
+          const bs = await bsRes.json();
+          const rows = bs.Reports && bs.Reports[0] ? bs.Reports[0].Rows : null;
+          const ar = findRowByLabel(rows, ["Accounts Receivable", "Trade Debtors", "Debtors"]);
+          const ap = findRowByLabel(rows, ["Accounts Payable", "Trade Creditors", "Creditors"]);
+          const compare = (xero, computed) => xero === null ? null : { xero, computed, difference: computed - xero, differencePct: xero !== 0 ? ((computed - xero) / Math.abs(xero)) * 100 : null };
+          reconciliation = {
+            receivables: compare(ar ? ar.value : null, receivables.totals.total),
+            payables: compare(ap ? ap.value : null, payables.totals.total),
+          };
+        }
+      } catch (e) {
+        console.error("[xero-reports] aged-balances reconciliation skipped:", e);
+      }
+
+      return res.status(200).json({
+        asAt, tenantName, receivables, payables, reconciliation,
+        truncated: !!(recv.truncated || pay.truncated),
+        pagesFetched: { receivables: recv.pages, payables: pay.pages },
+      });
+    } catch (e) {
+      console.error("[xero-reports] aged-balances error:", e);
+      return res.status(500).json({ error: "Something went wrong pulling debtors and creditors. Check the Vercel logs for details." });
+    }
+  }
 
   // A genuinely different action from the default one below — this one
   // exists purely to see what's actually in the chart of accounts, before
@@ -828,3 +977,5 @@ module.exports = async (req, res) => {
   return res.status(200).json(pulled);
 };
 module.exports.autoPullTargets = autoPullTargets;
+module.exports.buildAgedBalances = buildAgedBalances;
+module.exports.parseXeroDate = parseXeroDate;
