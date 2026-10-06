@@ -1,4 +1,52 @@
 const { getDirectorFromRequest, kv } = require("./_directorAuth");
+const { saveManualMetricForPeriod } = require("./_manualMetricsStore");
+// Tracks the automated daily pull's own health, separate from any
+// individual pull's result — read by Company Overview to show a
+// warning banner if the most recent attempt failed, without needing a
+// director to have been the one who triggered it.
+const AUTO_PULL_STATUS_KEY = "xero-auto-pull-status"; // { lastAttempt, lastSuccess, lastError }
+
+// Maps a successful Xero pull's result into the field names
+// saveManualMetricForPeriod expects, leaving out any field Xero
+// genuinely has no line for entirely — that shared save function
+// already treats a missing field as "keep whatever's already saved,"
+// so there's no need to separately look up and resend an existing
+// value here, the same rule from the interactive "Use and save" button
+// falls out naturally.
+function buildAutoPullSaveFields(pulled) {
+  const fields = {};
+  if (pulled.grossProfit !== null) {
+    fields.grossProfitAmount = String(Math.round(pulled.grossProfit));
+    fields.grossProfitCurrency = "GBP";
+    fields.notes = `Automatically pulled from Xero P&L, ${pulled.periodStart} to ${pulled.periodEnd}`;
+  }
+  if (pulled.cash !== null) {
+    fields.cashAmount = String(Math.round(pulled.cash));
+    fields.cashCurrency = "GBP";
+    fields.cashNotes = `Automatically pulled from Xero Balance Sheet, as at ${pulled.asAtDate}`;
+  }
+  if (pulled.totalExpenses !== null) {
+    fields.totalExpensesAmount = String(Math.round(pulled.totalExpenses));
+    fields.totalExpensesCurrency = "GBP";
+    fields.totalExpensesNotes = `Automatically pulled from Xero P&L, ${pulled.periodStart} to ${pulled.periodEnd}`;
+  }
+  if (pulled.depreciationAmortisation !== null) {
+    fields.depreciationAmortisationAmount = String(Math.round(pulled.depreciationAmortisation));
+    fields.depreciationAmortisationCurrency = "GBP";
+    fields.depreciationAmortisationNotes = `Automatically pulled from Xero P&L, ${pulled.periodStart} to ${pulled.periodEnd}`;
+  }
+  if (pulled.interest !== null) {
+    fields.interestAmount = String(Math.round(pulled.interest));
+    fields.interestCurrency = "GBP";
+    fields.interestNotes = `Automatically pulled from Xero P&L, ${pulled.periodStart} to ${pulled.periodEnd}`;
+  }
+  if (pulled.tax !== null) {
+    fields.taxAmount = String(Math.round(pulled.tax));
+    fields.taxCurrency = "GBP";
+    fields.taxNotes = `Automatically pulled from Xero P&L, ${pulled.periodStart} to ${pulled.periodEnd}`;
+  }
+  return fields;
+}
 
 const TOKENS_KEY = "xero-oauth-tokens"; // { refreshToken, tenantId, tenantName, connectedAt }
 const TRACKED_SUPPLIERS_KEY = "cost-per-person-tracked-suppliers"; // { supplier, frequency, direction }[] — owned entirely by this site, exact supplier names as Xero has them, chosen from a real fetch so there's no risk of a typo silently breaking the match
@@ -237,14 +285,224 @@ function splitIntoChunks(fromDate, toDate, maxSpanDays = 364) {
   return chunks;
 }
 
+// Pulls Gross Profit, Cash, Total Expenses and the EBITDA pieces for
+// one specific period — reused by both the interactive "Pull latest
+// from Xero" button and the automated daily pull below, so the two
+// can never silently diverge in how they talk to Xero's own reports.
+// Returns { error } on failure rather than throwing, so a caller can
+// decide for itself whether to surface that as an HTTP error response
+// or just record it for the automated pull's own status tracking.
+async function pullXeroFiguresForPeriod(year, period, month, quarter, xeroHeaders, currentDateStr, tenantName) {
+  try {
+    // A specific calendar month or quarter narrows the pull; with
+    // neither given, this is unchanged — the existing "Pull latest from
+    // Xero" button on the whole-year view never passes these at all.
+    const { fromDate, periodEndDate } =
+      period === "month" ? calendarMonthRange(year, month) :
+      period === "quarter" ? calendarQuarterRange(year, quarter) :
+      fiscalYearRange(year);
+
+    // Three genuinely different cases, not just "cap at today":
+    // the period could be fully in the past, still in progress, or hasn't
+    // started yet at all. Capping toDate at today only makes sense for the
+    // middle case — for a future period, fromDate would end up AFTER
+    // toDate, an inverted range Xero would either reject or misreport.
+    if (currentDateStr < fromDate) {
+      const periodNoun = period === "month" ? "That month" : period === "quarter" ? "That quarter" : "That financial year";
+      return { error: `${periodNoun} hasn't started yet — it begins ${fromDate}.` };
+    }
+    const toDate = currentDateStr < periodEndDate ? currentDateStr : periodEndDate;
+    const asAtDate = toDate; // Balance Sheet is a snapshot as at the end of whatever window we just computed
+
+    const plChunks = splitIntoChunks(fromDate, toDate);
+
+    const [plResults, bsRes] = await Promise.all([
+      Promise.all(plChunks.map((c) =>
+        fetch(`https://api.xero.com/api.xro/2.0/Reports/ProfitAndLoss?fromDate=${c.from}&toDate=${c.to}`, { headers: xeroHeaders })
+      )),
+      fetch(`https://api.xero.com/api.xro/2.0/Reports/BalanceSheet?date=${asAtDate}`, { headers: xeroHeaders }),
+    ]);
+
+    const failedChunk = plResults.find((r) => !r.ok);
+    if (failedChunk || !bsRes.ok) {
+      const plBodies = await Promise.all(plResults.map((r) => r.text()));
+      const bsBody = await bsRes.text();
+      console.error("[xero-reports] report fetch failed:", {
+        plChunks, plStatuses: plResults.map((r) => r.status), plBodies,
+        bsStatus: bsRes.status, bsBody,
+      });
+      return { error: "Xero rejected the report request. Check the Vercel logs for the exact response." };
+    }
+
+    const plDataChunks = await Promise.all(plResults.map((r) => r.json()));
+    const bsData = await bsRes.json();
+
+    // Gross Profit is a flow over time, not a snapshot — summing it across
+    // consecutive, non-overlapping date chunks gives the exact same answer
+    // a single (disallowed) request for the whole period would have, so
+    // splitting the range doesn't compromise the figure's accuracy.
+    let grossProfitTotal = null;
+    let matchedLabel = null;
+    let totalExpensesTotal = null;
+    let expensesMatchedLabel = null;
+    let depreciationAmortisationTotal = null;
+    let depreciationAmortisationMatchedLabel = null;
+    let interestTotal = null;
+    let interestMatchedLabel = null;
+    let taxTotal = null;
+    let taxMatchedLabel = null;
+    for (const plData of plDataChunks) {
+      const plReport = plData.Reports && plData.Reports[0];
+      const row = plReport ? findRowByLabel(plReport.Rows, ["Gross Profit"]) : null;
+      if (row) {
+        grossProfitTotal = (grossProfitTotal || 0) + row.value;
+        matchedLabel = row.label;
+      }
+      // Same reasoning, same report, same chunking — Total Expenses is
+      // read from the identical P&L data already pulled for Gross
+      // Profit above, not a separate Xero call.
+      const expenseRow = plReport ? findRowByLabel(plReport.Rows, ["Total Expenses", "Total Operating Expenses"]) : null;
+      if (expenseRow) {
+        totalExpensesTotal = (totalExpensesTotal || 0) + expenseRow.value;
+        expensesMatchedLabel = expenseRow.label;
+      }
+      // These three exist specifically to reconstruct EBITDA — they are
+      // NOT part of the headline figures above, they're the pieces
+      // someone reconciling toward EBITDA needs pulled out on their own.
+      const daRow = plReport ? findRowByLabel(plReport.Rows, ["Depreciation and Amortisation", "Depreciation & Amortisation", "Depreciation and Amortization", "Depreciation"]) : null;
+      if (daRow) {
+        depreciationAmortisationTotal = (depreciationAmortisationTotal || 0) + daRow.value;
+        depreciationAmortisationMatchedLabel = daRow.label;
+      }
+      const interestRow = plReport ? findRowByLabel(plReport.Rows, ["Interest Expense", "Interest", "Finance Costs", "Finance Expense"]) : null;
+      if (interestRow) {
+        interestTotal = (interestTotal || 0) + interestRow.value;
+        interestMatchedLabel = interestRow.label;
+      }
+      const taxRow = plReport ? findRowByLabel(plReport.Rows, ["Income Tax Expense", "Tax", "Taxation", "Corporation Tax"]) : null;
+      if (taxRow) {
+        taxTotal = (taxTotal || 0) + taxRow.value;
+        taxMatchedLabel = taxRow.label;
+      }
+    }
+
+    const bsReport = bsData.Reports && bsData.Reports[0];
+    // Different Xero report templates label this differently depending on
+    // region/setup — checking several plausible real labels rather than
+    // assuming one.
+    const cashRow = bsReport ? findRowByLabel(bsReport.Rows, ["Total Bank", "Bank", "Cash and Cash Equivalents", "Total Cash and Cash Equivalents"]) : null;
+
+    return {
+      year,
+      period: period || "year",
+      month: period === "month" ? month : null,
+      quarter: period === "quarter" ? quarter : null,
+      tenantName,
+      periodStart: fromDate,
+      periodEnd: toDate,
+      asAtDate,
+      periodsCombined: plChunks.length,
+      grossProfit: grossProfitTotal,
+      grossProfitMatchedLabel: matchedLabel,
+      totalExpenses: totalExpensesTotal,
+      totalExpensesMatchedLabel: expensesMatchedLabel,
+      depreciationAmortisation: depreciationAmortisationTotal,
+      depreciationAmortisationMatchedLabel,
+      interest: interestTotal,
+      interestMatchedLabel,
+      tax: taxTotal,
+      taxMatchedLabel,
+      cash: cashRow ? cashRow.value : null,
+      cashMatchedLabel: cashRow ? cashRow.label : null,
+      note: "Figures are in your Xero organisation's own reporting currency — not converted to USD.",
+    };
+  } catch (e) {
+    console.error("[xero-reports] pullXeroFiguresForPeriod error:", e);
+    return { error: "Something went wrong pulling the reports from Xero." };
+  }
+}
+
 module.exports = async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
   if (req.method === "OPTIONS") return res.status(200).end();
 
+  // This one runs before the director-auth check below on purpose —
+  // it's triggered by Vercel Cron with no director involved at all,
+  // authenticated by its own shared secret instead. Everything else in
+  // this file, auto-pull-status included, still requires a real
+  // director, unchanged.
+  if (req.query.action === "auto-pull") {
+    const expectedAuth = `Bearer ${process.env.CRON_SECRET}`;
+    if (!process.env.CRON_SECRET || req.headers.authorization !== expectedAuth) {
+      return res.status(401).json({ error: "Not authorized." });
+    }
+
+    const now = new Date();
+    const autoYear = now.getUTCFullYear();
+    const autoMonth = String(now.getUTCMonth() + 1).padStart(2, "0");
+    const autoQuarter = `Q${Math.floor(now.getUTCMonth() / 3) + 1}`;
+    const autoCurrentDateStr = now.toISOString().slice(0, 10);
+
+    const autoAuth = await getFreshAccessToken();
+    if (autoAuth.error) {
+      // A prior day's real success must survive this one failing — this
+      // early-exit path failed before ever reaching the save loop below,
+      // but the banner still needs to know the last time it genuinely
+      // worked, not just the most recent attempt.
+      const priorStatusOnAuthFailure = (await kv.get(AUTO_PULL_STATUS_KEY)) || {};
+      await kv.set(AUTO_PULL_STATUS_KEY, { lastAttempt: now.toISOString(), lastSuccess: priorStatusOnAuthFailure.lastSuccess || null, lastError: autoAuth.error });
+      return res.status(200).json({ ok: false, error: autoAuth.error });
+    }
+    const autoXeroHeaders = {
+      Authorization: `Bearer ${autoAuth.accessToken}`,
+      "Xero-tenant-id": autoAuth.tenantId,
+      Accept: "application/json",
+    };
+
+    const periodsToPull = [
+      { period: "month", month: autoMonth, quarter: null },
+      { period: "quarter", month: null, quarter: autoQuarter },
+    ];
+    const results = [];
+    for (const p of periodsToPull) {
+      const pulled = await pullXeroFiguresForPeriod(autoYear, p.period, p.month, p.quarter, autoXeroHeaders, autoCurrentDateStr, autoAuth.tenantName);
+      if (pulled.error) {
+        results.push({ period: p.period, month: p.month, quarter: p.quarter, ok: false, error: pulled.error });
+        continue;
+      }
+      try {
+        await saveManualMetricForPeriod(autoYear, p.period, p.month, p.quarter, buildAutoPullSaveFields(pulled));
+        results.push({ period: p.period, month: p.month, quarter: p.quarter, ok: true });
+      } catch (e) {
+        results.push({ period: p.period, month: p.month, quarter: p.quarter, ok: false, error: e.message });
+      }
+    }
+
+    const anyFailed = results.some((r) => !r.ok);
+    const anySucceeded = results.some((r) => r.ok);
+    const priorStatus = (await kv.get(AUTO_PULL_STATUS_KEY)) || {};
+    await kv.set(AUTO_PULL_STATUS_KEY, {
+      lastAttempt: now.toISOString(),
+      lastSuccess: anySucceeded ? now.toISOString() : priorStatus.lastSuccess || null,
+      lastError: anyFailed ? results.find((r) => !r.ok).error : null,
+    });
+
+    return res.status(200).json({ ok: !anyFailed, results });
+  }
+
   const director = await getDirectorFromRequest(req);
   if (!director) return res.status(401).json({ error: "Director access required." });
+
+  // Unlike auto-pull above, this one genuinely is a director's own
+  // authenticated browser checking the automated job's health, not a
+  // cron trigger with no token at all — so it belongs on the normal,
+  // director-authenticated side.
+  if (req.query.action === "auto-pull-status" && req.method === "GET") {
+    const status = (await kv.get(AUTO_PULL_STATUS_KEY)) || null;
+    return res.status(200).json({ status });
+  }
 
   // Managing which suppliers are tracked for cost-per-person is genuinely
   // separate from everything else in this file — it never touches Xero at
@@ -531,132 +789,16 @@ module.exports = async (req, res) => {
     }
   }
 
-  try {
-    // A specific calendar month or quarter narrows the pull; with
-    // neither given, this is unchanged — the existing "Pull latest from
-    // Xero" button on the whole-year view never passes these at all.
-    const { period, month, quarter } = req.query;
-    const { fromDate, periodEndDate } =
-      period === "month" ? calendarMonthRange(year, month) :
-      period === "quarter" ? calendarQuarterRange(year, quarter) :
-      fiscalYearRange(year);
-
-    // Three genuinely different cases, not just "cap at today":
-    // the period could be fully in the past, still in progress, or hasn't
-    // started yet at all. Capping toDate at today only makes sense for the
-    // middle case — for a future period, fromDate would end up AFTER
-    // toDate, an inverted range Xero would either reject or misreport.
-    if (currentDateStr < fromDate) {
-      const periodNoun = period === "month" ? "That month" : period === "quarter" ? "That quarter" : "That financial year";
-      return res.status(400).json({ error: `${periodNoun} hasn't started yet — it begins ${fromDate}.` });
-    }
-    const toDate = currentDateStr < periodEndDate ? currentDateStr : periodEndDate;
-    const asAtDate = toDate; // Balance Sheet is a snapshot as at the end of whatever window we just computed
-
-    const plChunks = splitIntoChunks(fromDate, toDate);
-
-    const [plResults, bsRes] = await Promise.all([
-      Promise.all(plChunks.map((c) =>
-        fetch(`https://api.xero.com/api.xro/2.0/Reports/ProfitAndLoss?fromDate=${c.from}&toDate=${c.to}`, { headers: xeroHeaders })
-      )),
-      fetch(`https://api.xero.com/api.xro/2.0/Reports/BalanceSheet?date=${asAtDate}`, { headers: xeroHeaders }),
-    ]);
-
-    const failedChunk = plResults.find((r) => !r.ok);
-    if (failedChunk || !bsRes.ok) {
-      const plBodies = await Promise.all(plResults.map((r) => r.text()));
-      const bsBody = await bsRes.text();
-      console.error("[xero-reports] report fetch failed:", {
-        plChunks, plStatuses: plResults.map((r) => r.status), plBodies,
-        bsStatus: bsRes.status, bsBody,
-      });
-      return res.status(502).json({ error: "Xero rejected the report request. Check the Vercel logs for the exact response." });
-    }
-
-    const plDataChunks = await Promise.all(plResults.map((r) => r.json()));
-    const bsData = await bsRes.json();
-
-    // Gross Profit is a flow over time, not a snapshot — summing it across
-    // consecutive, non-overlapping date chunks gives the exact same answer
-    // a single (disallowed) request for the whole period would have, so
-    // splitting the range doesn't compromise the figure's accuracy.
-    let grossProfitTotal = null;
-    let matchedLabel = null;
-    let totalExpensesTotal = null;
-    let expensesMatchedLabel = null;
-    let depreciationAmortisationTotal = null;
-    let depreciationAmortisationMatchedLabel = null;
-    let interestTotal = null;
-    let interestMatchedLabel = null;
-    let taxTotal = null;
-    let taxMatchedLabel = null;
-    for (const plData of plDataChunks) {
-      const plReport = plData.Reports && plData.Reports[0];
-      const row = plReport ? findRowByLabel(plReport.Rows, ["Gross Profit"]) : null;
-      if (row) {
-        grossProfitTotal = (grossProfitTotal || 0) + row.value;
-        matchedLabel = row.label;
-      }
-      // Same reasoning, same report, same chunking — Total Expenses is
-      // read from the identical P&L data already pulled for Gross
-      // Profit above, not a separate Xero call.
-      const expenseRow = plReport ? findRowByLabel(plReport.Rows, ["Total Expenses", "Total Operating Expenses"]) : null;
-      if (expenseRow) {
-        totalExpensesTotal = (totalExpensesTotal || 0) + expenseRow.value;
-        expensesMatchedLabel = expenseRow.label;
-      }
-      // These three exist specifically to reconstruct EBITDA — they are
-      // NOT part of the headline figures above, they're the pieces
-      // someone reconciling toward EBITDA needs pulled out on their own.
-      const daRow = plReport ? findRowByLabel(plReport.Rows, ["Depreciation and Amortisation", "Depreciation & Amortisation", "Depreciation and Amortization", "Depreciation"]) : null;
-      if (daRow) {
-        depreciationAmortisationTotal = (depreciationAmortisationTotal || 0) + daRow.value;
-        depreciationAmortisationMatchedLabel = daRow.label;
-      }
-      const interestRow = plReport ? findRowByLabel(plReport.Rows, ["Interest Expense", "Interest", "Finance Costs", "Finance Expense"]) : null;
-      if (interestRow) {
-        interestTotal = (interestTotal || 0) + interestRow.value;
-        interestMatchedLabel = interestRow.label;
-      }
-      const taxRow = plReport ? findRowByLabel(plReport.Rows, ["Income Tax Expense", "Tax", "Taxation", "Corporation Tax"]) : null;
-      if (taxRow) {
-        taxTotal = (taxTotal || 0) + taxRow.value;
-        taxMatchedLabel = taxRow.label;
-      }
-    }
-
-    const bsReport = bsData.Reports && bsData.Reports[0];
-    // Different Xero report templates label this differently depending on
-    // region/setup — checking several plausible real labels rather than
-    // assuming one.
-    const cashRow = bsReport ? findRowByLabel(bsReport.Rows, ["Total Bank", "Bank", "Cash and Cash Equivalents", "Total Cash and Cash Equivalents"]) : null;
-
-    return res.status(200).json({
-      year,
-      period: period || "year",
-      month: period === "month" ? month : null,
-      quarter: period === "quarter" ? quarter : null,
-      tenantName,
-      periodStart: fromDate,
-      periodEnd: toDate,
-      asAtDate,
-      periodsCombined: plChunks.length,
-      grossProfit: grossProfitTotal,
-      grossProfitMatchedLabel: matchedLabel,
-      totalExpenses: totalExpensesTotal,
-      totalExpensesMatchedLabel: expensesMatchedLabel,
-      depreciationAmortisation: depreciationAmortisationTotal,
-      depreciationAmortisationMatchedLabel,
-      interest: interestTotal,
-      interestMatchedLabel,
-      tax: taxTotal,
-      taxMatchedLabel,
-      cash: cashRow ? cashRow.value : null,
-      cashMatchedLabel: cashRow ? cashRow.label : null,
-      note: "Figures are in your Xero organisation's own reporting currency — not converted to USD.",
-    });
-  } catch (e) {
-    console.error("[xero-reports] error:", e);
-    return res.status(500).json({ error: "Something went wrong pulling the reports. Check the Vercel logs for details." });
+  const { period, month, quarter } = req.query;
+  const pulled = await pullXeroFiguresForPeriod(year, period, month, quarter, xeroHeaders, currentDateStr, tenantName);
+  if (pulled.error) {
+    // The one case genuinely worth a different status code — everything
+    // else pullXeroFiguresForPeriod can fail on (a genuine Xero rejection,
+    // say) is a server-side problem, but "that period hasn't started
+    // yet" is the caller's own input being invalid, not something wrong
+    // on this end.
+    const notStartedYet = /hasn't started yet/.test(pulled.error);
+    return res.status(notStartedYet ? 400 : 502).json({ error: pulled.error });
   }
+  return res.status(200).json(pulled);
 };
