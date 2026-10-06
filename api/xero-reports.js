@@ -48,6 +48,37 @@ function buildAutoPullSaveFields(pulled) {
   return fields;
 }
 
+// How many days into a new month (or quarter) the period that just
+// ended keeps getting refreshed. Month-end journals, late bills and
+// accruals land in Xero days after a period closes, so a figure frozen
+// at whatever Xero showed on the last day is not the final figure, and
+// a board pack built from it would be wrong.
+const CATCH_UP_DAYS = 10;
+
+// Which periods one daily run refreshes: always the current month and
+// current quarter, plus, during the catch-up window, the month that
+// just ended and (when a new quarter has just started) the quarter that
+// just ended. Pure function of the date, so it can be tested directly.
+function autoPullTargets(now) {
+  const pad = (n) => String(n).padStart(2, "0");
+  const y = now.getUTCFullYear();
+  const m = now.getUTCMonth(); // 0-11
+  const d = now.getUTCDate();
+  const targets = [
+    { year: y, period: "month", month: pad(m + 1), quarter: null },
+    { year: y, period: "quarter", month: null, quarter: `Q${Math.floor(m / 3) + 1}` },
+  ];
+  if (d <= CATCH_UP_DAYS) {
+    const prevMonthIdx = m === 0 ? 11 : m - 1;
+    const prevYear = m === 0 ? y - 1 : y;
+    targets.push({ year: prevYear, period: "month", month: pad(prevMonthIdx + 1), quarter: null });
+    if (m % 3 === 0) {
+      targets.push({ year: prevYear, period: "quarter", month: null, quarter: `Q${Math.floor(prevMonthIdx / 3) + 1}` });
+    }
+  }
+  return targets;
+}
+
 const TOKENS_KEY = "xero-oauth-tokens"; // { refreshToken, tenantId, tenantName, connectedAt }
 const TRACKED_SUPPLIERS_KEY = "cost-per-person-tracked-suppliers"; // { supplier, frequency, direction }[] — owned entirely by this site, exact supplier names as Xero has them, chosen from a real fetch so there's no risk of a typo silently breaking the match
 // The last successful bills-by-supplier result, keyed by year — genuinely
@@ -440,9 +471,6 @@ module.exports = async (req, res) => {
     }
 
     const now = new Date();
-    const autoYear = now.getUTCFullYear();
-    const autoMonth = String(now.getUTCMonth() + 1).padStart(2, "0");
-    const autoQuarter = `Q${Math.floor(now.getUTCMonth() / 3) + 1}`;
     const autoCurrentDateStr = now.toISOString().slice(0, 10);
 
     const autoAuth = await getFreshAccessToken();
@@ -461,22 +489,19 @@ module.exports = async (req, res) => {
       Accept: "application/json",
     };
 
-    const periodsToPull = [
-      { period: "month", month: autoMonth, quarter: null },
-      { period: "quarter", month: null, quarter: autoQuarter },
-    ];
+    const periodsToPull = autoPullTargets(now);
     const results = [];
     for (const p of periodsToPull) {
-      const pulled = await pullXeroFiguresForPeriod(autoYear, p.period, p.month, p.quarter, autoXeroHeaders, autoCurrentDateStr, autoAuth.tenantName);
+      const pulled = await pullXeroFiguresForPeriod(p.year, p.period, p.month, p.quarter, autoXeroHeaders, autoCurrentDateStr, autoAuth.tenantName);
       if (pulled.error) {
-        results.push({ period: p.period, month: p.month, quarter: p.quarter, ok: false, error: pulled.error });
+        results.push({ year: p.year, period: p.period, month: p.month, quarter: p.quarter, ok: false, error: pulled.error });
         continue;
       }
       try {
-        await saveManualMetricForPeriod(autoYear, p.period, p.month, p.quarter, buildAutoPullSaveFields(pulled));
-        results.push({ period: p.period, month: p.month, quarter: p.quarter, ok: true });
+        await saveManualMetricForPeriod(p.year, p.period, p.month, p.quarter, buildAutoPullSaveFields(pulled));
+        results.push({ year: p.year, period: p.period, month: p.month, quarter: p.quarter, ok: true });
       } catch (e) {
-        results.push({ period: p.period, month: p.month, quarter: p.quarter, ok: false, error: e.message });
+        results.push({ year: p.year, period: p.period, month: p.month, quarter: p.quarter, ok: false, error: e.message });
       }
     }
 
@@ -802,3 +827,4 @@ module.exports = async (req, res) => {
   }
   return res.status(200).json(pulled);
 };
+module.exports.autoPullTargets = autoPullTargets;
