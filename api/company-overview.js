@@ -310,6 +310,49 @@ async function computeOverviewForPeriod(year, period, month, quarter, shared) {
     };
 }
 
+// The data every period calculation needs, fetched once per request.
+async function loadSharedData() {
+  const [records, placements, allRates, manualMetrics, overrides, employment] = await Promise.all([
+    kv.get(RECORDS_KEY).then((v) => v || []),
+    kv.get(PLACEMENTS_KEY).then((v) => v || {}),
+    kv.get(FX_KEY).then((v) => v || {}),
+    kv.get(MANUAL_METRICS_KEY).then((v) => v || {}),
+    getOverrides(),
+    kv.get(EMPLOYMENT_KEY).then((v) => v || {}),
+  ]);
+  return { records, placements, allRates, manualMetrics, overrides, employment };
+}
+
+// Revenue for each calendar month of one year, built with exactly the
+// same filters and the same revenue function as the Overview, so the
+// twelve months can never quietly disagree with the year total shown
+// there. A record with no resolvable date can't be placed in a month,
+// but it does count toward the Overview's year total, so it's reported
+// separately here rather than silently dropped: months + undated always
+// equals the Overview's figure.
+function computeMonthlyRevenueSeries(year, shared) {
+  const { records, placements, allRates, overrides } = shared;
+  const months = Array.from({ length: 12 }, (_, i) => ({ month: String(i + 1).padStart(2, "0"), revenueGBP: 0, deals: 0, byClient: {} }));
+  let undatedGBP = 0;
+  let undatedDeals = 0;
+  for (const r of records) {
+    if (effectiveYear(r, placements) !== year || isExcludedProjectRecord(r)) continue;
+    const placement = r.placementId ? placements[r.placementId] : null;
+    const client = (placement && placement.clientCompanyName) || r.projectClientName || "Unknown";
+    const hasPlacementName = !!(placement && placement.candidateName);
+    const gbp = resolvedRevenueGBP(r, client, year, overrides, hasPlacementName, allRates);
+    if (gbp === null) continue;
+    const m = effectiveMonth(r, placements);
+    if (!m) { undatedGBP += gbp; undatedDeals += 1; continue; }
+    const bucket = months[parseInt(m, 10) - 1];
+    bucket.revenueGBP += gbp;
+    bucket.deals += 1;
+    bucket.byClient[client] = (bucket.byClient[client] || 0) + gbp;
+  }
+  const totalGBP = months.reduce((s, b) => s + b.revenueGBP, 0) + undatedGBP;
+  return { year, months, undatedGBP, undatedDeals, totalGBP };
+}
+
 // Resolves the identifiers for whichever period comes immediately
 // before the one requested — the previous month, the previous quarter,
 // or the previous year — correctly rolling over a year boundary where
@@ -395,15 +438,7 @@ module.exports = async (req, res) => {
     const year = parseInt(req.query.year, 10) || new Date().getUTCFullYear();
     const { period, month, quarter } = req.query;
 
-    const [records, placements, allRates, manualMetrics, overrides, employment] = await Promise.all([
-      kv.get(RECORDS_KEY).then((v) => v || []),
-      kv.get(PLACEMENTS_KEY).then((v) => v || {}),
-      kv.get(FX_KEY).then((v) => v || {}),
-      kv.get(MANUAL_METRICS_KEY).then((v) => v || {}),
-      getOverrides(),
-      kv.get(EMPLOYMENT_KEY).then((v) => v || {}),
-    ]);
-    const shared = { records, placements, allRates, manualMetrics, overrides, employment };
+    const shared = await loadSharedData();
 
     const current = await computeOverviewForPeriod(year, period, month, quarter, shared);
 
@@ -446,6 +481,16 @@ module.exports = async (req, res) => {
         previousPeriod: { year: prev.year, period: prev.period, month: prev.month || null, quarter: prev.quarter || null },
         sameLastYear: sameLastYear ? { year: sameLastYear.year, period: sameLastYear.period, month: sameLastYear.month || null, quarter: sameLastYear.quarter || null } : null,
       },
+    });
+  }
+
+  if (req.method === "GET" && action === "revenue-series") {
+    const seriesYear = parseInt(req.query.year, 10) || new Date().getUTCFullYear();
+    const shared = await loadSharedData();
+    return res.status(200).json({
+      year: seriesYear,
+      current: computeMonthlyRevenueSeries(seriesYear, shared),
+      previous: computeMonthlyRevenueSeries(seriesYear - 1, shared),
     });
   }
 
