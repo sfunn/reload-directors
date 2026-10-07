@@ -2549,7 +2549,7 @@ function CompanyOverviewPage({ token }) {
       React.createElement(Panel, null,
         React.createElement("div", { style: { display: "flex", gap: 30, flexWrap: "wrap" } },
           React.createElement("div", { style: { flex: 1, minWidth: 160 } },
-            React.createElement("div", { style: labelStyle }, "Fee revenue"),
+            React.createElement("div", { style: labelStyle }, `Fee revenue - ${period === "month" ? BP_MONTH_NAMES[parseInt(month, 10) - 1] : period === "quarter" ? quarter : year} starters`),
             React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" } },
               React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO } }, `£${Math.round(data.totalRevenueGBP).toLocaleString()}`),
               React.createElement("div", { style: { fontSize: 13, color: INDIGO_MUTED } }, `$${Math.round(data.totalRevenueUSD).toLocaleString()}`)
@@ -4305,12 +4305,11 @@ function BoardPackPage({ token }) {
 
       React.createElement(BpSection, { title: "KPI Summary", source: "Atlas placements (revenue, fees, headcount) and Xero (profit, costs, cash)" },
         React.createElement("div", { style: { display: "flex", gap: 24, flexWrap: "wrap" } },
-          React.createElement(BpKpi, { label: `Fee revenue, ${monthName}`, value: bpFmtGBP(ov.totalRevenueGBP), sub: feeCountsFor(ov), extra: React.createElement(PercentChangeDisplay, { changes: ov.changes, field: "totalRevenueGBP", period: "month" }) }),
+          React.createElement(BpKpi, { label: `Fee revenue - ${monthName} starters`, value: bpFmtGBP(ov.totalRevenueGBP), sub: feeCountsFor(ov), extra: React.createElement(PercentChangeDisplay, { changes: ov.changes, field: "totalRevenueGBP", period: "month" }) }),
           React.createElement(BpKpi, { label: "Year to date", value: bpFmtGBP(s.ytd), sub: `Jan to ${monthName}`, extra: s.growthPct !== null ? React.createElement("div", { style: { fontSize: 11, marginTop: 4, color: s.growthPct >= 0 ? VERDIGRIS : "#c0392b", fontWeight: 600 } }, `${s.growthPct >= 0 ? "▲" : "▼"} ${Math.abs(s.growthPct).toFixed(1)}% vs same period last year`) : null }),
           React.createElement(BpKpi, { label: "Average fee", value: bpFmtGBP(ov.averageFeeGBP), sub: `${ov.averageFeePlacementCount} placements, onsite fees excluded` }),
           React.createElement(BpKpi, { label: "Fee-earning headcount", value: ov.headcountUsedForPerHead !== null && ov.headcountUsedForPerHead !== undefined ? String(ov.headcountUsedForPerHead) : "n/a", sub: ov.revenuePerHeadGBP !== null ? `${bpFmtGBP(ov.revenuePerHeadGBP)} revenue per head` : null })
         ),
-        React.createElement("div", { style: { marginTop: 10, fontSize: 11, color: INDIGO_MUTED, lineHeight: 1.5 } }, "Fee revenue is the placement and onsite fees booked in Atlas, dated by the candidate's start date, with the agreed uplift rules applied. It is not invoiced income: that is the Income line in Profit and Loss below, which comes from Xero. Rebates are only reflected if Atlas records them as negative fees."),
         React.createElement("div", { style: { display: "flex", gap: 24, flexWrap: "wrap", marginTop: 18, paddingTop: 16, borderTop: `1px solid ${INDIGO_HAIRLINE}` } },
           xeroKpi(`Gross profit, ${monthName}`, ov.grossProfitAmount, "grossProfitAmount", VERDIGRIS),
           xeroKpi("Total expenses", ov.totalExpensesAmount, "totalExpensesAmount", MELON),
@@ -4367,7 +4366,7 @@ function BoardPackPage({ token }) {
       React.createElement(BpDebtorsSection, { aged, agedError, agedLoading }),
 
       React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, lineHeight: 1.5 } },
-        "Basis of preparation: revenue is on an Atlas placement basis, dated by start date where one exists, and includes the agreed uplift rules. Profit, cost, cash, debtor and creditor figures are taken from Xero. The two sources are not reconciled to each other, so margins should not be calculated across them.")
+        "Basis of preparation: revenue is on an Atlas placement basis, dated by start date where one exists, and includes the agreed uplift rules. Rebates are only reflected in revenue if Atlas records them as negative fees. Profit, cost, cash, debtor and creditor figures are taken from Xero. The two sources are not reconciled to each other, so margins should not be calculated across them.")
     )
   );
 }
