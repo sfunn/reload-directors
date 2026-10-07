@@ -3714,6 +3714,24 @@ function bpDefaultPeriod(now) {
   return m === 0 ? { year: y - 1, month: "12" } : { year: y, month: bpPad(m) };
 }
 
+// A month's accounts are rarely final the day it ends: payroll, commission
+// and other accruals are often booked afterwards, which flatters profit.
+// Rather than rely on anyone remembering, the pack says so for a while.
+const BP_PROVISIONAL_DAYS = 15;
+function bpDaysSinceMonthEnd(year, monthNum, now) {
+  const monthEnd = Date.UTC(year, monthNum, 0);
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  return Math.round((today - monthEnd) / 86400000);
+}
+function bpMonthHasEnded(year, monthNum, now) { return bpDaysSinceMonthEnd(year, monthNum, now) > 0; }
+function bpProvisionalNotice(year, monthNum, now) {
+  const d = bpDaysSinceMonthEnd(year, monthNum, now);
+  const name = BP_MONTH_NAMES[monthNum - 1];
+  if (d <= 0) return `${name} has not ended. Figures are to date and incomplete.`;
+  if (d < BP_PROVISIONAL_DAYS) return `Provisional. ${name} ended ${d} ${d === 1 ? "day" : "days"} ago and the books may not be closed yet. Costs, accruals and commissions are often booked after month end, so profit can look better than it will once they are.`;
+  return null;
+}
+
 function bpFmtK(v) {
   const a = Math.abs(v);
   const sign = v < 0 ? "-" : "";
@@ -4059,6 +4077,10 @@ function BpPlSection({ pl, plError, plLoading, year, month }) {
         React.createElement(BpLegend, { items: [{ label: "Cost of sales", color: MELON, bar: true }, { label: "Operating expenses", color: INDIGO, bar: true }, { label: "Income", color: VERDIGRIS }, { label: "Average monthly costs (breakeven)", color: INDIGO_MUTED, dashed: true }] }),
         React.createElement(BpCostChart, { costOfSales, expenses, income, breakeven }),
         breakeven !== null && React.createElement("div", { style: { marginTop: 8, fontSize: 12, color: INDIGO } }, `Average monthly costs so far this year are ${bpFmtGBP(breakeven)}. That is the income needed each month to break even.`),
+        (() => {
+          const d = (pl.derivedCostOfSales || []).filter((k) => k.startsWith(`${year}-`) && parseInt(k.slice(5), 10) <= through).map((k) => BP_MONTH_NAMES[parseInt(k.slice(5), 10) - 1]);
+          return d.length > 0 ? React.createElement("div", { style: { marginTop: 8, fontSize: 11, color: INDIGO_MUTED } }, `Xero's report has no cost of sales row for ${d.join(", ")}. Cost of sales for ${d.length === 1 ? "that month is" : "those months is"} worked out as income minus gross profit.`) : null;
+        })(),
         pl.missing.length > 0 && React.createElement("div", { style: { marginTop: 8, fontSize: 11, color: "#c0392b", fontWeight: 600 } }, `Xero's report has no row this page recognises for: ${pl.missing.map((k) => MISSING_NAMES[k] || k).join(", ")}. Those show as n/a.`),
         cc && (Math.abs(cc.difference) <= 1
           ? React.createElement("div", { style: { marginTop: 8, fontSize: 11, color: INDIGO_MUTED } }, `Gross profit for ${BP_MONTH_NAMES[through - 1]} agrees with the figure saved by the daily Xero pull.`)
@@ -4067,6 +4089,52 @@ function BpPlSection({ pl, plError, plLoading, year, month }) {
       );
   }
   return React.createElement(BpSection, { title: "Profit and Loss", source: "Xero profit and loss, calendar months" }, body);
+}
+
+// ---- Cash movement (Xero bank summary) --------------------------------
+function bpCashReconciliation(rec) {
+  if (!rec) return null;
+  const pct = rec.differencePct;
+  const large = pct !== null && Math.abs(pct) > 5 && Math.abs(rec.difference) > 5000;
+  const base = `Xero's balance sheet shows ${bpFmtMoney(rec.xero)} in the bank at month end. The bank summary closing balances total ${bpFmtMoney(rec.computed)}, a difference of ${bpFmtMoney(Math.abs(rec.difference))}. `;
+  const why = large ? "That is bigger than currency valuation would normally explain, so treat these figures with caution until it is checked."
+    : Math.abs(rec.difference) < 1 ? "They agree."
+    : "Small gaps are typically foreign-currency accounts valued at different rates.";
+  return React.createElement("div", { style: { fontSize: 11, marginTop: 8, color: large ? "#c0392b" : INDIGO_MUTED, fontWeight: large ? 600 : 400 } }, base + why);
+}
+
+function BpCashSection({ cash, cashError, cashLoading, monthComplete, monthName, year }) {
+  let body;
+  if (!monthComplete) {
+    body = React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Cash movement is available once the month has ended.");
+  } else if (cashError) {
+    body = React.createElement("div", { style: { ...errorStyle, marginBottom: 0 } }, `Cash movement could not be loaded from Xero: ${cashError}`);
+  } else if (!cash) {
+    body = React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, cashLoading ? "Loading from Xero…" : "Not loaded.");
+  } else {
+    const t = cash.totals;
+    const odd = cash.accounts.filter((a) => !a.consistent).map((a) => a.name);
+    const th = (x, right) => React.createElement("th", { style: { textAlign: right ? "right" : "left", padding: "4px 6px", color: INDIGO_MUTED, fontWeight: 600, fontSize: 11 } }, x);
+    const td = (x, right, bold) => React.createElement("td", { style: { textAlign: right ? "right" : "left", padding: "4px 6px", fontWeight: bold ? 700 : 400 } }, x);
+    body = React.createElement(React.Fragment, null,
+      React.createElement("div", { style: { display: "flex", gap: 24, flexWrap: "wrap", marginBottom: 14 } },
+        React.createElement(BpKpi, { label: `Opening cash, 1 ${monthName}`, value: bpFmtMoney(t.opening) }),
+        React.createElement(BpKpi, { label: "Cash received", value: bpFmtMoney(t.received), color: VERDIGRIS }),
+        React.createElement(BpKpi, { label: "Cash spent", value: bpFmtMoney(t.spent), color: MELON }),
+        React.createElement(BpKpi, { label: "Net movement", value: `${t.net >= 0 ? "+" : ""}${bpFmtMoney(t.net)}`, color: t.net >= 0 ? VERDIGRIS : "#c0392b" }),
+        React.createElement(BpKpi, { label: `Closing cash, ${cash.asAt.slice(8)} ${monthName}`, value: bpFmtMoney(t.closing) })
+      ),
+      cash.accounts.length > 0 && React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 12, fontFamily: "'Work Sans', sans-serif", color: INDIGO } },
+        React.createElement("thead", null, React.createElement("tr", null, th("Bank account"), th("Opening", true), th("Received", true), th("Spent", true), th("Net", true), th("Closing", true))),
+        React.createElement("tbody", null, ...cash.accounts.map((a) => React.createElement("tr", { key: a.name, style: { borderTop: `1px solid ${INDIGO_HAIRLINE}` } },
+          td(a.consistent ? a.name : `${a.name} *`), td(bpFmtMoney(a.opening), true), td(bpFmtMoney(a.received), true), td(bpFmtMoney(a.spent), true), td(`${a.net >= 0 ? "+" : ""}${bpFmtMoney(a.net)}`, true), td(bpFmtMoney(a.closing), true, true))))
+      ),
+      odd.length > 0 && React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 6 } }, `* Opening plus received minus spent does not equal closing for: ${odd.join(", ")}. Currency valuation on a foreign account is the usual cause.`),
+      bpCashReconciliation(cash.reconciliation),
+      React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 8 } }, "Cash received and spent include transfers between your own bank accounts, so each is overstated by the same amount. Net movement is not affected.")
+    );
+  }
+  return React.createElement(BpSection, { title: "Cash Movement", source: "Xero bank summary" }, body);
 }
 
 function BoardPackPage({ token }) {
@@ -4123,6 +4191,32 @@ function BoardPackPage({ token }) {
     })();
     return () => { cancelled = true; };
   }, [token, year]);
+
+  // Cash movement is per month, so it refetches when the month changes, but
+  // only for a month that has ended: a part-month would be a misleading figure.
+  const monthComplete = bpMonthHasEnded(year, parseInt(month, 10), new Date());
+  const [cash, setCash] = useState(null);
+  const [cashError, setCashError] = useState("");
+  const [cashLoading, setCashLoading] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    if (!monthComplete) { setCash(null); setCashError(""); setCashLoading(false); return () => { cancelled = true; }; }
+    (async () => {
+      setCashLoading(true); setCashError(""); setCash(null);
+      try {
+        const res = await fetch(`/api/xero-reports?action=cash-movement&year=${year}&month=${month}`, { headers: { Authorization: `Bearer ${token}` } });
+        const body = await res.json();
+        if (cancelled) return;
+        if (!res.ok) { setCashError(body.error || "Couldn't load cash movement."); return; }
+        setCash(body);
+      } catch (e) {
+        if (!cancelled) setCashError("Couldn't reach the server.");
+      } finally {
+        if (!cancelled) setCashLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [token, year, month, monthComplete]);
 
   // Debtors and creditors are as at today whatever month is chosen, so they
   // are fetched once per visit, not on every month click: it saves repeated
@@ -4184,6 +4278,10 @@ function BoardPackPage({ token }) {
         React.createElement("h1", { style: { fontFamily: "Georgia, 'Times New Roman', serif", fontWeight: 400, fontSize: 34, color: INDIGO, margin: "2px 0 4px" } }, `Board Pack, ${monthName} ${year}`),
         React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED } }, `Prepared ${new Date().toLocaleDateString("en-GB")}`)
       ),
+      (() => {
+        const notice = bpProvisionalNotice(year, through, new Date());
+        return notice ? React.createElement("div", { className: "bp-section", style: { marginBottom: 20, padding: "10px 14px", background: "rgba(255,176,140,0.22)", border: `1px solid ${MELON}`, borderRadius: 6, fontSize: 12.5, color: INDIGO, lineHeight: 1.5 } }, notice) : null;
+      })(),
 
       React.createElement(BpSection, { title: "KPI Summary", source: "Atlas placements (revenue, fees, headcount) and Xero (profit, costs, cash)" },
         React.createElement("div", { style: { display: "flex", gap: 24, flexWrap: "wrap" } },
@@ -4242,6 +4340,8 @@ function BoardPackPage({ token }) {
       ),
 
       React.createElement(BpPlSection, { pl, plError, plLoading, year, month }),
+
+      React.createElement(BpCashSection, { cash, cashError, cashLoading, monthComplete, monthName, year }),
 
       React.createElement(BpDebtorsSection, { aged, agedError, agedLoading }),
 
