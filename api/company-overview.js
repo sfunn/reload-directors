@@ -122,7 +122,6 @@ async function computeOverviewForPeriod(year, period, month, quarter, shared) {
     let onsiteFeeCount = 0;
     let placementRevenueGBP = 0;
     let placementRevenueUSD = 0;
-    let placementCount = 0;
     const byClient = {};
     const byConsultant = {};
     for (const r of yearRecords) {
@@ -173,7 +172,6 @@ async function computeOverviewForPeriod(year, period, month, quarter, shared) {
       if (hasPlacementName) {
         placementRevenueGBP += gbp;
         if (usd !== null) placementRevenueUSD += usd;
-        placementCount += 1;
       }
       if (!byClient[client]) byClient[client] = { gbp: 0, usd: 0, deals: 0, onsites: 0 };
       byClient[client].gbp += gbp;
@@ -191,8 +189,11 @@ async function computeOverviewForPeriod(year, period, month, quarter, shared) {
     // as if each one were its own deal — Total Revenue above still
     // correctly includes onsite money, this is deliberately a separate
     // calculation, not a filtered view of the same one.
-    const averageFeeGBP = placementCount > 0 ? placementRevenueGBP / placementCount : 0;
-    const averageFeeUSD = placementCount > 0 ? placementRevenueUSD / placementCount : 0;
+    // Per distinct placement, not per fee record: a record is one consultant's
+    // share, so dividing by records made a split placement look like two
+    // small ones and pulled the average down.
+    const averageFeeGBP = countedPlacementIds.size > 0 ? placementRevenueGBP / countedPlacementIds.size : 0;
+    const averageFeeUSD = countedPlacementIds.size > 0 ? placementRevenueUSD / countedPlacementIds.size : 0;
 
     const clientConcentration = Object.entries(byClient)
       .map(([client, v]) => ({
@@ -278,7 +279,7 @@ async function computeOverviewForPeriod(year, period, month, quarter, shared) {
       totalRevenueGBP, totalRevenueUSD, countedDeals,
       distinctPlacements: countedPlacementIds.size,
       onsiteFeeCount,
-      averageFeePlacementCount: placementCount,
+      averageFeePlacementCount: countedPlacementIds.size,
       averageFeeGBP, averageFeeUSD,
       clientConcentration, top3Percentage, top5Percentage,
       consultantConcentration, consultantTop3Percentage, consultantTop5Percentage,
@@ -341,7 +342,12 @@ async function loadSharedData() {
 // equals the Overview's figure.
 function computeMonthlyRevenueSeries(year, shared) {
   const { records, placements, allRates, overrides } = shared;
-  const months = Array.from({ length: 12 }, (_, i) => ({ month: String(i + 1).padStart(2, "0"), revenueGBP: 0, deals: 0, byClient: {} }));
+  // placementIds and placementRevenueGBP exist so a year-to-date average fee
+  // can be worked out per DISTINCT placement across any run of months. The ids
+  // are listed (not just counted) because a placement with no start date can
+  // have fee records dated in different months, and adding monthly counts
+  // would count it twice.
+  const months = Array.from({ length: 12 }, (_, i) => ({ month: String(i + 1).padStart(2, "0"), revenueGBP: 0, deals: 0, byClient: {}, placementIds: new Set(), placementRevenueGBP: 0, onsiteFees: 0 }));
   let undatedGBP = 0;
   let undatedDeals = 0;
   for (const r of records) {
@@ -357,9 +363,15 @@ function computeMonthlyRevenueSeries(year, shared) {
     bucket.revenueGBP += gbp;
     bucket.deals += 1;
     bucket.byClient[client] = (bucket.byClient[client] || 0) + gbp;
+    if (hasPlacementName && r.placementId) {
+      bucket.placementIds.add(r.placementId);
+      bucket.placementRevenueGBP += gbp;
+    } else {
+      bucket.onsiteFees += 1;
+    }
   }
   const totalGBP = months.reduce((s, b) => s + b.revenueGBP, 0) + undatedGBP;
-  return { year, months, undatedGBP, undatedDeals, totalGBP };
+  return { year, months: months.map((b) => ({ ...b, placementIds: [...b.placementIds].sort() })), undatedGBP, undatedDeals, totalGBP };
 }
 
 // Resolves the identifiers for whichever period comes immediately
