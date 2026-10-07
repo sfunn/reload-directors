@@ -3739,7 +3739,7 @@ function bpFmtK(v) {
   if (a >= 1e3) return `${sign}£${Math.round(a / 1e3)}K`;
   return `${sign}£${Math.round(a)}`;
 }
-function bpFmtGBP(v) { return `£${Math.round(v).toLocaleString()}`; }
+function bpFmtGBP(v) { return `£${(Math.round(v) || 0).toLocaleString()}`; }
 function bpNiceMax(v) {
   if (!(v > 0)) return 1000;
   const pow = Math.pow(10, Math.floor(Math.log10(v)));
@@ -3975,7 +3975,8 @@ function BpDebtorsSection({ aged, agedError, agedLoading }) {
 }
 
 // ---- Profit and loss (Xero) ------------------------------------------
-function bpFmtMoney(v) { return v < 0 ? `-£${Math.round(-v).toLocaleString()}` : `£${Math.round(v).toLocaleString()}`; }
+// Rounds first, so a tiny negative such as -0.3 reads "£0", never "-£0".
+function bpFmtMoney(v) { const r = Math.round(v) || 0; return r < 0 ? `-£${(-r).toLocaleString()}` : `£${r.toLocaleString()}`; }
 
 // Margins and operating profit are worked out here from Xero's own lines,
 // so a margin can never come from mixing two sources.
@@ -4121,7 +4122,7 @@ function BpCashSection({ cash, cashError, cashLoading, monthComplete, monthName,
     const odd = cash.accounts.filter((a) => !a.consistent).map((a) => a.name);
     const th = (x, right) => React.createElement("th", { style: { textAlign: right ? "right" : "left", padding: "4px 6px", color: INDIGO_MUTED, fontWeight: 600, fontSize: 11 } }, x);
     const td = (x, right, bold) => React.createElement("td", { style: { textAlign: right ? "right" : "left", padding: "4px 6px", fontWeight: bold ? 700 : 400 } }, x);
-    const signed = (n) => `${n >= 0 ? "+" : ""}${bpFmtMoney(n)}`;
+    const signed = (n) => (Math.round(n) === 0 ? "£0" : `${n > 0 ? "+" : ""}${bpFmtMoney(n)}`);
     body = React.createElement(React.Fragment, null,
       React.createElement("div", { style: { display: "flex", gap: 24, flexWrap: "wrap", marginBottom: 14 } },
         React.createElement(BpKpi, { label: `Opening cash, ${fromBS ? cash.openingDate.slice(8) + " " + BP_MONTH_NAMES[parseInt(cash.openingDate.slice(5, 7), 10) - 1] : "1 " + monthName}`, value: bpFmtMoney(t.opening) }),
@@ -4142,7 +4143,7 @@ function BpCashSection({ cash, cashError, cashLoading, monthComplete, monthName,
         : React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 8 } }, "Cash received and spent include transfers between your own bank accounts, so each is overstated by the same amount. Net movement is not affected.")
     );
   }
-  return React.createElement(BpSection, { title: "Cash Movement", source: "Xero bank summary and balance sheet" }, body);
+  return React.createElement(BpSection, { title: "Cash Movement", source: cash && cash.source === "balancesheet" ? "Xero balance sheet" : "Xero bank summary and balance sheet" }, body);
 }
 
 function BoardPackPage({ token }) {
