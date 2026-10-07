@@ -559,44 +559,26 @@ async function fetchUnpaidInvoices(type, xeroHeaders) {
 }
 
 // ---- Monthly P&L -----------------------------------------------------
-// One Xero call returns up to twelve monthly columns. The risk is knowing
-// which column is which month, so the column headings are read and parsed;
-// only if they can't all be read does it fall back to assuming the first
-// column is the latest month and each next one a month earlier, and the
-// response says which method was used so the page can say so too.
-const MONTH_ABBR = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+// Each month is its own single-period call, the same call shape the daily
+// pull already uses. An earlier version asked Xero for twelve monthly
+// columns in one request, but Xero shifts the SAME date range back for each
+// comparison column rather than using whole months, so a request made on the
+// 6th returned the first six days of every month. Calling month by month
+// costs more requests and removes the guesswork.
 
-// "31 Oct 2025", "Oct 2025", "31 October 25", "2025-10-31" -> "2025-10"
-function monthFromColumnLabel(label) {
-  if (typeof label !== "string") return null;
-  const iso = /(\d{4})-(\d{2})-\d{2}/.exec(label);
-  if (iso) return `${iso[1]}-${iso[2]}`;
-  const m = /([A-Za-z]{3})[A-Za-z]*\.?\s+['\u2019]?(\d{2,4})\b/.exec(label);
-  if (m && MONTH_ABBR[m[1].toLowerCase()]) {
-    let y = parseInt(m[2], 10);
-    if (y < 100) y += 2000;
-    return `${y}-${String(MONTH_ABBR[m[1].toLowerCase()]).padStart(2, "0")}`;
-  }
-  return null;
-}
+// Labels checked in order of preference for each line. "Revenue" alone is
+// deliberately not a candidate for income: it's a common account name and
+// would match a single account line instead of the total.
+const PL_ROW_LABELS = {
+  income: ["Total Income", "Total Revenue", "Total Trading Income"],
+  costOfSales: ["Total Cost of Sales", "Total Direct Costs", "Total Cost of Goods Sold"],
+  grossProfit: ["Gross Profit"],
+  expenses: ["Total Operating Expenses", "Total Expenses"],
+  netProfit: ["Net Profit", "Net Profit/(Loss)", "Net Income", "Net Loss"],
+};
 
-function plColumnsFromRows(rows, latestMonthKey, expectedCount) {
-  const header = (rows || []).find((r) => r.RowType === "Header");
-  const labels = header && Array.isArray(header.Cells) ? header.Cells.slice(1).map((c) => c.Value) : [];
-  const parsed = labels.map(monthFromColumnLabel);
-  if (labels.length > 0 && parsed.every(Boolean)) return { labels, months: parsed, by: "header" };
-  const n = labels.length || expectedCount;
-  const months = [];
-  let [y, m] = latestMonthKey.split("-").map(Number);
-  for (let i = 0; i < n; i++) {
-    months.push(`${y}-${String(m).padStart(2, "0")}`);
-    m--;
-    if (m === 0) { m = 12; y--; }
-  }
-  return { labels, months, by: "position" };
-}
-
-// Like findRowByLabel above, but returns the value in every column.
+// Like findRowByLabel above, but keeps every value cell so a caller can
+// choose the one it wants.
 function findRowValues(rows, candidateLabels) {
   if (!Array.isArray(rows)) return null;
   for (const row of rows) {
@@ -618,34 +600,36 @@ function findRowValues(rows, candidateLabels) {
   return null;
 }
 
-// Labels checked in order of preference for each line. "Revenue" alone is
-// deliberately not a candidate for income: it's a common account name and
-// would match a single account line instead of the total.
-const PL_ROW_LABELS = {
-  income: ["Total Income", "Total Revenue", "Total Trading Income"],
-  costOfSales: ["Total Cost of Sales", "Total Direct Costs", "Total Cost of Goods Sold"],
-  grossProfit: ["Gross Profit"],
-  expenses: ["Total Operating Expenses", "Total Expenses"],
-  netProfit: ["Net Profit", "Net Profit/(Loss)", "Net Income", "Net Loss"],
-};
-
-function buildMonthlyPL(report, latestMonthKey, expectedCount) {
+// The five headline lines out of one single-period P&L report. A line that
+// isn't in the report is null, never zero.
+function plFiguresFromReport(report) {
   const rows = report && Array.isArray(report.Rows) ? report.Rows : [];
-  const cols = plColumnsFromRows(rows, latestMonthKey, expectedCount);
-  const found = {};
-  const missing = [];
-  for (const [key, labels] of Object.entries(PL_ROW_LABELS)) {
-    const r = findRowValues(rows, labels);
-    if (r) found[key] = r; else missing.push(key);
+  const figures = {};
+  const labels = {};
+  for (const [key, candidates] of Object.entries(PL_ROW_LABELS)) {
+    const r = findRowValues(rows, candidates);
+    figures[key] = r ? r.values[0] : null;
+    if (r) labels[key] = r.label;
   }
-  const months = cols.months.map((month, i) => {
-    const m = { month };
-    for (const key of Object.keys(PL_ROW_LABELS)) m[key] = found[key] && found[key].values[i] !== undefined ? found[key].values[i] : null;
-    return m;
-  }).sort((a, b) => a.month.localeCompare(b.month));
-  const matchedLabels = {};
-  for (const key of Object.keys(found)) matchedLabels[key] = found[key].label;
-  return { columns: cols.labels, columnsParsedBy: cols.by, months, matchedLabels, missing };
+  return { figures, labels };
+}
+
+// Runs fn over items with at most `limit` in flight (Xero allows five
+// concurrent calls) and stops handing out work as soon as one fails.
+async function mapWithConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  let next = 0;
+  let failed = false;
+  async function worker() {
+    while (!failed) {
+      const i = next++;
+      if (i >= items.length) return;
+      results[i] = await fn(items[i], i);
+      if (results[i] && results[i].error) failed = true;
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
 }
 
 module.exports = async (req, res) => {
@@ -798,37 +782,47 @@ module.exports = async (req, res) => {
     const plYear = parseInt(req.query.year, 10) || new Date().getUTCFullYear();
     const today = new Date().toISOString().slice(0, 10);
     if (today < `${plYear}-01-01`) return res.status(400).json({ error: "That year hasn't started yet." });
-    // One call covers the whole year: the latest column is December, or
-    // the current month for this year, and eleven earlier months come with
-    // it. Picking a month on the page is then purely a matter of reading a
-    // different column, with no further call to Xero.
-    const yearEnd = `${plYear}-12-31`;
-    const plTo = today < yearEnd ? today : yearEnd;
-    const plFrom = `${plTo.slice(0, 7)}-01`;
+    // Complete months only: a month still in progress would be a partial
+    // figure sitting next to full ones, so it appears once it has ended.
+    const thisYear = parseInt(today.slice(0, 4), 10);
+    const lastCompleteMonth = plYear < thisYear ? 12 : parseInt(today.slice(5, 7), 10) - 1;
+    const pad2 = (n) => String(n).padStart(2, "0");
+    const monthKeys = Array.from({ length: lastCompleteMonth }, (_, i) => `${plYear}-${pad2(i + 1)}`);
     try {
-      const r = await fetch(`https://api.xero.com/api.xro/2.0/Reports/ProfitAndLoss?fromDate=${plFrom}&toDate=${plTo}&periods=11&timeframe=MONTH`, { headers: xeroHeaders });
-      if (!r.ok) {
-        const body = await r.text();
-        console.error("[xero-reports] monthly P&L failed:", { status: r.status, body });
-        return res.status(502).json({ error: r.status === 429 ? "Xero is rate limiting requests right now. Try again in a minute." : "Xero rejected the monthly P&L request. Check the Vercel logs for the exact response." });
-      }
-      const data = await r.json();
-      const built = buildMonthlyPL(data.Reports && data.Reports[0], plTo.slice(0, 7), 12);
+      const fetched = await mapWithConcurrency(monthKeys, 3, async (mk) => {
+        const [yy, mm] = mk.split("-").map(Number);
+        const lastDay = new Date(Date.UTC(yy, mm, 0)).getUTCDate();
+        const r = await fetch(`https://api.xero.com/api.xro/2.0/Reports/ProfitAndLoss?fromDate=${mk}-01&toDate=${mk}-${pad2(lastDay)}`, { headers: xeroHeaders });
+        if (!r.ok) {
+          const body = await r.text();
+          console.error("[xero-reports] monthly P&L failed:", { month: mk, status: r.status, body });
+          return { error: r.status === 429 ? "Xero is rate limiting requests right now. Try again in a minute." : "Xero rejected a monthly P&L request. Check the Vercel logs for the exact response." };
+        }
+        const data = await r.json();
+        return { month: mk, ...plFiguresFromReport(data.Reports && data.Reports[0]) };
+      });
+      const failure = fetched.find((f) => f && f.error);
+      if (failure) return res.status(502).json({ error: failure.error });
 
-      // Cross-check against figures the daily pull saved by a completely
-      // different route (one call per period). Same gross profit from two
-      // routes is real evidence the columns have been read correctly.
+      const done = fetched.filter(Boolean);
+      const months = done.map((f) => ({ month: f.month, ...f.figures }));
+      const matchedLabels = {};
+      for (const f of done) for (const [k, label] of Object.entries(f.labels)) if (!matchedLabels[k]) matchedLabels[k] = label;
+      const missing = Object.keys(PL_ROW_LABELS).filter((k) => !matchedLabels[k]);
+
+      // Cross-check against what the daily pull saved earlier. Both come
+      // from Xero by the same kind of call, so they should agree unless
+      // entries were changed in Xero after the daily pull last ran.
       const all = (await kv.get(MANUAL_METRICS_KEY)) || {};
       const yearMetrics = normalizeYearMetrics(all[plYear]);
       const crossCheck = [];
-      for (const m of built.months) {
-        if (!m.month.startsWith(`${plYear}-`)) continue;
+      for (const m of months) {
         const saved = yearMetrics[m.month.slice(5)];
         if (saved && saved.grossProfitAmount !== null && saved.grossProfitAmount !== undefined && m.grossProfit !== null) {
           crossCheck.push({ month: m.month, saved: saved.grossProfitAmount, xero: m.grossProfit, difference: m.grossProfit - saved.grossProfitAmount });
         }
       }
-      return res.status(200).json({ year: plYear, tenantName, periodTo: plTo, ...built, crossCheck });
+      return res.status(200).json({ year: plYear, tenantName, completeMonths: lastCompleteMonth, months, matchedLabels, missing, crossCheck });
     } catch (e) {
       console.error("[xero-reports] pl-monthly error:", e);
       return res.status(500).json({ error: "Something went wrong pulling the monthly P&L. Check the Vercel logs for details." });
@@ -1110,5 +1104,4 @@ module.exports = async (req, res) => {
 module.exports.autoPullTargets = autoPullTargets;
 module.exports.buildAgedBalances = buildAgedBalances;
 module.exports.parseXeroDate = parseXeroDate;
-module.exports.buildMonthlyPL = buildMonthlyPL;
-module.exports.monthFromColumnLabel = monthFromColumnLabel;
+module.exports.plFiguresFromReport = plFiguresFromReport;
