@@ -217,7 +217,11 @@ function SortableHeaderCell({ label, column, width, sortState, onSort }) {
   }, label, isActive ? (sortState.direction === "desc" ? " ▾" : " ▴") : "");
 }
 
-const YEAR_OPTIONS = [2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026, 2027];
+// The years offered on buttons. ALL_YEARS is deliberately separate: the
+// Profitability "Overall" view adds up every year that has data, and hiding
+// early years from the buttons must not silently drop them from that total.
+const ALL_YEARS = [2019, 2020, 2021, 2022, 2023, 2024, 2025, 2026, 2027];
+const YEAR_OPTIONS = [2023, 2024, 2025, 2026, 2027];
 // Area tracking only ever applies to these two — deliberately not
 // derived from whichever clients happen to have revenue, since that
 // list would include plenty of clients this feature was never meant for.
@@ -2233,7 +2237,7 @@ function PercentChangeDisplay({ changes, field, period }) {
   const pop = changes.previousPeriod ? changes.previousPeriod[field] : null;
   const yoy = changes.sameLastYear ? changes.sameLastYear[field] : null;
   if ((pop === null || pop === undefined) && (yoy === null || yoy === undefined)) return null;
-  const prevLabel = period === "month" ? "vs last month" : period === "quarter" ? "vs last Qtr" : "vs last year";
+  const prevLabel = period === "month" ? "vs last month" : period === "quarter" ? "vs last Qtr" : period === "half" ? "vs last half" : "vs last year";
   function formatChange(v) {
     const color = v > 0 ? VERDIGRIS : v < 0 ? "#c0392b" : INDIGO_MUTED;
     const arrow = v > 0 ? "▲" : v < 0 ? "▼" : "";
@@ -3156,10 +3160,10 @@ function ProfitabilityPage({ token }) {
     setOverallError(""); setOverallLoading(true);
     try {
       const [revResults, headResults, salResults, spendResults, ...commissionResults] = await Promise.all([
-        Promise.all(YEAR_OPTIONS.map((y) => fetch(`/api/consultant-stats?year=${y}&skipKpi=1`, { headers: { Authorization: `Bearer ${token}` } }))),
-        Promise.all(YEAR_OPTIONS.map((y) => fetch(`/api/headcount?action=monthly&year=${y}`, { headers: { Authorization: `Bearer ${token}` } }))),
-        Promise.all(YEAR_OPTIONS.map((y) => fetch(`/api/roster?action=monthly-salary&year=${y}`, { headers: { Authorization: `Bearer ${token}` } }))),
-        Promise.all(YEAR_OPTIONS.map((y) => fetch(`/api/xero-reports?action=cached-spend&year=${y}`, { headers: { Authorization: `Bearer ${token}` } }))),
+        Promise.all(ALL_YEARS.map((y) => fetch(`/api/consultant-stats?year=${y}&skipKpi=1`, { headers: { Authorization: `Bearer ${token}` } }))),
+        Promise.all(ALL_YEARS.map((y) => fetch(`/api/headcount?action=monthly&year=${y}`, { headers: { Authorization: `Bearer ${token}` } }))),
+        Promise.all(ALL_YEARS.map((y) => fetch(`/api/roster?action=monthly-salary&year=${y}`, { headers: { Authorization: `Bearer ${token}` } }))),
+        Promise.all(ALL_YEARS.map((y) => fetch(`/api/xero-reports?action=cached-spend&year=${y}`, { headers: { Authorization: `Bearer ${token}` } }))),
         ...STATS_CONSULTANTS.map((sc) => fetch(`/api/commission?consultantId=${sc.id}&action=all-time`, { headers: { Authorization: `Bearer ${token}` } })),
       ]);
 
@@ -3200,7 +3204,7 @@ function ProfitabilityPage({ token }) {
       const checkedYears = [];
       const uncheckedYears = [];
       for (let i = 0; i < spendResults.length; i++) {
-        const y = YEAR_OPTIONS[i];
+        const y = ALL_YEARS[i];
         if (!spendResults[i].ok) { uncheckedYears.push(y); continue; }
         const body = await spendResults[i].json();
         if (!body.cached) { uncheckedYears.push(y); continue; }
@@ -3714,6 +3718,64 @@ function bpDefaultPeriod(now) {
   return m === 0 ? { year: y - 1, month: "12" } : { year: y, month: bpPad(m) };
 }
 
+// ---- Reporting periods: month, quarter, half-year ---------------------
+// Every period is a run of whole calendar months, so every figure for a
+// quarter or half-year is the sum of its months. One code path, three sizes.
+const BP_QUARTERS = { Q1: [1, 3], Q2: [4, 6], Q3: [7, 9], Q4: [10, 12] };
+const BP_HALVES = { H1: [1, 6], H2: [7, 12] };
+
+function bpPeriodInfo(type, year, month, quarter, half) {
+  let startMonth, endMonth, short;
+  if (type === "quarter") { [startMonth, endMonth] = BP_QUARTERS[quarter] || BP_QUARTERS.Q1; short = BP_QUARTERS[quarter] ? quarter : "Q1"; }
+  else if (type === "half") { [startMonth, endMonth] = BP_HALVES[half] || BP_HALVES.H1; short = BP_HALVES[half] ? half : "H1"; }
+  else { startMonth = endMonth = parseInt(month, 10); short = BP_MONTH_NAMES[startMonth - 1]; }
+  return { type: type === "quarter" || type === "half" ? type : "month", year, startMonth, endMonth, length: endMonth - startMonth + 1, short, label: `${short} ${year}`, noun: type === "quarter" ? "quarter" : type === "half" ? "half" : "month" };
+}
+
+// The most recent period of that size that has finished.
+function bpDefaultFor(type, now) {
+  const y = now.getUTCFullYear();
+  const m = now.getUTCMonth() + 1;
+  if (type === "quarter") { const q = Math.floor((m - 1) / 3); return q === 0 ? { year: y - 1, quarter: "Q4" } : { year: y, quarter: `Q${q}` }; }
+  if (type === "half") return m <= 6 ? { year: y - 1, half: "H2" } : { year: y, half: "H1" };
+  const d = bpDefaultPeriod(now);
+  return { year: d.year, month: d.month };
+}
+
+// The months of one year, from a to b inclusive, out of the monthly P&L; null
+// if any of them is missing, so a part-period is never presented as whole.
+function bpMonthsOf(pl, year, a, b) {
+  const by = {};
+  pl.months.forEach((m) => { by[m.month] = m; });
+  const out = [];
+  for (let i = a; i <= b; i++) {
+    const m = by[`${year}-${bpPad(i)}`];
+    if (!m) return null;
+    out.push(m);
+  }
+  return out;
+}
+
+// EBITDA is net profit with depreciation, interest and tax added back. Net
+// profit already has all three taken off wherever they sit in the report, so
+// this needs no assumption about which section they are in. A line Xero did
+// not list for a month counts as zero for that month.
+function bpEbitda(m) {
+  if (m.netProfit === null || m.netProfit === undefined) return null;
+  return m.netProfit + (m.depreciationAmortisation || 0) + (m.interest || 0) + (m.tax || 0);
+}
+
+function bpPlTotals(months) {
+  if (!months) return null;
+  const sumField = (k) => (months.every((m) => m[k] !== null && m[k] !== undefined) ? months.reduce((s, m) => s + m[k], 0) : null);
+  const eb = months.map(bpEbitda);
+  return bpPlDerive({
+    income: sumField("income"), costOfSales: sumField("costOfSales"), grossProfit: sumField("grossProfit"),
+    expenses: sumField("expenses"), netProfit: sumField("netProfit"),
+    ebitda: eb.every((v) => v !== null) ? eb.reduce((s, v) => s + v, 0) : null,
+  });
+}
+
 // A month's accounts are rarely final the day it ends: payroll, commission
 // and other accruals are often booked afterwards, which flatters profit.
 // Rather than rely on anyone remembering, the pack says so for a while.
@@ -3724,9 +3786,9 @@ function bpDaysSinceMonthEnd(year, monthNum, now) {
   return Math.round((today - monthEnd) / 86400000);
 }
 function bpMonthHasEnded(year, monthNum, now) { return bpDaysSinceMonthEnd(year, monthNum, now) > 0; }
-function bpProvisionalNotice(year, monthNum, now) {
+function bpProvisionalNotice(year, monthNum, now, label) {
   const d = bpDaysSinceMonthEnd(year, monthNum, now);
-  const name = BP_MONTH_NAMES[monthNum - 1];
+  const name = label || BP_MONTH_NAMES[monthNum - 1];
   if (d <= 0) return `${name} has not ended. Figures are to date and incomplete.`;
   if (d < BP_PROVISIONAL_DAYS) return `Provisional. ${name} ended ${d} ${d === 1 ? "day" : "days"} ago and the books may not be closed yet. Costs, accruals and commissions are often booked after month end, so profit can look better than it will once they are.`;
   return null;
@@ -3762,7 +3824,11 @@ function bpNiceMax(v) {
 // (this year and last) and the month the pack is being run as at. "through"
 // is the reporting month as a number 1-12; months after it are deliberately
 // left empty, so a pack for March run in October still reads as at March.
-function computeBoardPackSeries(current, previous, through) {
+function computeBoardPackSeries(current, previous, periodOrThrough) {
+  // A plain number means "a single month, this one" (kept so older callers
+  // work); otherwise it is a period from bpPeriodInfo.
+  const info = typeof periodOrThrough === "number" ? { startMonth: periodOrThrough, endMonth: periodOrThrough } : periodOrThrough;
+  const through = info.endMonth;
   const sum = (a) => a.reduce((s, x) => s + x, 0);
   const cur = current.months.map((m) => m.revenueGBP);
   const prev = previous.months.map((m) => m.revenueGBP);
@@ -3782,6 +3848,20 @@ function computeBoardPackSeries(current, previous, through) {
   const cumulativeLast = prev.map((v) => { runLast += v; return runLast; });
   // Straight-line run rate at the year-to-date monthly average. Placement
   // fees are lumpy, so this is indicative, and the page says so.
+  // Average fee is always the year-to-date figure through the reporting month,
+  // never just that month's: one month's placements are too few and too lumpy
+  // to say what a placement is typically worth. It is per DISTINCT placement
+  // (union of ids across the months), excludes onsite fees, and reuses nothing
+  // from the period being reported, so a quarter or half-year pack can use it
+  // unchanged.
+  const ytdPlacementIds = new Set();
+  let ytdPlacementRevenue = 0;
+  for (let i = 0; i < through; i++) {
+    for (const id of (current.months[i].placementIds || [])) ytdPlacementIds.add(id);
+    ytdPlacementRevenue += current.months[i].placementRevenueGBP || 0;
+  }
+  const ytdPlacements = ytdPlacementIds.size;
+  const ytdAverageFee = ytdPlacements > 0 ? ytdPlacementRevenue / ytdPlacements : null;
   const monthlyAvg = through > 0 ? ytd / through : 0;
   const projection = cur.map((v, i) => {
     if (i < through - 1) return null;
@@ -3798,7 +3878,30 @@ function computeBoardPackSeries(current, previous, through) {
   const top = ranked.slice(0, 6);
   const otherGBP = sum(ranked.slice(6).map((r) => r.gbp));
   const mix = (otherGBP > 0 ? [...top, { client: "Other clients", gbp: otherGBP }] : top).map((r) => ({ ...r, pct: ytd > 0 ? (r.gbp / ytd) * 100 : 0 }));
-  return { cur, prev, bars, rolling, ytd, ytdLast, growthPct, cumulative, cumulativeLast, projection, projectedYearEnd, monthlyAvg, mix };
+  // The period itself (a month, quarter or half-year) as the sum of its
+  // months, set against the period of the same size just before it and the
+  // same months a year earlier. The one just before can sit in last year (Q1
+  // is compared with last year's Q4), which is why both years are used.
+  const a = info.startMonth - 1;
+  const b = info.endMonth;
+  const len = info.endMonth - info.startMonth + 1;
+  const prevStart = info.startMonth - len;
+  const periodRevenue = sum(cur.slice(a, b));
+  const periodRevenueLastYear = sum(prev.slice(a, b));
+  const periodRevenuePrev = prevStart >= 1 ? sum(cur.slice(prevStart - 1, info.startMonth - 1)) : sum(prev.slice(prevStart - 1 + 12, info.startMonth - 1 + 12));
+  const pctChange = (c, p) => (p > 0 ? ((c - p) / p) * 100 : null);
+  const periodIds = new Set();
+  let periodOnsites = 0;
+  for (let i = a; i < b; i++) {
+    for (const id of (current.months[i].placementIds || [])) periodIds.add(id);
+    periodOnsites += current.months[i].onsiteFees || 0;
+  }
+  return {
+    cur, prev, bars, rolling, ytd, ytdLast, growthPct, cumulative, cumulativeLast, projection, projectedYearEnd, monthlyAvg, mix, ytdAverageFee, ytdPlacements,
+    periodRevenue, periodRevenuePrev, periodRevenueLastYear,
+    popPct: pctChange(periodRevenue, periodRevenuePrev), yoyPct: pctChange(periodRevenue, periodRevenueLastYear),
+    periodPlacements: periodIds.size, periodOnsites,
+  };
 }
 
 function BpLegend({ items }) {
@@ -4020,29 +4123,30 @@ function BpCostChart({ costOfSales, expenses, income, breakeven }) {
   );
 }
 
-function BpPlSection({ pl, plError, plLoading, year, month }) {
+function BpPlSection({ pl, plError, plLoading, info }) {
   let body;
   if (plError) {
     body = React.createElement("div", { style: { ...errorStyle, marginBottom: 0 } }, `The profit and loss could not be loaded from Xero: ${plError}`);
   } else if (!pl) {
     body = React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, plLoading ? "Loading from Xero…" : "Not loaded.");
   } else {
-    const through = parseInt(month, 10);
+    const { year, startMonth, endMonth, length } = info;
+    const cur = bpPlTotals(bpMonthsOf(pl, year, startMonth, endMonth));
+    // The previous period is only used when it falls in the same year, as only
+    // one year's months are loaded; for January, Q1 and H1 it is shown as n/a.
+    const prevStart = startMonth - length;
+    const prev = prevStart >= 1 ? bpPlTotals(bpMonthsOf(pl, year, prevStart, startMonth - 1)) : null;
+    const ytd = bpPlTotals(bpMonthsOf(pl, year, 1, endMonth));
     const byMonth = {};
     pl.months.forEach((m) => { byMonth[m.month] = m; });
-    const curKey = `${year}-${month}`;
-    const prevKey = through === 1 ? `${year - 1}-12` : `${year}-${bpPad(through - 1)}`;
-    const cur = bpPlDerive(byMonth[curKey]);
-    const prev = bpPlDerive(byMonth[prevKey]);
-    const ytdMonths = Array.from({ length: through }, (_, i) => byMonth[`${year}-${bpPad(i + 1)}`]);
-    const ytdComplete = ytdMonths.every(Boolean);
-    const sumField = (k) => (ytdComplete && ytdMonths.every((m) => m[k] !== null)) ? ytdMonths.reduce((s, m) => s + m[k], 0) : null;
-    const ytd = ytdComplete ? bpPlDerive({ income: sumField("income"), costOfSales: sumField("costOfSales"), grossProfit: sumField("grossProfit"), expenses: sumField("expenses"), netProfit: sumField("netProfit") }) : null;
 
-    const costOfSales = [], expenses = [], income = [];
-    const totalCosts = [];
+    const prevHeader = info.type === "month" ? BP_MONTH_NAMES[(startMonth + 10) % 12]
+      : info.type === "quarter" ? (prevStart >= 1 ? `Q${(startMonth - 1) / 3}` : "Previous quarter")
+      : (prevStart >= 1 ? "H1" : "Previous half");
+
+    const costOfSales = [], expenses = [], income = [], totalCosts = [];
     for (let i = 0; i < 12; i++) {
-      const m = i < through ? byMonth[`${year}-${bpPad(i + 1)}`] : null;
+      const m = i < endMonth ? byMonth[`${year}-${bpPad(i + 1)}`] : null;
       costOfSales.push(m ? m.costOfSales : null);
       expenses.push(m ? m.expenses : null);
       income.push(m ? m.income : null);
@@ -4059,6 +4163,7 @@ function BpPlSection({ pl, plError, plLoading, year, month }) {
       { label: "Operating profit", key: "operatingProfit", money: true, bold: true },
       { label: "Operating margin", key: "operatingMargin" },
       { label: "Net profit, as reported by Xero", key: "netProfit", money: true, bold: true },
+      { label: "EBITDA", key: "ebitda", money: true, bold: true },
     ];
     const fmt = (r, m) => (!m || m[r.key] === null || m[r.key] === undefined) ? "n/a" : (r.money ? bpFmtMoney(m[r.key]) : `${m[r.key].toFixed(1)}%`);
     const change = (r) => {
@@ -4070,13 +4175,19 @@ function BpPlSection({ pl, plError, plLoading, year, month }) {
     };
     const th = (t, right) => React.createElement("th", { style: { textAlign: right ? "right" : "left", padding: "4px 6px", color: INDIGO_MUTED, fontWeight: 600, fontSize: 11 } }, t);
     const MISSING_NAMES = { income: "income", costOfSales: "cost of sales", grossProfit: "gross profit", expenses: "operating expenses", netProfit: "net profit" };
-    const cc = pl.crossCheck.find((c) => c.month === curKey);
+    const ADDBACK_NAMES = { depreciationAmortisation: "depreciation", interest: "interest", tax: "tax" };
+
+    // Gross profit saved earlier by the daily pull, where there is one, against
+    // what the monthly report says now.
+    const inPeriod = pl.crossCheck.filter((c) => c.month.startsWith(`${year}-`) && parseInt(c.month.slice(5), 10) >= startMonth && parseInt(c.month.slice(5), 10) <= endMonth);
+    const disagreeing = inPeriod.filter((c) => Math.abs(c.difference) > 1);
+    const monthLabel = (c) => BP_MONTH_NAMES[parseInt(c.month.slice(5), 10) - 1];
 
     body = !cur
-      ? React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "The profit and loss covers complete months only, so this month will appear once it has ended.")
+      ? React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, `The profit and loss covers complete months only, so this ${info.noun} will appear once it has ended.`)
       : React.createElement(React.Fragment, null,
         React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 12.5, fontFamily: "'Work Sans', sans-serif", color: INDIGO } },
-          React.createElement("thead", null, React.createElement("tr", null, th(""), th(`${BP_MONTH_NAMES[through - 1]} ${year}`, true), th(prev ? `${BP_MONTH_NAMES[(through + 10) % 12]}` : "Previous month", true), th("Change", true), th(`Year to date`, true))),
+          React.createElement("thead", null, React.createElement("tr", null, th(""), th(info.type === "month" ? `${BP_MONTH_NAMES[startMonth - 1]} ${year}` : info.label, true), th(prev || info.type !== "month" ? prevHeader : "Previous month", true), th("Change", true), th("Year to date", true))),
           React.createElement("tbody", null, ...rows.map((r) => React.createElement("tr", { key: r.key, style: { borderTop: `1px solid ${INDIGO_HAIRLINE}`, fontWeight: r.bold ? 700 : 400, color: r.money ? INDIGO : INDIGO_MUTED } },
             React.createElement("td", { style: { padding: "5px 6px" } }, r.label),
             React.createElement("td", { style: { textAlign: "right", padding: "5px 6px" } }, fmt(r, cur)),
@@ -4084,19 +4195,21 @@ function BpPlSection({ pl, plError, plLoading, year, month }) {
             React.createElement("td", { style: { textAlign: "right", padding: "5px 6px", color: INDIGO_MUTED } }, change(r)),
             React.createElement("td", { style: { textAlign: "right", padding: "5px 6px" } }, fmt(r, ytd)))))
         ),
-        !ytdComplete && React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 6 } }, "Year to date is blank because Xero did not return every month from January."),
+        !ytd && React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 6 } }, "Year to date is blank because Xero did not return every month from January."),
+        React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 6 } }, "EBITDA is net profit plus depreciation, interest and tax, all taken from the same Xero report."),
         React.createElement("div", { style: { fontFamily: "'Work Sans', sans-serif", fontSize: 13, color: INDIGO_MUTED, margin: "22px 0 4px" } }, "Monthly costs against income"),
         React.createElement(BpLegend, { items: [{ label: "Cost of sales", color: MELON, bar: true }, { label: "Operating expenses", color: INDIGO, bar: true }, { label: "Income", color: VERDIGRIS }, { label: "Average monthly costs (breakeven)", color: INDIGO_MUTED, dashed: true }] }),
         React.createElement(BpCostChart, { costOfSales, expenses, income, breakeven }),
         breakeven !== null && React.createElement("div", { style: { marginTop: 8, fontSize: 12, color: INDIGO } }, `Average monthly costs so far this year are ${bpFmtGBP(breakeven)}. That is the income needed each month to break even.`),
+        pl.missing.length > 0 && React.createElement("div", { style: { marginTop: 8, fontSize: 11, color: "#c0392b", fontWeight: 600 } }, `Xero's report has no row this page recognises for: ${pl.missing.map((k) => MISSING_NAMES[k] || k).join(", ")}. Those show as n/a.`),
         (() => {
-          const d = (pl.derivedCostOfSales || []).filter((k) => k.startsWith(`${year}-`) && parseInt(k.slice(5), 10) <= through).map((k) => BP_MONTH_NAMES[parseInt(k.slice(5), 10) - 1]);
+          const d = (pl.derivedCostOfSales || []).filter((k) => k.startsWith(`${year}-`) && parseInt(k.slice(5), 10) <= endMonth).map((k) => BP_MONTH_NAMES[parseInt(k.slice(5), 10) - 1]);
           return d.length > 0 ? React.createElement("div", { style: { marginTop: 8, fontSize: 11, color: INDIGO_MUTED } }, `Xero's report has no cost of sales row for ${d.join(", ")}. Cost of sales for ${d.length === 1 ? "that month is" : "those months is"} worked out as income minus gross profit.`) : null;
         })(),
-        pl.missing.length > 0 && React.createElement("div", { style: { marginTop: 8, fontSize: 11, color: "#c0392b", fontWeight: 600 } }, `Xero's report has no row this page recognises for: ${pl.missing.map((k) => MISSING_NAMES[k] || k).join(", ")}. Those show as n/a.`),
-        cc && (Math.abs(cc.difference) <= 1
-          ? React.createElement("div", { style: { marginTop: 8, fontSize: 11, color: INDIGO_MUTED } }, `Gross profit for ${BP_MONTH_NAMES[through - 1]} agrees with the figure saved by the daily Xero pull.`)
-          : React.createElement("div", { style: { marginTop: 8, fontSize: 11, color: "#c0392b", fontWeight: 600 } }, `Gross profit for ${BP_MONTH_NAMES[through - 1]} is ${bpFmtMoney(cc.xero)} in the monthly report but ${bpFmtMoney(cc.saved)} in the figure saved by the daily pull. They should match unless entries were changed in Xero after the daily pull last ran. Check before relying on either.`)),
+        (pl.missingAddBacks || []).length > 0 && React.createElement("div", { style: { marginTop: 8, fontSize: 11, color: INDIGO_MUTED } }, `Xero's report has no ${pl.missingAddBacks.map((k) => ADDBACK_NAMES[k] || k).join(" or ")} line in ${year}, so ${pl.missingAddBacks.length === 1 ? "it counts" : "they count"} as zero in EBITDA.`),
+        inPeriod.length > 0 && disagreeing.length === 0 && React.createElement("div", { style: { marginTop: 8, fontSize: 11, color: INDIGO_MUTED } },
+          info.type === "month" ? `Gross profit for ${BP_MONTH_NAMES[startMonth - 1]} agrees with the figure saved by the daily Xero pull.` : `Gross profit agrees with the figure saved by the daily Xero pull for ${inPeriod.length} of the ${length} months.`),
+        ...disagreeing.map((c) => React.createElement("div", { key: c.month, style: { marginTop: 8, fontSize: 11, color: "#c0392b", fontWeight: 600 } }, `Gross profit for ${monthLabel(c)} is ${bpFmtMoney(c.xero)} in the monthly report but ${bpFmtMoney(c.saved)} in the figure saved by the daily pull. They should match unless entries were changed in Xero after the daily pull last ran. Check before relying on either.`)),
         React.createElement("div", { style: { marginTop: 8, fontSize: 11, color: INDIGO_MUTED } }, "Income here is what Xero shows as invoiced. It will not match the fee revenue earlier in this pack, which is dated by start date and includes uplifts.")
       );
   }
@@ -4117,10 +4230,11 @@ function bpCashReconciliation(rec, fromBalanceSheet) {
   return React.createElement("div", { style: { fontSize: 11, marginTop: 8, color: large ? "#c0392b" : INDIGO_MUTED, fontWeight: large ? 600 : 400 } }, base + why);
 }
 
-function BpCashSection({ cash, cashError, cashLoading, monthComplete, monthName, year }) {
+function BpCashSection({ cash, cashError, cashLoading, periodComplete, info }) {
+  const monthName = BP_MONTH_NAMES[info.startMonth - 1]; // the month the period starts in
   let body;
-  if (!monthComplete) {
-    body = React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Cash movement is available once the month has ended.");
+  if (!periodComplete) {
+    body = React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, `Cash movement is available once the ${info.noun} has ended.`);
   } else if (cashError) {
     body = React.createElement("div", { style: { ...errorStyle, marginBottom: 0 } }, `Cash movement could not be loaded from Xero: ${cashError}`);
   } else if (!cash) {
@@ -4158,22 +4272,42 @@ function BpCashSection({ cash, cashError, cashLoading, monthComplete, monthName,
 }
 
 function BoardPackPage({ token }) {
-  const initial = bpDefaultPeriod(new Date());
-  const [year, setYear] = useState(initial.year);
-  const [month, setMonth] = useState(initial.month);
+  const init = bpDefaultFor("month", new Date());
+  const [periodType, setPeriodType] = useState("month");
+  const [year, setYear] = useState(init.year);
+  const [month, setMonth] = useState(init.month);
+  const [quarter, setQuarter] = useState("Q1");
+  const [half, setHalf] = useState("H1");
+  const info = bpPeriodInfo(periodType, year, month, quarter, half);
+  const through = info.endMonth;
+  const endMonthStr = bpPad(through);
   const [ov, setOv] = useState(null);
   const [series, setSeries] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const reqId = useRef(0);
 
+  // Switching the size of the period jumps to the latest finished one of that
+  // size, since the old selection (a month) means nothing as a quarter.
+  const chooseType = (t) => {
+    const d = bpDefaultFor(t, new Date());
+    setPeriodType(t);
+    setYear(d.year);
+    if (d.month) setMonth(d.month);
+    if (d.quarter) setQuarter(d.quarter);
+    if (d.half) setHalf(d.half);
+  };
+
+  // Headcount is taken as at the END of the period; revenue and everything
+  // else for the period comes from the monthly series, so one source drives
+  // every period size.
   const load = useCallback(async () => {
     const id = ++reqId.current;
     setError(""); setLoading(true);
     try {
       const headers = { Authorization: `Bearer ${token}` };
       const [ovRes, seriesRes] = await Promise.all([
-        fetch(`/api/company-overview?year=${year}&period=month&month=${month}`, { headers }),
+        fetch(`/api/company-overview?year=${year}&period=month&month=${endMonthStr}`, { headers }),
         fetch(`/api/company-overview?action=revenue-series&year=${year}`, { headers }),
       ]);
       const [ovBody, seriesBody] = await Promise.all([ovRes.json(), seriesRes.json()]);
@@ -4185,11 +4319,11 @@ function BoardPackPage({ token }) {
     } finally {
       if (id === reqId.current) setLoading(false);
     }
-  }, [token, year, month]);
+  }, [token, year, endMonthStr]);
   useEffect(() => { load(); }, [load]);
 
-  // One call returns every month of the chosen year, so changing the month
-  // is just reading another column. It only refetches when the year changes.
+  // One call returns every month of the chosen year, so changing the period
+  // is just reading other months. It only refetches when the year changes.
   const [pl, setPl] = useState(null);
   const [plError, setPlError] = useState("");
   const [plLoading, setPlLoading] = useState(false);
@@ -4212,19 +4346,19 @@ function BoardPackPage({ token }) {
     return () => { cancelled = true; };
   }, [token, year]);
 
-  // Cash movement is per month, so it refetches when the month changes, but
-  // only for a month that has ended: a part-month would be a misleading figure.
-  const monthComplete = bpMonthHasEnded(year, parseInt(month, 10), new Date());
+  // Cash movement covers the whole period, from the first day of its first
+  // month, and only once the period has ended: a part-period would mislead.
+  const periodComplete = bpMonthHasEnded(year, through, new Date());
   const [cash, setCash] = useState(null);
   const [cashError, setCashError] = useState("");
   const [cashLoading, setCashLoading] = useState(false);
   useEffect(() => {
     let cancelled = false;
-    if (!monthComplete) { setCash(null); setCashError(""); setCashLoading(false); return () => { cancelled = true; }; }
+    if (!periodComplete) { setCash(null); setCashError(""); setCashLoading(false); return () => { cancelled = true; }; }
     (async () => {
       setCashLoading(true); setCashError(""); setCash(null);
       try {
-        const res = await fetch(`/api/xero-reports?action=cash-movement&year=${year}&month=${month}`, { headers: { Authorization: `Bearer ${token}` } });
+        const res = await fetch(`/api/xero-reports?action=cash-movement&year=${year}&month=${bpPad(info.endMonth)}&fromMonth=${bpPad(info.startMonth)}`, { headers: { Authorization: `Bearer ${token}` } });
         const body = await res.json();
         if (cancelled) return;
         if (!res.ok) { setCashError(body.error || "Couldn't load cash movement."); return; }
@@ -4236,11 +4370,11 @@ function BoardPackPage({ token }) {
       }
     })();
     return () => { cancelled = true; };
-  }, [token, year, month, monthComplete]);
+  }, [token, year, info.startMonth, info.endMonth, periodComplete]);
 
-  // Debtors and creditors are as at today whatever month is chosen, so they
-  // are fetched once per visit, not on every month click: it saves repeated
-  // calls to Xero and avoids its rate limits.
+  // Debtors and creditors are as at today whatever period is chosen, so they
+  // are fetched once per visit: it saves repeated calls to Xero and avoids its
+  // rate limits.
   const [aged, setAged] = useState(null);
   const [agedError, setAgedError] = useState("");
   const [agedLoading, setAgedLoading] = useState(false);
@@ -4263,16 +4397,17 @@ function BoardPackPage({ token }) {
     return () => { cancelled = true; };
   }, [token]);
 
-  const through = parseInt(month, 10);
-  const s = (ov && series) ? computeBoardPackSeries(series.current, series.previous, through) : null;
-  const monthName = BP_MONTH_NAMES[through - 1];
-  const num = (v) => (v === null || v === undefined) ? null : v;
-  const xeroKpi = (label, value, field, color) => React.createElement(BpKpi, {
+  const s = (ov && series) ? computeBoardPackSeries(series.current, series.previous, info) : null;
+  const monthName = BP_MONTH_NAMES[through - 1]; // the month the period ends in, used for "Jan to ..." labels
+  const plTotals = pl ? bpPlTotals(bpMonthsOf(pl, year, info.startMonth, info.endMonth)) : null;
+  const cashClose = cash && cash.totals ? cash.totals.closing : null;
+  const xeroKpi = (label, value, color) => React.createElement(BpKpi, {
     label,
-    value: num(value) !== null ? bpFmtGBP(value) : "Not yet pulled",
-    color: num(value) !== null ? color : INDIGO_MUTED,
-    extra: num(value) !== null ? React.createElement(PercentChangeDisplay, { changes: ov.changes, field, period: "month" }) : null,
+    value: value !== null && value !== undefined ? bpFmtMoney(value) : "Not available",
+    color: value !== null && value !== undefined ? color : INDIGO_MUTED,
   });
+  const headcount = ov && ov.headcountUsedForPerHead > 0 ? ov.headcountUsedForPerHead : null;
+  const chip = (active, extra) => ({ ...chipStyle, background: active ? INDIGO : "rgba(46,64,91,0.06)", color: active ? WHITE : INDIGO, fontWeight: active ? 700 : 500, ...(extra || {}) });
 
   return React.createElement("div", { className: "bp-root" },
     React.createElement("div", { className: "no-print", style: { marginBottom: 16 } },
@@ -4285,9 +4420,18 @@ function BoardPackPage({ token }) {
           YEAR_OPTIONS.map((y) => React.createElement("button", { key: y, onClick: () => setYear(y), style: { ...chipStyle, background: year === y ? MELON : "rgba(255,176,140,0.14)", fontWeight: year === y ? 700 : 500 } }, y))
         ),
         React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 } },
-          MONTH_OPTIONS.map((mm) => React.createElement("button", { key: mm, onClick: () => setMonth(mm), style: { ...chipStyle, background: month === mm ? INDIGO : "rgba(46,64,91,0.06)", color: month === mm ? WHITE : INDIGO, fontWeight: month === mm ? 700 : 500 } }, MONTH_LABELS[mm]))
+          [["month", "Month"], ["quarter", "Quarter"], ["half", "Half-year"]].map(([t, label]) => React.createElement("button", { key: t, onClick: () => chooseType(t), style: chip(periodType === t, { padding: "6px 12px", fontSize: 12 }) }, label))
         ),
-        React.createElement("div", { style: { marginTop: 10, fontSize: 12, color: INDIGO_MUTED } }, "Choose the month the pack is about, then print. The browser's print dialog has a Save as PDF option.")
+        periodType === "month" && React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 } },
+          MONTH_OPTIONS.map((mm) => React.createElement("button", { key: mm, onClick: () => setMonth(mm), style: chip(month === mm) }, MONTH_LABELS[mm]))
+        ),
+        periodType === "quarter" && React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 } },
+          ["Q1", "Q2", "Q3", "Q4"].map((q) => React.createElement("button", { key: q, onClick: () => setQuarter(q), style: chip(quarter === q) }, q))
+        ),
+        periodType === "half" && React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 } },
+          ["H1", "H2"].map((hh) => React.createElement("button", { key: hh, onClick: () => setHalf(hh), style: chip(half === hh) }, hh))
+        ),
+        React.createElement("div", { style: { marginTop: 10, fontSize: 12, color: INDIGO_MUTED } }, "Choose the period the pack is about, then print. Quarters and half-years are calendar ones (Q1 is January to March, H1 is January to June). The browser's print dialog has a Save as PDF option.")
       )
     ),
     error && React.createElement("div", { className: "no-print", style: errorStyle }, error),
@@ -4295,28 +4439,29 @@ function BoardPackPage({ token }) {
     !loading && s && React.createElement(React.Fragment, null,
       React.createElement("div", { className: "bp-section", style: { marginBottom: 20 } },
         React.createElement("div", { style: { fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: MELON, fontWeight: 600, fontFamily: "'Work Sans', sans-serif" } }, "Reload"),
-        React.createElement("h1", { style: { fontFamily: "Georgia, 'Times New Roman', serif", fontWeight: 400, fontSize: 34, color: INDIGO, margin: "2px 0 4px" } }, `Board Pack, ${monthName} ${year}`),
+        React.createElement("h1", { style: { fontFamily: "Georgia, 'Times New Roman', serif", fontWeight: 400, fontSize: 34, color: INDIGO, margin: "2px 0 4px" } }, `Board Pack, ${info.label}`),
         React.createElement("div", { style: { fontSize: 12, color: INDIGO_MUTED } }, `Prepared ${new Date().toLocaleDateString("en-GB")}`)
       ),
       (() => {
-        const notice = bpProvisionalNotice(year, through, new Date());
+        const notice = bpProvisionalNotice(year, through, new Date(), info.type === "month" ? undefined : info.short);
         return notice ? React.createElement("div", { className: "bp-section", style: { marginBottom: 20, padding: "10px 14px", background: "rgba(255,176,140,0.22)", border: `1px solid ${MELON}`, borderRadius: 6, fontSize: 12.5, color: INDIGO, lineHeight: 1.5 } }, notice) : null;
       })(),
 
       React.createElement(BpSection, { title: "KPI Summary", source: "Atlas placements (revenue, fees, headcount) and Xero (profit, costs, cash)" },
         React.createElement("div", { style: { display: "flex", gap: 24, flexWrap: "wrap" } },
-          React.createElement(BpKpi, { label: `Fee revenue - ${monthName} starters`, value: bpFmtGBP(ov.totalRevenueGBP), sub: feeCountsFor(ov), extra: React.createElement(PercentChangeDisplay, { changes: ov.changes, field: "totalRevenueGBP", period: "month" }) }),
-          React.createElement(BpKpi, { label: through === 1 ? `Fee revenue - ${monthName} starters` : `Fee revenue - Jan to ${monthName} starters`, value: bpFmtGBP(s.ytd), extra: s.growthPct !== null ? React.createElement("div", { style: { fontSize: 11, marginTop: 4, color: s.growthPct >= 0 ? VERDIGRIS : "#c0392b", fontWeight: 600 } }, `${s.growthPct >= 0 ? "▲" : "▼"} ${Math.abs(s.growthPct).toFixed(1)}% vs same period last year`) : null }),
-          React.createElement(BpKpi, { label: "Average fee", value: bpFmtGBP(ov.averageFeeGBP), sub: `${ov.averageFeePlacementCount} placements, onsite fees excluded` }),
-          React.createElement(BpKpi, { label: "Fee-earning headcount", value: ov.headcountUsedForPerHead !== null && ov.headcountUsedForPerHead !== undefined ? String(ov.headcountUsedForPerHead) : "n/a", sub: ov.revenuePerHeadGBP !== null ? `${bpFmtGBP(ov.revenuePerHeadGBP)} revenue per head` : null })
+          React.createElement(BpKpi, { label: `Fee revenue - ${info.short} starters`, value: bpFmtGBP(s.periodRevenue), sub: feeCountsText(s.periodPlacements, s.periodOnsites), extra: React.createElement(PercentChangeDisplay, { changes: { previousPeriod: { fee: s.popPct }, sameLastYear: { fee: s.yoyPct } }, field: "fee", period: info.type }) }),
+          // From January the year-to-date figure is the period itself, so it is not repeated.
+          info.startMonth > 1 && React.createElement(BpKpi, { label: `Fee revenue - Jan to ${monthName} starters`, value: bpFmtGBP(s.ytd), extra: s.growthPct !== null ? React.createElement("div", { style: { fontSize: 11, marginTop: 4, color: s.growthPct >= 0 ? VERDIGRIS : "#c0392b", fontWeight: 600 } }, `${s.growthPct >= 0 ? "▲" : "▼"} ${Math.abs(s.growthPct).toFixed(1)}% vs same period last year`) : null }),
+          React.createElement(BpKpi, { label: through === 1 ? `Average fee - ${monthName} starters` : `Average fee - Jan to ${monthName} starters`, value: s.ytdAverageFee !== null ? bpFmtGBP(s.ytdAverageFee) : "n/a", sub: `${s.ytdPlacements} ${s.ytdPlacements === 1 ? "placement" : "placements"}, onsite fees excluded` }),
+          React.createElement(BpKpi, { label: "Fee-earning headcount", value: headcount !== null ? String(headcount) : "n/a", sub: headcount !== null ? `${bpFmtGBP(s.periodRevenue / headcount)} revenue per head` : null })
         ),
         React.createElement("div", { style: { display: "flex", gap: 24, flexWrap: "wrap", marginTop: 18, paddingTop: 16, borderTop: `1px solid ${INDIGO_HAIRLINE}` } },
-          xeroKpi(`Gross profit, ${monthName}`, ov.grossProfitAmount, "grossProfitAmount", VERDIGRIS),
-          xeroKpi("Total expenses", ov.totalExpensesAmount, "totalExpensesAmount", MELON),
-          xeroKpi("EBITDA", ov.ebitdaAmount, "ebitdaAmount", INDIGO),
-          xeroKpi("Cash at month end", ov.cashAmount, "cashAmount", VERDIGRIS)
+          xeroKpi(`Gross profit, ${info.short}`, plTotals ? plTotals.grossProfit : null, VERDIGRIS),
+          xeroKpi("Total expenses", plTotals ? plTotals.expenses : null, MELON),
+          xeroKpi("EBITDA", plTotals ? plTotals.ebitda : null, INDIGO),
+          xeroKpi(`Cash at ${info.noun === "half" ? "half-year" : info.noun} end`, cashClose, VERDIGRIS)
         ),
-        React.createElement("div", { style: { marginTop: 10, fontSize: 11, color: INDIGO_MUTED } }, "Xero figures come from the daily automated pull. A month's figures keep refreshing for thirty days after it ends, while late journals land in Xero.")
+        React.createElement("div", { style: { marginTop: 10, fontSize: 11, color: INDIGO_MUTED } }, "Xero figures are read live from Xero's profit and loss for each month in the period, and cash from its bank balances. EBITDA is net profit plus depreciation, interest and tax.")
       ),
 
       React.createElement(BpSection, { title: "Fee Revenue Analysis", source: "Atlas placements, including uplift rules. Will not match Xero invoiced revenue." },
@@ -4359,9 +4504,9 @@ function BoardPackPage({ token }) {
         )
       ),
 
-      React.createElement(BpPlSection, { pl, plError, plLoading, year, month }),
+      React.createElement(BpPlSection, { pl, plError, plLoading, info }),
 
-      React.createElement(BpCashSection, { cash, cashError, cashLoading, monthComplete, monthName, year }),
+      React.createElement(BpCashSection, { cash, cashError, cashLoading, periodComplete, info }),
 
       React.createElement(BpDebtorsSection, { aged, agedError, agedLoading }),
 
