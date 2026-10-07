@@ -611,7 +611,17 @@ function plFiguresFromReport(report) {
     figures[key] = r ? r.values[0] : null;
     if (r) labels[key] = r.label;
   }
-  return { figures, labels };
+  // Xero leaves the Cost of Sales section out of the report entirely in a
+  // month with none. Gross profit is by definition income minus cost of
+  // sales, so with income and gross profit both present, the missing line
+  // is implied by Xero's own two figures (zero when they are equal). It is
+  // recorded as derived, not presented as something Xero reported.
+  const derived = [];
+  if (figures.costOfSales === null && figures.income !== null && figures.grossProfit !== null) {
+    figures.costOfSales = Math.round((figures.income - figures.grossProfit) * 100) / 100;
+    derived.push("costOfSales");
+  }
+  return { figures, labels, derived };
 }
 
 // Runs fn over items with at most `limit` in flight (Xero allows five
@@ -630,6 +640,44 @@ async function mapWithConcurrency(items, limit, fn) {
   }
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
   return results;
+}
+
+// ---- Cash movement ---------------------------------------------------
+// Xero's Bank Summary report: per bank account, opening balance, cash
+// received, cash spent and closing balance for a period. Columns are found
+// by their headings, not positions, and if any can't be found the caller
+// is told, with the headings Xero did send, rather than given a guess.
+function bankSummaryFromReport(report) {
+  const rows = report && Array.isArray(report.Rows) ? report.Rows : [];
+  const header = rows.find((r) => r.RowType === "Header");
+  const headerLabels = header && Array.isArray(header.Cells) ? header.Cells.map((c) => String((c && c.Value) || "")) : [];
+  const find = (re) => headerLabels.findIndex((l, i) => i > 0 && re.test(l));
+  const col = { opening: find(/opening/i), received: find(/received/i), spent: find(/spent/i), closing: find(/closing/i) };
+  if (Object.values(col).some((i) => i < 0)) return { error: "columns", headerLabels };
+
+  const num = (c) => {
+    const n = parseFloat(String(c && c.Value !== undefined ? c.Value : "").replace(/,/g, ""));
+    return isNaN(n) ? null : n;
+  };
+  const accounts = [];
+  (function walk(rs) {
+    for (const r of rs || []) {
+      if (r.RowType === "Row" && Array.isArray(r.Cells) && r.Cells[0] && typeof r.Cells[0].Value === "string" && !/^total/i.test(r.Cells[0].Value.trim())) {
+        const v = { opening: num(r.Cells[col.opening]), received: num(r.Cells[col.received]), spent: num(r.Cells[col.spent]), closing: num(r.Cells[col.closing]) };
+        if (Object.values(v).some((n) => n !== null)) {
+          const o = v.opening || 0, rc = v.received || 0, sp = Math.abs(v.spent || 0), cl = v.closing || 0;
+          // Magnitudes are used so the report's sign convention for "spent"
+          // can't flip the arithmetic. A mismatch here is flagged, not hidden:
+          // currency movements on a foreign account are the usual cause.
+          accounts.push({ name: r.Cells[0].Value, opening: o, received: rc, spent: sp, net: rc - sp, closing: cl, consistent: Math.abs(o + rc - sp - cl) <= 1 });
+        }
+      }
+      if (Array.isArray(r.Rows)) walk(r.Rows);
+    }
+  })(rows);
+  const sum = (k) => accounts.reduce((s, a) => s + a[k], 0);
+  const totals = { opening: sum("opening"), received: sum("received"), spent: sum("spent"), net: sum("received") - sum("spent"), closing: sum("closing") };
+  return { accounts, totals, headerLabels };
 }
 
 module.exports = async (req, res) => {
@@ -808,7 +856,8 @@ module.exports = async (req, res) => {
       const months = done.map((f) => ({ month: f.month, ...f.figures }));
       const matchedLabels = {};
       for (const f of done) for (const [k, label] of Object.entries(f.labels)) if (!matchedLabels[k]) matchedLabels[k] = label;
-      const missing = Object.keys(PL_ROW_LABELS).filter((k) => !matchedLabels[k]);
+      const derivedCostOfSales = done.filter((f) => f.derived.includes("costOfSales")).map((f) => f.month);
+      const missing = Object.keys(PL_ROW_LABELS).filter((k) => !matchedLabels[k] && !(k === "costOfSales" && derivedCostOfSales.length > 0));
 
       // Cross-check against what the daily pull saved earlier. Both come
       // from Xero by the same kind of call, so they should agree unless
@@ -822,10 +871,54 @@ module.exports = async (req, res) => {
           crossCheck.push({ month: m.month, saved: saved.grossProfitAmount, xero: m.grossProfit, difference: m.grossProfit - saved.grossProfitAmount });
         }
       }
-      return res.status(200).json({ year: plYear, tenantName, completeMonths: lastCompleteMonth, months, matchedLabels, missing, crossCheck });
+      return res.status(200).json({ year: plYear, tenantName, completeMonths: lastCompleteMonth, months, matchedLabels, missing, derivedCostOfSales, crossCheck });
     } catch (e) {
       console.error("[xero-reports] pl-monthly error:", e);
       return res.status(500).json({ error: "Something went wrong pulling the monthly P&L. Check the Vercel logs for details." });
+    }
+  }
+
+  if (req.query.action === "cash-movement") {
+    const cy = parseInt(req.query.year, 10);
+    const cm = parseInt(req.query.month, 10);
+    if (!cy || !(cm >= 1 && cm <= 12)) return res.status(400).json({ error: "A valid year and month are required." });
+    const pad2 = (n) => String(n).padStart(2, "0");
+    const lastDay = new Date(Date.UTC(cy, cm, 0)).getUTCDate();
+    const monthStart = `${cy}-${pad2(cm)}-01`;
+    const monthEnd = `${cy}-${pad2(cm)}-${pad2(lastDay)}`;
+    const today = new Date().toISOString().slice(0, 10);
+    if (today <= monthEnd) return res.status(400).json({ error: "That month has not ended yet, so its cash movement is not available." });
+    try {
+      const r = await fetch(`https://api.xero.com/api.xro/2.0/Reports/BankSummary?fromDate=${monthStart}&toDate=${monthEnd}`, { headers: xeroHeaders });
+      if (!r.ok) {
+        const body = await r.text();
+        console.error("[xero-reports] bank summary failed:", { status: r.status, body });
+        return res.status(502).json({ error: r.status === 429 ? "Xero is rate limiting requests right now. Try again in a minute." : "Xero rejected the bank summary request. Check the Vercel logs for the exact response." });
+      }
+      const data = await r.json();
+      const parsed = bankSummaryFromReport(data.Reports && data.Reports[0]);
+      if (parsed.error) {
+        return res.status(502).json({ error: `Xero's bank summary came back with columns this page does not recognise (it sent: ${parsed.headerLabels.filter(Boolean).join(", ") || "no headings"}).`, headerLabels: parsed.headerLabels });
+      }
+
+      // Cross-check the closing balances against the balance sheet's own cash
+      // line, the same line the daily pull saves as Cash.
+      let reconciliation = null;
+      try {
+        const bsRes = await fetch(`https://api.xero.com/api.xro/2.0/Reports/BalanceSheet?date=${monthEnd}`, { headers: xeroHeaders });
+        if (bsRes.ok) {
+          const bs = await bsRes.json();
+          const rows = bs.Reports && bs.Reports[0] ? bs.Reports[0].Rows : null;
+          const cash = findRowByLabel(rows, ["Total Bank", "Bank", "Cash and Cash Equivalents", "Total Cash and Cash Equivalents"]);
+          if (cash) reconciliation = { xero: cash.value, computed: parsed.totals.closing, difference: parsed.totals.closing - cash.value, differencePct: cash.value !== 0 ? ((parsed.totals.closing - cash.value) / Math.abs(cash.value)) * 100 : null };
+        }
+      } catch (e) {
+        console.error("[xero-reports] cash-movement reconciliation skipped:", e);
+      }
+      return res.status(200).json({ year: cy, month: pad2(cm), asAt: monthEnd, tenantName, accounts: parsed.accounts, totals: parsed.totals, reconciliation, headerLabels: parsed.headerLabels });
+    } catch (e) {
+      console.error("[xero-reports] cash-movement error:", e);
+      return res.status(500).json({ error: "Something went wrong pulling cash movement. Check the Vercel logs for details." });
     }
   }
 
@@ -1105,3 +1198,4 @@ module.exports.autoPullTargets = autoPullTargets;
 module.exports.buildAgedBalances = buildAgedBalances;
 module.exports.parseXeroDate = parseXeroDate;
 module.exports.plFiguresFromReport = plFiguresFromReport;
+module.exports.bankSummaryFromReport = bankSummaryFromReport;
