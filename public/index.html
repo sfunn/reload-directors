@@ -3716,9 +3716,10 @@ function bpDefaultPeriod(now) {
 
 function bpFmtK(v) {
   const a = Math.abs(v);
-  if (a >= 1e6) return `£${(v / 1e6).toFixed(1)}M`;
-  if (a >= 1e3) return `£${Math.round(v / 1e3)}K`;
-  return `£${Math.round(v)}`;
+  const sign = v < 0 ? "-" : "";
+  if (a >= 1e6) return `${sign}£${(a / 1e6).toFixed(1)}M`;
+  if (a >= 1e3) return `${sign}£${Math.round(a / 1e3)}K`;
+  return `${sign}£${Math.round(a)}`;
 }
 function bpFmtGBP(v) { return `£${Math.round(v).toLocaleString()}`; }
 function bpNiceMax(v) {
@@ -3783,21 +3784,31 @@ function BpLegend({ items }) {
 
 // Shared SVG frame: gridlines, value axis, month labels. Returns the
 // scale helpers plus the frame elements so each chart only draws its data.
+// The axis covers negative values too (a month of credit notes can take
+// income below zero) with round tick steps, and exposes y0, the zero line,
+// so bars grow from zero rather than from the bottom edge.
 function bpFrame(values, W, H) {
   const ml = 54, mr = 12, mt = 12, mb = 28;
   const pw = W - ml - mr, ph = H - mt - mb;
-  const max = bpNiceMax(Math.max(0, ...values.filter((v) => v !== null && v !== undefined)));
-  const y = (v) => mt + ph - (v / max) * ph;
+  const vals = values.filter((v) => v !== null && v !== undefined && isFinite(v));
+  const hi = Math.max(0, ...vals);
+  const lo = Math.min(0, ...vals);
+  const step = hi - lo > 0 ? bpNiceMax((hi - lo) / 4) : 250;
+  const min = Math.floor(lo / step) * step;
+  let max = Math.ceil(hi / step) * step;
+  if (max <= min) max = min + step * 4;
+  const y = (v) => mt + ph - ((v - min) / (max - min)) * ph;
+  const y0 = y(0);
   const xStep = pw / 12;
   const cx = (i) => ml + i * xStep + xStep / 2;
   const grid = [];
-  for (let t = 0; t <= 4; t++) {
-    const v = (max * t) / 4;
-    grid.push(React.createElement("line", { key: `g${t}`, x1: ml, x2: W - mr, y1: y(v), y2: y(v), stroke: INDIGO_HAIRLINE, strokeWidth: 1 }));
-    grid.push(React.createElement("text", { key: `gl${t}`, x: ml - 6, y: y(v) + 3, textAnchor: "end", fontSize: 10, fill: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif" }, bpFmtK(v)));
+  for (let t = min, n = 0; t <= max + step / 2 && n < 20; t += step, n++) {
+    const isZero = Math.abs(t) < step / 1000;
+    grid.push(React.createElement("line", { key: `g${n}`, x1: ml, x2: W - mr, y1: y(t), y2: y(t), stroke: isZero && min < 0 ? INDIGO_MUTED : INDIGO_HAIRLINE, strokeWidth: 1 }));
+    grid.push(React.createElement("text", { key: `gl${n}`, x: ml - 6, y: y(t) + 3, textAnchor: "end", fontSize: 10, fill: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif" }, bpFmtK(t)));
   }
   const labels = MONTH_OPTIONS.map((mm, i) => React.createElement("text", { key: `m${i}`, x: cx(i), y: H - 9, textAnchor: "middle", fontSize: 10, fill: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif" }, MONTH_LABELS[mm]));
-  return { ml, mt, pw, ph, max, y, xStep, cx, grid, labels };
+  return { ml, mt, pw, ph, min, max, y, y0, xStep, cx, grid, labels };
 }
 function bpPath(arr, cx, y) {
   let d = "";
@@ -3809,7 +3820,7 @@ function BpBarLineChart({ bars, lastYear, rolling }) {
   const W = 760, H = 250;
   const f = bpFrame([...bars, ...lastYear, ...rolling], W, H);
   const barW = f.xStep * 0.58;
-  const barEls = bars.map((v, i) => v === null ? null : React.createElement("rect", { key: `b${i}`, x: f.cx(i) - barW / 2, y: f.y(v), width: barW, height: Math.max(0, f.mt + f.ph - f.y(v)), fill: INDIGO })).filter(Boolean);
+  const barEls = bars.map((v, i) => v === null ? null : React.createElement("rect", { key: `b${i}`, x: f.cx(i) - barW / 2, y: Math.min(f.y(v), f.y0), width: barW, height: Math.abs(f.y0 - f.y(v)), fill: INDIGO })).filter(Boolean);
   return React.createElement("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", style: { display: "block" }, role: "img", "aria-label": "Monthly revenue against last year" },
     ...f.grid, ...barEls,
     React.createElement("path", { key: "ly", d: bpPath(lastYear, f.cx, f.y), fill: "none", stroke: MELON, strokeWidth: 2, strokeDasharray: "5 4" }),
@@ -3968,7 +3979,7 @@ function BpCostChart({ costOfSales, expenses, income, breakeven }) {
   totals.forEach((t, i) => {
     if (t === null) return;
     const cos = costOfSales[i] || 0;
-    bars.push(React.createElement("rect", { key: `c${i}`, x: f.cx(i) - barW / 2, y: f.y(cos), width: barW, height: Math.max(0, f.mt + f.ph - f.y(cos)), fill: MELON }));
+    bars.push(React.createElement("rect", { key: `c${i}`, x: f.cx(i) - barW / 2, y: f.y(cos), width: barW, height: Math.max(0, f.y0 - f.y(cos)), fill: MELON }));
     bars.push(React.createElement("rect", { key: `e${i}`, x: f.cx(i) - barW / 2, y: f.y(t), width: barW, height: Math.max(0, f.y(cos) - f.y(t)), fill: INDIGO }));
   });
   return React.createElement("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", style: { display: "block" }, role: "img", "aria-label": "Monthly costs against income" },
@@ -4032,7 +4043,7 @@ function BpPlSection({ pl, plError, plLoading, year, month }) {
     const cc = pl.crossCheck.find((c) => c.month === curKey);
 
     body = !cur
-      ? React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Xero has no profit and loss column for this month yet.")
+      ? React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "The profit and loss covers complete months only, so this month will appear once it has ended.")
       : React.createElement(React.Fragment, null,
         React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 12.5, fontFamily: "'Work Sans', sans-serif", color: INDIGO } },
           React.createElement("thead", null, React.createElement("tr", null, th(""), th(`${BP_MONTH_NAMES[through - 1]} ${year}`, true), th(prev ? `${BP_MONTH_NAMES[(through + 10) % 12]}` : "Previous month", true), th("Change", true), th(`Year to date`, true))),
@@ -4048,11 +4059,10 @@ function BpPlSection({ pl, plError, plLoading, year, month }) {
         React.createElement(BpLegend, { items: [{ label: "Cost of sales", color: MELON, bar: true }, { label: "Operating expenses", color: INDIGO, bar: true }, { label: "Income", color: VERDIGRIS }, { label: "Average monthly costs (breakeven)", color: INDIGO_MUTED, dashed: true }] }),
         React.createElement(BpCostChart, { costOfSales, expenses, income, breakeven }),
         breakeven !== null && React.createElement("div", { style: { marginTop: 8, fontSize: 12, color: INDIGO } }, `Average monthly costs so far this year are ${bpFmtGBP(breakeven)}. That is the income needed each month to break even.`),
-        pl.columnsParsedBy === "position" && React.createElement("div", { style: { marginTop: 8, fontSize: 11, color: "#c0392b", fontWeight: 600 } }, "Month columns were identified by position because Xero's column headings could not be read. Check these figures against Xero before relying on them."),
         pl.missing.length > 0 && React.createElement("div", { style: { marginTop: 8, fontSize: 11, color: "#c0392b", fontWeight: 600 } }, `Xero's report has no row this page recognises for: ${pl.missing.map((k) => MISSING_NAMES[k] || k).join(", ")}. Those show as n/a.`),
         cc && (Math.abs(cc.difference) <= 1
           ? React.createElement("div", { style: { marginTop: 8, fontSize: 11, color: INDIGO_MUTED } }, `Gross profit for ${BP_MONTH_NAMES[through - 1]} agrees with the figure saved by the daily Xero pull.`)
-          : React.createElement("div", { style: { marginTop: 8, fontSize: 11, color: "#c0392b", fontWeight: 600 } }, `Gross profit for ${BP_MONTH_NAMES[through - 1]} is ${bpFmtMoney(cc.xero)} in the monthly report but ${bpFmtMoney(cc.saved)} in the figure saved by the daily pull. Check before relying on either.`)),
+          : React.createElement("div", { style: { marginTop: 8, fontSize: 11, color: "#c0392b", fontWeight: 600 } }, `Gross profit for ${BP_MONTH_NAMES[through - 1]} is ${bpFmtMoney(cc.xero)} in the monthly report but ${bpFmtMoney(cc.saved)} in the figure saved by the daily pull. They should match unless entries were changed in Xero after the daily pull last ran. Check before relying on either.`)),
         React.createElement("div", { style: { marginTop: 8, fontSize: 11, color: INDIGO_MUTED } }, "Income here is Xero's invoiced income. It will not match the Atlas revenue earlier in this pack.")
       );
   }
