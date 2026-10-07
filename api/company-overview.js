@@ -114,6 +114,12 @@ async function computeOverviewForPeriod(year, period, month, quarter, shared) {
     let totalRevenueGBP = 0;
     let totalRevenueUSD = 0;
     let countedDeals = 0;
+    // countedDeals counts fee RECORDS, and a record is one consultant's share,
+    // so a placement split between two consultants is two records. These two
+    // give the plain-English counts: distinct placements, and onsite fees
+    // (records that are not tied to a named placement).
+    const countedPlacementIds = new Set();
+    let onsiteFeeCount = 0;
     let placementRevenueGBP = 0;
     let placementRevenueUSD = 0;
     let placementCount = 0;
@@ -158,6 +164,7 @@ async function computeOverviewForPeriod(year, period, month, quarter, shared) {
       totalRevenueGBP += gbp;
       if (usd !== null) totalRevenueUSD += usd;
       countedDeals += 1;
+      if (hasPlacementName && r.placementId) countedPlacementIds.add(r.placementId); else onsiteFeeCount += 1;
       // A genuinely separate running total, only for real placements — an
       // onsite fee is real revenue (it stays in totalRevenueGBP above,
       // unchanged), but it isn't a placement, and Average Fee is meant to
@@ -269,6 +276,8 @@ async function computeOverviewForPeriod(year, period, month, quarter, shared) {
       month: period === "month" ? month : null,
       quarter: period === "quarter" ? quarter : null,
       totalRevenueGBP, totalRevenueUSD, countedDeals,
+      distinctPlacements: countedPlacementIds.size,
+      onsiteFeeCount,
       averageFeePlacementCount: placementCount,
       averageFeeGBP, averageFeeUSD,
       clientConcentration, top3Percentage, top5Percentage,
