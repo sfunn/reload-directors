@@ -590,7 +590,17 @@ const PL_ROW_LABELS = {
   grossProfit: ["Gross Profit"],
   expenses: ["Total Operating Expenses", "Total Expenses"],
   netProfit: ["Net Profit", "Net Profit/(Loss)", "Net Income", "Net Loss"],
+  // The three lines added back to net profit for EBITDA, found by exactly the
+  // labels the daily pull already uses. Xero's P&L omits an account with no
+  // activity in the period, so a month without one has none, and a row that
+  // is absent is simply left null here; the page treats it as zero and says
+  // so if no month in the year had the line at all.
+  depreciationAmortisation: ["Depreciation and Amortisation", "Depreciation & Amortisation", "Depreciation and Amortization", "Depreciation"],
+  interest: ["Interest Expense", "Interest", "Finance Costs", "Finance Expense"],
+  tax: ["Income Tax Expense", "Tax", "Taxation", "Corporation Tax"],
 };
+const PL_CORE_KEYS = ["income", "costOfSales", "grossProfit", "expenses", "netProfit"];
+const PL_ADDBACK_KEYS = ["depreciationAmortisation", "interest", "tax"];
 
 // Like findRowByLabel above, but keeps every value cell so a caller can
 // choose the one it wants.
@@ -921,7 +931,8 @@ module.exports = async (req, res) => {
       const matchedLabels = {};
       for (const f of done) for (const [k, label] of Object.entries(f.labels)) if (!matchedLabels[k]) matchedLabels[k] = label;
       const derivedCostOfSales = done.filter((f) => f.derived.includes("costOfSales")).map((f) => f.month);
-      const missing = Object.keys(PL_ROW_LABELS).filter((k) => !matchedLabels[k] && !(k === "costOfSales" && derivedCostOfSales.length > 0));
+      const missing = PL_CORE_KEYS.filter((k) => !matchedLabels[k] && !(k === "costOfSales" && derivedCostOfSales.length > 0));
+      const missingAddBacks = PL_ADDBACK_KEYS.filter((k) => !matchedLabels[k]);
 
       // Cross-check against what the daily pull saved earlier. Both come
       // from Xero by the same kind of call, so they should agree unless
@@ -935,7 +946,7 @@ module.exports = async (req, res) => {
           crossCheck.push({ month: m.month, saved: saved.grossProfitAmount, xero: m.grossProfit, difference: m.grossProfit - saved.grossProfitAmount });
         }
       }
-      return res.status(200).json({ year: plYear, tenantName, completeMonths: lastCompleteMonth, months, matchedLabels, missing, derivedCostOfSales, crossCheck });
+      return res.status(200).json({ year: plYear, tenantName, completeMonths: lastCompleteMonth, months, matchedLabels, missing, missingAddBacks, derivedCostOfSales, crossCheck });
     } catch (e) {
       console.error("[xero-reports] pl-monthly error:", e);
       return res.status(500).json({ error: "Something went wrong pulling the monthly P&L. Check the Vercel logs for details." });
@@ -948,9 +959,14 @@ module.exports = async (req, res) => {
     if (!cy || !(cm >= 1 && cm <= 12)) return res.status(400).json({ error: "A valid year and month are required." });
     const pad2 = (n) => String(n).padStart(2, "0");
     const lastDay = new Date(Date.UTC(cy, cm, 0)).getUTCDate();
-    const monthStart = `${cy}-${pad2(cm)}-01`;
+    // fromMonth lets one call cover a quarter or half-year: the period runs
+    // from the first day of fromMonth to the last day of month. Without it,
+    // it is the single month, exactly as before.
+    const fm = req.query.fromMonth ? parseInt(req.query.fromMonth, 10) : cm;
+    if (!(fm >= 1 && fm <= cm)) return res.status(400).json({ error: "fromMonth must be a month from January up to the chosen month." });
+    const monthStart = `${cy}-${pad2(fm)}-01`;
     const monthEnd = `${cy}-${pad2(cm)}-${pad2(lastDay)}`;
-    const prevEnd = new Date(Date.UTC(cy, cm - 1, 0)).toISOString().slice(0, 10); // last day of the previous month
+    const prevEnd = new Date(Date.UTC(cy, fm - 1, 0)).toISOString().slice(0, 10); // the day before the period starts
     const today = new Date().toISOString().slice(0, 10);
     if (today <= monthEnd) return res.status(400).json({ error: "That month has not ended yet, so its cash movement is not available." });
 
@@ -994,7 +1010,7 @@ module.exports = async (req, res) => {
           const cash = findRowByLabel(closing.report.Rows, CASH_LABELS);
           if (cash) reconciliation = { xero: cash.value, computed: parsed.totals.closing, difference: parsed.totals.closing - cash.value, differencePct: cash.value !== 0 ? ((parsed.totals.closing - cash.value) / Math.abs(cash.value)) * 100 : null };
         }
-        return res.status(200).json({ year: cy, month: pad2(cm), asAt: monthEnd, tenantName, source: "banksummary", bankSummaryProblem: null, accounts: parsed.accounts, totals: parsed.totals, reconciliation, headerLabels: parsed.headerLabels });
+        return res.status(200).json({ year: cy, month: pad2(cm), asAt: monthEnd, fromMonth: pad2(fm), periodStart: monthStart, tenantName, source: "banksummary", bankSummaryProblem: null, accounts: parsed.accounts, totals: parsed.totals, reconciliation, headerLabels: parsed.headerLabels });
       }
 
       const opening = await getBalanceSheet(prevEnd);
@@ -1007,7 +1023,7 @@ module.exports = async (req, res) => {
       const reconciliation = moved.closingTotalFromReport !== null && moved.accounts.length > 0
         ? { xero: moved.closingTotalFromReport, computed: moved.closingAccountsSum, difference: moved.closingAccountsSum - moved.closingTotalFromReport, differencePct: moved.closingTotalFromReport !== 0 ? ((moved.closingAccountsSum - moved.closingTotalFromReport) / Math.abs(moved.closingTotalFromReport)) * 100 : null }
         : null;
-      return res.status(200).json({ year: cy, month: pad2(cm), asAt: monthEnd, openingDate: prevEnd, tenantName, source: "balancesheet", bankSummaryProblem, accounts: moved.accounts, totals: moved.totals, reconciliation });
+      return res.status(200).json({ year: cy, month: pad2(cm), asAt: monthEnd, fromMonth: pad2(fm), periodStart: monthStart, openingDate: prevEnd, tenantName, source: "balancesheet", bankSummaryProblem, accounts: moved.accounts, totals: moved.totals, reconciliation });
     } catch (e) {
       console.error("[xero-reports] cash-movement error:", e);
       return res.status(500).json({ error: "Something went wrong pulling cash movement. Check the Vercel logs for details." });
