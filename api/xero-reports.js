@@ -453,6 +453,21 @@ async function pullXeroFiguresForPeriod(year, period, month, quarter, xeroHeader
   }
 }
 
+// What Xero actually said when it refused a request, in a form safe and
+// short enough to show a director: its HTTP status plus its own title or
+// message. Hiding this behind "check the logs" costs a round trip every time
+// something is wrong, and a missing permission looks very different from a
+// bad parameter.
+function xeroFailureDetail(status, bodyText) {
+  let detail = "";
+  try {
+    const j = JSON.parse(bodyText);
+    detail = [j.Title, j.Detail, j.Message, j.error, j.error_description].filter(Boolean).join(": ");
+  } catch (e) { /* not JSON, fall through to the raw text */ }
+  if (!detail) detail = String(bodyText || "").replace(/\s+/g, " ").trim();
+  return `HTTP ${status}${detail ? `: ${detail.slice(0, 200)}` : ""}`;
+}
+
 // ---- Aged debtors and creditors -------------------------------------
 // Xero's own aged-receivables report only works one contact at a time, so
 // the ageing is calculated here from the list of unpaid invoices instead.
@@ -546,7 +561,7 @@ async function fetchUnpaidInvoices(type, xeroHeaders) {
     if (!r.ok) {
       const body = await r.text();
       console.error("[xero-reports] invoices fetch failed:", { type, page, status: r.status, body });
-      return { error: r.status === 429 ? "Xero is rate limiting requests right now. Try again in a minute." : "Xero rejected the invoices request. Check the Vercel logs for the exact response." };
+      return { error: r.status === 429 ? "Xero is rate limiting requests right now. Try again in a minute." : `Xero rejected the invoices request (${xeroFailureDetail(r.status, body)}).` };
     }
     const data = await r.json();
     const batch = Array.isArray(data.Invoices) ? data.Invoices : [];
@@ -678,6 +693,55 @@ function bankSummaryFromReport(report) {
   const sum = (k) => accounts.reduce((s, a) => s + a[k], 0);
   const totals = { opening: sum("opening"), received: sum("received"), spent: sum("spent"), net: sum("received") - sum("spent"), closing: sum("closing") };
   return { accounts, totals, headerLabels };
+}
+
+const CASH_LABELS = ["Total Bank", "Bank", "Cash and Cash Equivalents", "Total Cash and Cash Equivalents"];
+
+// Each bank account's balance from a balance sheet report: the rows of the
+// section titled "Bank". The total is the same cash line the daily pull saves.
+function bankAccountsFromBalanceSheet(report) {
+  const rows = report && Array.isArray(report.Rows) ? report.Rows : [];
+  let accounts = null;
+  (function walk(rs) {
+    for (const r of rs || []) {
+      if (accounts) return;
+      if (r.RowType === "Section" && typeof r.Title === "string" && /^(bank|bank accounts?|cash and bank)$/i.test(r.Title.trim()) && Array.isArray(r.Rows)) {
+        accounts = r.Rows
+          .filter((a) => a.RowType === "Row" && a.Cells && a.Cells[0] && typeof a.Cells[0].Value === "string")
+          .map((a) => { const n = parseFloat(String((a.Cells[1] && a.Cells[1].Value) !== undefined ? a.Cells[1].Value : "").replace(/,/g, "")); return { name: a.Cells[0].Value, balance: isNaN(n) ? null : n }; })
+          .filter((a) => a.balance !== null);
+        return;
+      }
+      if (Array.isArray(r.Rows)) walk(r.Rows);
+    }
+  })(rows);
+  const total = findRowByLabel(rows, CASH_LABELS);
+  return { accounts: accounts || [], total: total ? total.value : null };
+}
+
+// Net cash movement worked out from two balance sheets: the balances at the
+// end of the previous month and at the end of this one. An account present
+// in only one of them (opened or closed during the month) counts as zero in
+// the other. This includes any revaluation of foreign-currency accounts,
+// because the balance sheet values them at each date's own rate.
+function cashMovementFromBalanceSheets(openingReport, closingReport) {
+  const open = bankAccountsFromBalanceSheet(openingReport);
+  const close = bankAccountsFromBalanceSheet(closingReport);
+  const names = [...new Set([...open.accounts.map((a) => a.name), ...close.accounts.map((a) => a.name)])];
+  const bal = (list, name) => { const a = list.find((x) => x.name === name); return a ? a.balance : 0; };
+  const accounts = names.map((name) => {
+    const opening = bal(open.accounts, name), closing = bal(close.accounts, name);
+    return { name, opening, received: null, spent: null, net: closing - opening, closing, consistent: true };
+  });
+  const sum = (k) => accounts.reduce((s, a) => s + a[k], 0);
+  const openingTotal = open.total !== null ? open.total : sum("opening");
+  const closingTotal = close.total !== null ? close.total : sum("closing");
+  return {
+    accounts,
+    totals: { opening: openingTotal, received: null, spent: null, net: closingTotal - openingTotal, closing: closingTotal },
+    closingAccountsSum: sum("closing"),
+    closingTotalFromReport: close.total,
+  };
 }
 
 module.exports = async (req, res) => {
@@ -844,7 +908,7 @@ module.exports = async (req, res) => {
         if (!r.ok) {
           const body = await r.text();
           console.error("[xero-reports] monthly P&L failed:", { month: mk, status: r.status, body });
-          return { error: r.status === 429 ? "Xero is rate limiting requests right now. Try again in a minute." : "Xero rejected a monthly P&L request. Check the Vercel logs for the exact response." };
+          return { error: r.status === 429 ? "Xero is rate limiting requests right now. Try again in a minute." : `Xero rejected a monthly P&L request (${xeroFailureDetail(r.status, body)}).` };
         }
         const data = await r.json();
         return { month: mk, ...plFiguresFromReport(data.Reports && data.Reports[0]) };
@@ -886,36 +950,64 @@ module.exports = async (req, res) => {
     const lastDay = new Date(Date.UTC(cy, cm, 0)).getUTCDate();
     const monthStart = `${cy}-${pad2(cm)}-01`;
     const monthEnd = `${cy}-${pad2(cm)}-${pad2(lastDay)}`;
+    const prevEnd = new Date(Date.UTC(cy, cm - 1, 0)).toISOString().slice(0, 10); // last day of the previous month
     const today = new Date().toISOString().slice(0, 10);
     if (today <= monthEnd) return res.status(400).json({ error: "That month has not ended yet, so its cash movement is not available." });
-    try {
-      const r = await fetch(`https://api.xero.com/api.xro/2.0/Reports/BankSummary?fromDate=${monthStart}&toDate=${monthEnd}`, { headers: xeroHeaders });
+
+    const getBalanceSheet = async (date) => {
+      const r = await fetch(`https://api.xero.com/api.xro/2.0/Reports/BalanceSheet?date=${date}`, { headers: xeroHeaders });
       if (!r.ok) {
         const body = await r.text();
-        console.error("[xero-reports] bank summary failed:", { status: r.status, body });
-        return res.status(502).json({ error: r.status === 429 ? "Xero is rate limiting requests right now. Try again in a minute." : "Xero rejected the bank summary request. Check the Vercel logs for the exact response." });
+        console.error("[xero-reports] balance sheet failed:", { date, status: r.status, body });
+        return { error: r.status === 429 ? "Xero is rate limiting requests right now. Try again in a minute." : `Xero rejected the balance sheet request (${xeroFailureDetail(r.status, body)}).` };
       }
       const data = await r.json();
-      const parsed = bankSummaryFromReport(data.Reports && data.Reports[0]);
-      if (parsed.error) {
-        return res.status(502).json({ error: `Xero's bank summary came back with columns this page does not recognise (it sent: ${parsed.headerLabels.filter(Boolean).join(", ") || "no headings"}).`, headerLabels: parsed.headerLabels });
+      return { report: data.Reports && data.Reports[0] };
+    };
+
+    try {
+      // Preferred: Xero's bank summary, which gives cash received and spent.
+      // It needs its own permission, so if it is refused (or comes back in a
+      // layout this page does not recognise) the movement is worked out from
+      // the balance sheet instead, and the page says why, rather than showing
+      // an error where a perfectly good net figure is available.
+      let bankSummaryProblem = null;
+      let parsed = null;
+      const bsRes = await fetch(`https://api.xero.com/api.xro/2.0/Reports/BankSummary?fromDate=${monthStart}&toDate=${monthEnd}`, { headers: xeroHeaders });
+      if (bsRes.status === 429) return res.status(502).json({ error: "Xero is rate limiting requests right now. Try again in a minute." });
+      if (!bsRes.ok) {
+        const body = await bsRes.text();
+        console.error("[xero-reports] bank summary failed:", { status: bsRes.status, body });
+        bankSummaryProblem = `Xero rejected the bank summary request (${xeroFailureDetail(bsRes.status, body)})`;
+      } else {
+        const data = await bsRes.json();
+        const p = bankSummaryFromReport(data.Reports && data.Reports[0]);
+        if (p.error) bankSummaryProblem = `Xero's bank summary came back with columns this page does not recognise (it sent: ${p.headerLabels.filter(Boolean).join(", ") || "no headings"})`;
+        else parsed = p;
       }
 
-      // Cross-check the closing balances against the balance sheet's own cash
-      // line, the same line the daily pull saves as Cash.
-      let reconciliation = null;
-      try {
-        const bsRes = await fetch(`https://api.xero.com/api.xro/2.0/Reports/BalanceSheet?date=${monthEnd}`, { headers: xeroHeaders });
-        if (bsRes.ok) {
-          const bs = await bsRes.json();
-          const rows = bs.Reports && bs.Reports[0] ? bs.Reports[0].Rows : null;
-          const cash = findRowByLabel(rows, ["Total Bank", "Bank", "Cash and Cash Equivalents", "Total Cash and Cash Equivalents"]);
+      if (parsed) {
+        // Cross-check the closing balances against the balance sheet's cash line.
+        let reconciliation = null;
+        const closing = await getBalanceSheet(monthEnd);
+        if (closing.report) {
+          const cash = findRowByLabel(closing.report.Rows, CASH_LABELS);
           if (cash) reconciliation = { xero: cash.value, computed: parsed.totals.closing, difference: parsed.totals.closing - cash.value, differencePct: cash.value !== 0 ? ((parsed.totals.closing - cash.value) / Math.abs(cash.value)) * 100 : null };
         }
-      } catch (e) {
-        console.error("[xero-reports] cash-movement reconciliation skipped:", e);
+        return res.status(200).json({ year: cy, month: pad2(cm), asAt: monthEnd, tenantName, source: "banksummary", bankSummaryProblem: null, accounts: parsed.accounts, totals: parsed.totals, reconciliation, headerLabels: parsed.headerLabels });
       }
-      return res.status(200).json({ year: cy, month: pad2(cm), asAt: monthEnd, tenantName, accounts: parsed.accounts, totals: parsed.totals, reconciliation, headerLabels: parsed.headerLabels });
+
+      const opening = await getBalanceSheet(prevEnd);
+      if (opening.error) return res.status(502).json({ error: opening.error });
+      const closing = await getBalanceSheet(monthEnd);
+      if (closing.error) return res.status(502).json({ error: closing.error });
+      const moved = cashMovementFromBalanceSheets(opening.report, closing.report);
+      // The accounts listed should add up to the total cash line; if they do
+      // not, the section structure was not read as expected and the page says so.
+      const reconciliation = moved.closingTotalFromReport !== null && moved.accounts.length > 0
+        ? { xero: moved.closingTotalFromReport, computed: moved.closingAccountsSum, difference: moved.closingAccountsSum - moved.closingTotalFromReport, differencePct: moved.closingTotalFromReport !== 0 ? ((moved.closingAccountsSum - moved.closingTotalFromReport) / Math.abs(moved.closingTotalFromReport)) * 100 : null }
+        : null;
+      return res.status(200).json({ year: cy, month: pad2(cm), asAt: monthEnd, openingDate: prevEnd, tenantName, source: "balancesheet", bankSummaryProblem, accounts: moved.accounts, totals: moved.totals, reconciliation });
     } catch (e) {
       console.error("[xero-reports] cash-movement error:", e);
       return res.status(500).json({ error: "Something went wrong pulling cash movement. Check the Vercel logs for details." });
@@ -1199,3 +1291,5 @@ module.exports.buildAgedBalances = buildAgedBalances;
 module.exports.parseXeroDate = parseXeroDate;
 module.exports.plFiguresFromReport = plFiguresFromReport;
 module.exports.bankSummaryFromReport = bankSummaryFromReport;
+module.exports.cashMovementFromBalanceSheets = cashMovementFromBalanceSheets;
+module.exports.xeroFailureDetail = xeroFailureDetail;
