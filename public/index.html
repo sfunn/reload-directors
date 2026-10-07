@@ -4092,11 +4092,13 @@ function BpPlSection({ pl, plError, plLoading, year, month }) {
 }
 
 // ---- Cash movement (Xero bank summary) --------------------------------
-function bpCashReconciliation(rec) {
+function bpCashReconciliation(rec, fromBalanceSheet) {
   if (!rec) return null;
   const pct = rec.differencePct;
   const large = pct !== null && Math.abs(pct) > 5 && Math.abs(rec.difference) > 5000;
-  const base = `Xero's balance sheet shows ${bpFmtMoney(rec.xero)} in the bank at month end. The bank summary closing balances total ${bpFmtMoney(rec.computed)}, a difference of ${bpFmtMoney(Math.abs(rec.difference))}. `;
+  const base = fromBalanceSheet
+    ? `Xero's balance sheet shows ${bpFmtMoney(rec.xero)} as its total bank line. The bank accounts listed add up to ${bpFmtMoney(rec.computed)}, a difference of ${bpFmtMoney(Math.abs(rec.difference))}. `
+    : `Xero's balance sheet shows ${bpFmtMoney(rec.xero)} in the bank at month end. The bank summary closing balances total ${bpFmtMoney(rec.computed)}, a difference of ${bpFmtMoney(Math.abs(rec.difference))}. `;
   const why = large ? "That is bigger than currency valuation would normally explain, so treat these figures with caution until it is checked."
     : Math.abs(rec.difference) < 1 ? "They agree."
     : "Small gaps are typically foreign-currency accounts valued at different rates.";
@@ -4113,28 +4115,34 @@ function BpCashSection({ cash, cashError, cashLoading, monthComplete, monthName,
     body = React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, cashLoading ? "Loading from Xero…" : "Not loaded.");
   } else {
     const t = cash.totals;
+    // Without the bank summary, received and spent are unknown, and are left
+    // out rather than shown as zero.
+    const fromBS = cash.source === "balancesheet";
     const odd = cash.accounts.filter((a) => !a.consistent).map((a) => a.name);
     const th = (x, right) => React.createElement("th", { style: { textAlign: right ? "right" : "left", padding: "4px 6px", color: INDIGO_MUTED, fontWeight: 600, fontSize: 11 } }, x);
     const td = (x, right, bold) => React.createElement("td", { style: { textAlign: right ? "right" : "left", padding: "4px 6px", fontWeight: bold ? 700 : 400 } }, x);
+    const signed = (n) => `${n >= 0 ? "+" : ""}${bpFmtMoney(n)}`;
     body = React.createElement(React.Fragment, null,
       React.createElement("div", { style: { display: "flex", gap: 24, flexWrap: "wrap", marginBottom: 14 } },
-        React.createElement(BpKpi, { label: `Opening cash, 1 ${monthName}`, value: bpFmtMoney(t.opening) }),
-        React.createElement(BpKpi, { label: "Cash received", value: bpFmtMoney(t.received), color: VERDIGRIS }),
-        React.createElement(BpKpi, { label: "Cash spent", value: bpFmtMoney(t.spent), color: MELON }),
-        React.createElement(BpKpi, { label: "Net movement", value: `${t.net >= 0 ? "+" : ""}${bpFmtMoney(t.net)}`, color: t.net >= 0 ? VERDIGRIS : "#c0392b" }),
-        React.createElement(BpKpi, { label: `Closing cash, ${cash.asAt.slice(8)} ${monthName}`, value: bpFmtMoney(t.closing) })
+        React.createElement(BpKpi, { label: `Opening cash, ${fromBS ? cash.openingDate.slice(8) + " " + BP_MONTH_NAMES[parseInt(cash.openingDate.slice(5, 7), 10) - 1] : "1 " + monthName}`, value: bpFmtMoney(t.opening) }),
+        !fromBS && React.createElement(BpKpi, { label: "Cash received", value: bpFmtMoney(t.received), color: VERDIGRIS }),
+        !fromBS && React.createElement(BpKpi, { label: "Cash spent", value: bpFmtMoney(t.spent), color: MELON }),
+        React.createElement(BpKpi, { label: "Net movement", value: signed(t.net), color: t.net >= 0 ? VERDIGRIS : "#c0392b" }),
+        React.createElement(BpKpi, { label: `Closing cash, ${cash.asAt.slice(8)} ${BP_MONTH_NAMES[parseInt(cash.asAt.slice(5, 7), 10) - 1]}`, value: bpFmtMoney(t.closing) })
       ),
       cash.accounts.length > 0 && React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 12, fontFamily: "'Work Sans', sans-serif", color: INDIGO } },
-        React.createElement("thead", null, React.createElement("tr", null, th("Bank account"), th("Opening", true), th("Received", true), th("Spent", true), th("Net", true), th("Closing", true))),
+        React.createElement("thead", null, React.createElement("tr", null, th("Bank account"), th("Opening", true), !fromBS && th("Received", true), !fromBS && th("Spent", true), th("Net", true), th("Closing", true))),
         React.createElement("tbody", null, ...cash.accounts.map((a) => React.createElement("tr", { key: a.name, style: { borderTop: `1px solid ${INDIGO_HAIRLINE}` } },
-          td(a.consistent ? a.name : `${a.name} *`), td(bpFmtMoney(a.opening), true), td(bpFmtMoney(a.received), true), td(bpFmtMoney(a.spent), true), td(`${a.net >= 0 ? "+" : ""}${bpFmtMoney(a.net)}`, true), td(bpFmtMoney(a.closing), true, true))))
+          td(a.consistent ? a.name : `${a.name} *`), td(bpFmtMoney(a.opening), true), !fromBS && td(bpFmtMoney(a.received), true), !fromBS && td(bpFmtMoney(a.spent), true), td(signed(a.net), true), td(bpFmtMoney(a.closing), true, true))))
       ),
       odd.length > 0 && React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 6 } }, `* Opening plus received minus spent does not equal closing for: ${odd.join(", ")}. Currency valuation on a foreign account is the usual cause.`),
-      bpCashReconciliation(cash.reconciliation),
-      React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 8 } }, "Cash received and spent include transfers between your own bank accounts, so each is overstated by the same amount. Net movement is not affected.")
+      bpCashReconciliation(cash.reconciliation, fromBS),
+      fromBS
+        ? React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 8 } }, `Cash received and spent are not shown: ${cash.bankSummaryProblem}. Net movement is calculated from the balance sheet's bank balances on ${cash.openingDate} and ${cash.asAt}, so it includes any currency revaluation on foreign accounts.`)
+        : React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 8 } }, "Cash received and spent include transfers between your own bank accounts, so each is overstated by the same amount. Net movement is not affected.")
     );
   }
-  return React.createElement(BpSection, { title: "Cash Movement", source: "Xero bank summary" }, body);
+  return React.createElement(BpSection, { title: "Cash Movement", source: "Xero bank summary and balance sheet" }, body);
 }
 
 function BoardPackPage({ token }) {
