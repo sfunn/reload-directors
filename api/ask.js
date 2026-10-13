@@ -4,7 +4,9 @@ const { ROSTER, EMPLOYMENT_KEY } = require("./roster");
 const { computeCommissionForYear } = require("./commission");
 const { computeConsultantStatsForYear } = require("./consultant-stats");
 const { averageTenureOfCurrent, averageTenureOfDeparted } = require("./retention");
-const { computeEBITDA } = require("./company-overview");
+const { computeEBITDA, effectiveYear, effectiveMonth } = require("./company-overview");
+const { normalizeYearMetrics, resolveManualMetricsForPeriod } = require("./_manualMetricsStore");
+const { SITE_TOOL, LIMITS, newToolContext, runSiteTool } = require("./_askSiteTools");
 
 const RECORDS_KEY = "atlas-fee-records";
 const PLACEMENTS_KEY = "atlas-placements";
@@ -127,7 +129,14 @@ module.exports = async (req, res) => {
   // still reasons from current figures, never a stale snapshot from
   // when the conversation started.
   const history = Array.isArray(req.body && req.body.history) ? req.body.history : [];
-  const validHistory = history.filter((m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string");
+  // Only role and content ever go to the model (the page also sends back the
+  // list of lookups attached to each earlier answer, which the API would
+  // reject), but those lookups are kept so a reopened thread still shows them.
+  const cleanLookups = (l) => (Array.isArray(l) ? l.slice(0, 30).filter((x) => x && typeof x.label === "string").map((x) => ({ label: x.label.slice(0, 200), ok: x.ok !== false })) : undefined);
+  const validHistory = history
+    .filter((m) => m && (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
+    .map((m) => ({ role: m.role, content: m.content, ...(m.role === "assistant" && cleanLookups(m.lookups) ? { lookups: cleanLookups(m.lookups) } : {}) }));
+  const apiHistory = validHistory.map((m) => ({ role: m.role, content: m.content }));
 
   if (!process.env.ANTHROPIC_API_KEY) {
     return res.status(400).json({ error: "No Anthropic API key is configured yet. Add ANTHROPIC_API_KEY to this project's environment variables in Vercel, then redeploy." });
@@ -156,7 +165,15 @@ module.exports = async (req, res) => {
     const hasPlacementName = !!(placement && placement.candidateName);
     const clientCompanyName = (placement && placement.clientCompanyName) || r.projectClientName || null;
     const rosterEntry = ROSTER[r.consultantId];
+    // The uplift a client gets depends on the year, so each deal is priced
+    // under the year it is reported in (candidate start date where there is
+    // one), exactly as Company Overview does. Using today's year for every
+    // deal gave older Jane Street or Citadel deals an uplift the rest of the
+    // site does not apply to them.
+    const dealYear = effectiveYear(r, placements) || currentYear;
     return {
+      reportingYear: dealYear,
+      reportingMonth: effectiveMonth(r, placements),
       consultantId: r.consultantId || null,
       consultantName: rosterEntry ? rosterEntry.name : (r.consultantId || null),
       coordinatorId: r.coordinatorId || null,
@@ -167,7 +184,7 @@ module.exports = async (req, res) => {
       candidateName: hasPlacementName ? placement.candidateName : null,
       isGenuinePlacement: hasPlacementName,
       source: r.source || null,
-      revenueGBP: resolvedRevenueGBP(r, clientCompanyName, currentYear, overrides, hasPlacementName, fxRates),
+      revenueGBP: resolvedRevenueGBP(r, clientCompanyName, dealYear, overrides, hasPlacementName, fxRates),
     };
   });
 
@@ -192,14 +209,20 @@ module.exports = async (req, res) => {
   // sourced from Xero's own Profit & Loss and Balance Sheet reports.
   // Genuinely different from the deal/staff data above — this is
   // company-wide financial reporting, not derived from individual deals.
-  const financials = Object.entries(manualMetrics).map(([year, m]) => {
+  // Saved figures are stored per period inside each year ("year", "Q1" to
+  // "Q4", "01" to "12"), or in an older flat layout that normalizeYearMetrics
+  // converts. Reading them as flat (as this used to) silently returned
+  // nothing for any year that had a month or quarter saved, which is every
+  // year the daily Xero job has run. The year-level figure is resolved the
+  // same way Company Overview resolves it, with a plain statement of what it
+  // is built from, so a part-year total is never mistaken for a full year.
+  const figuresFrom = (m) => {
     const grossProfitAmount = m.grossProfitAmount ?? m.grossProfitUSD ?? null;
     const totalExpensesAmount = m.totalExpensesAmount ?? null;
     const depreciationAmortisationAmount = m.depreciationAmortisationAmount ?? null;
     const interestAmount = m.interestAmount ?? null;
     const taxAmount = m.taxAmount ?? null;
     return {
-      year: parseInt(year, 10),
       grossProfitAmount,
       grossProfitCurrency: m.grossProfitCurrency || (m.grossProfitUSD != null ? "USD" : null),
       cashAmount: m.cashAmount ?? null,
@@ -209,13 +232,31 @@ module.exports = async (req, res) => {
       depreciationAmortisationAmount,
       interestAmount,
       taxAmount,
-      // The exact same shared function Company Overview itself calls —
-      // if it's shown there as real EBITDA, it's shown here as real
-      // EBITDA too, never a separate approximation that quietly
-      // disagrees with what the site itself already displays.
+      // The exact same shared function Company Overview itself calls, so
+      // it can never quietly disagree with what the site displays.
       ebitdaAmount: computeEBITDA(grossProfitAmount, totalExpensesAmount, depreciationAmortisationAmount, interestAmount, taxAmount),
     };
-  });
+  };
+  const QUARTER_KEYS = ["Q1", "Q2", "Q3", "Q4"];
+  const MONTH_KEYS = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"];
+  const financials = [];
+  const financialsByPeriod = [];
+  for (const [year, raw] of Object.entries(manualMetrics)) {
+    const yearMetrics = normalizeYearMetrics(raw);
+    const resolved = resolveManualMetricsForPeriod(yearMetrics, "year") || {};
+    const savedQuarters = QUARTER_KEYS.filter((k) => yearMetrics[k]);
+    const savedMonths = MONTH_KEYS.filter((k) => yearMetrics[k]);
+    const basis = yearMetrics.year ? "saved as a whole-year figure"
+      : savedQuarters.length === 4 ? "sum of four saved quarters"
+      : savedMonths.length === 12 ? "sum of twelve saved months"
+      : savedMonths.length > 0 ? `PARTIAL: sum of only ${savedMonths.length} saved month(s) (${savedMonths.join(", ")}), not a full year`
+      : savedQuarters.length > 0 ? `PARTIAL: sum of only ${savedQuarters.length} saved quarter(s) (${savedQuarters.join(", ")}), not a full year`
+      : "nothing saved";
+    financials.push({ year: parseInt(year, 10), basis, ...figuresFrom(resolved) });
+    for (const key of [...QUARTER_KEYS, ...MONTH_KEYS]) {
+      if (yearMetrics[key]) financialsByPeriod.push({ year: parseInt(year, 10), period: key, ...figuresFrom(yearMetrics[key]) });
+    }
+  }
 
   // Commission — every fee-earning consultant and coordinator, every
   // year since bands/targets have existed. Computed one real year at a
@@ -282,9 +323,9 @@ module.exports = async (req, res) => {
     averageTenureYearsDepartedCoordinators: averageTenureOfDeparted(employment, "coordinator"),
   };
 
-  const systemPrompt = `You are answering a director's question about Reload Search's own real recruitment placement, staff, and company financial data, provided below as JSON. Answer using ONLY this data — never estimate, assume, or invent a figure that isn't directly computable from what's here.
+  const systemPrompt = `You are answering a director's question about Reload Search's own real recruitment placement, staff, and company financial data, provided below as JSON. Answer using the data below and, where it does not cover the question, the get_site_data tool, which reads the live data behind every page of this site. Never estimate, assume, or invent a figure that you cannot read from the data below or from a lookup.
 
-Critically: this data does NOT include role type, seniority level, candidate location, technology or skill tags, client firm type/category (hedge fund vs market maker vs prop shop, etc.), or whether a placed candidate stayed at the client afterward. If the question asks for anything along those lines, say plainly that it isn't tracked in this data rather than guessing, approximating, or inferring it from a client or candidate name.
+Critically: neither this data nor any lookup includes role type, seniority level, candidate location, technology or skill tags, client firm type/category (hedge fund vs market maker vs prop shop, etc.), or whether a placed candidate stayed at the client afterward. If the question asks for anything along those lines, say plainly that it isn't tracked in this data rather than guessing, approximating, or inferring it from a client or candidate name.
 
 "Revenue" figures on deals are already correctly computed in GBP, uplifts and manual corrections already applied — use them directly, don't try to recompute or re-derive them from anything else. A deal with isGenuinePlacement false is an onsite fee, not a placement — be clear about that distinction if it matters to the question asked.
 
@@ -298,6 +339,19 @@ SUPPLIER_COSTS is Reload's own overhead spend by supplier (Atlas, LinkedIn, and 
 
 TENURE is average real tenure in years, computed the same way Retention's own page shows it, separately for current staff (still employed) and departed staff, and separately for fee-earning consultants versus coordinators.
 
+LOOKING THINGS UP. Before you tell a director that something is not available, check whether get_site_data has a source for it: it covers Company Overview, the Board Pack (monthly fee revenue, Xero profit and loss by month, cash movement, debtors and creditors), Profitability (supplier spend, monthly salary, headcount), Consultant Stats, Commission, the Yearly Deal Table, Where Candidates Came From and Area Concentration, and Staff Info (roster, headcount history, retention, time to productivity, which is the Staff Details and Productivity page). Use the data below first when it already answers the question, and look things up when it does not. Only say something is not tracked when neither the data below nor any source covers it. Xero sources are live, slow and limited, so use only the ones the question needs. When you used a lookup, say plainly what you looked at and for which period. If a lookup failed or was cut off, say so and say what you could not check.
+
+HOW THE SITE DEFINES ITS FIGURES. Use these meanings, and say which one you are using whenever two figures could be confused.
+- Fee revenue is placement and onsite fees booked in Atlas, in GBP with the agreed uplift rules applied, dated by the candidate's start date (onsite fees by their fee date). It is not invoiced income. Xero's income is dated by invoice and carries no uplifts, so the two never match and should not be divided into each other.
+- Average fee is per distinct placement (a placement split between consultants counts once), excludes onsite fees, and on the Board Pack is the calendar year to date through the period being reported.
+- Revenue per head is fee revenue divided by the time-weighted average fee-earning headcount over the period, not by the headcount on its last day.
+- On the Board Pack, EBITDA is net profit plus depreciation, interest and tax from Xero's monthly profit and loss, for the calendar year to date. Company Overview's EBITDA is built from saved figures (gross profit minus total expenses plus the add-backs entered). They can differ.
+- Reload's financial year in Xero's own terms: 2026 is a 17 month bridge from 1 August 2025 to 31 December 2026, earlier years run August to July, and from 2027 the year is the calendar year. Saved Xero figures for 2026 on Company Overview can therefore cover 17 months, while the Board Pack always uses calendar months. Never compare the two as if they covered the same time.
+- A recent month's accounts are provisional until the accountant has closed it: costs, accruals and commissions are often booked after month end, which flatters profit for a while. Say so when asked about profit for a month that ended within the last few weeks.
+- Each deal carries reportingYear and reportingMonth, the year and month it is reported in, and its revenue is already priced under that year's rules.
+
+FINANCIALS above are SAVED figures, either typed by a director or saved by the daily Xero job. Each year has a basis saying whether it is a whole-year figure or built from saved months or quarters; a basis starting PARTIAL covers only part of the year and must never be presented as a full-year figure. FINANCIALS_BY_PERIOD lists the saved month and quarter figures. For anything not saved, or when a current figure is wanted, use the Xero sources in get_site_data.
+
 DEALS (every real fee record):
 ${JSON.stringify(deals)}
 
@@ -306,6 +360,9 @@ ${JSON.stringify(staff)}
 
 FINANCIALS (company-wide, from Xero, by year):
 ${JSON.stringify(financials)}
+
+FINANCIALS_BY_PERIOD (saved month and quarter figures):
+${JSON.stringify(financialsByPeriod)}
 
 COMMISSION (by consultant, by year):
 ${JSON.stringify(commissionByConsultant)}
@@ -336,29 +393,52 @@ Today's date is ${new Date().toISOString().slice(0, 10)}.`;
       anthropicHeaders["anthropic-workspace-id"] = process.env.ANTHROPIC_WORKSPACE_ID;
     }
 
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: anthropicHeaders,
-      body: JSON.stringify({
-        model: "claude-sonnet-5",
-        max_tokens: 8192,
-        // Explicitly off — this needs a direct, visible answer to a
-        // director's question, not an open-ended reasoning budget that
-        // could consume the whole response before producing any actual
-        // text, which is exactly what happened with a smaller budget.
-        thinking: { type: "disabled" },
-        system: systemPrompt,
-        messages: [...validHistory, { role: "user", content: question }],
-      }),
-    });
+    // The model may ask to read pages of this site before answering. Each
+    // round it either answers or requests lookups; the lookups run, their
+    // results go back, and it continues. Bounded on rounds and on time, and
+    // on the final allowed round it is told not to call any more tools, so a
+    // question always ends in an answer rather than running on.
+    const toolCtx = newToolContext(req.headers.authorization);
+    const messages = [...apiHistory, { role: "user", content: question }];
+    const started = Date.now();
+    let data = null;
+    for (let round = 0; ; round++) {
+      const lastRound = round >= LIMITS.MAX_TOOL_ROUNDS || Date.now() - started > LIMITS.TIME_BUDGET_MS;
+      const response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: anthropicHeaders,
+        body: JSON.stringify({
+          model: "claude-sonnet-5",
+          max_tokens: 8192,
+          // Explicitly off — this needs a direct, visible answer to a
+          // director's question, not an open-ended reasoning budget that
+          // could consume the whole response before producing any actual
+          // text, which is exactly what happened with a smaller budget.
+          thinking: { type: "disabled" },
+          system: systemPrompt,
+          tools: [SITE_TOOL],
+          ...(lastRound ? { tool_choice: { type: "none" } } : {}),
+          messages,
+        }),
+      });
 
-    if (!response.ok) {
-      const body = await response.text();
-      console.error("[ask] Anthropic API error:", response.status, body);
-      return res.status(502).json({ error: "Claude couldn't answer that just now. Check the Vercel logs for the exact response." });
+      if (!response.ok) {
+        const body = await response.text();
+        console.error("[ask] Anthropic API error:", response.status, body);
+        return res.status(502).json({ error: "Claude couldn't answer that just now. Check the Vercel logs for the exact response." });
+      }
+
+      data = await response.json();
+      if (data.stop_reason !== "tool_use" || lastRound) break;
+
+      messages.push({ role: "assistant", content: data.content });
+      const results = [];
+      for (const block of data.content) {
+        if (block.type === "tool_use") results.push(await runSiteTool(block, toolCtx));
+      }
+      messages.push({ role: "user", content: results });
     }
 
-    const data = await response.json();
     const answer = data.content
       .map((block) => (block.type === "text" ? block.text : ""))
       .filter(Boolean)
@@ -380,7 +460,8 @@ Today's date is ${new Date().toISOString().slice(0, 10)}.`;
     const allConversations = (await kv.get(CONVERSATIONS_KEY)) || {};
     const directorConversations = await getDirectorConversations(director.email, allConversations);
     const now = new Date().toISOString();
-    const newMessages = [...validHistory, { role: "user", content: question }, { role: "assistant", content: answer }];
+    const lookups = toolCtx.log.map((l) => ({ label: l.label, ok: l.ok }));
+    const newMessages = [...validHistory, { role: "user", content: question }, { role: "assistant", content: answer, ...(lookups.length ? { lookups } : {}) }];
 
     let conversationId = requestedConversationId;
     const existing = conversationId ? directorConversations.find((c) => c.id === conversationId) : null;
@@ -398,7 +479,7 @@ Today's date is ${new Date().toISOString().slice(0, 10)}.`;
     allConversations[director.email] = directorConversations;
     await kv.set(CONVERSATIONS_KEY, allConversations);
 
-    return res.status(200).json({ answer, conversationId, dealCount: deals.length, staffCount: staff.length });
+    return res.status(200).json({ answer, conversationId, lookups, dealCount: deals.length, staffCount: staff.length });
   } catch (e) {
     console.error("[ask] request failed:", e);
     return res.status(500).json({ error: "Something went wrong reaching Claude. Check the Vercel logs for details." });
