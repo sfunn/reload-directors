@@ -4346,6 +4346,35 @@ function BoardPackPage({ token }) {
     return () => { cancelled = true; };
   }, [token, year]);
 
+  // Last year's months, for the year-to-date EBITDA comparison. It starts only
+  // once THIS year's have arrived (ready means loaded and for this year), never
+  // alongside them: each is up to a dozen calls to Xero made a few at a time,
+  // and Xero allows only five at once, so two batches in parallel would trip it.
+  const plReady = !!pl && pl.year === year;
+  const [plPrev, setPlPrev] = useState(null);
+  const [plPrevError, setPlPrevError] = useState("");
+  const [plPrevLoading, setPlPrevLoading] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    setPlPrev(null); setPlPrevError("");
+    if (!plReady) { setPlPrevLoading(false); return () => { cancelled = true; }; }
+    (async () => {
+      setPlPrevLoading(true);
+      try {
+        const res = await fetch(`/api/xero-reports?action=pl-monthly&year=${year - 1}`, { headers: { Authorization: `Bearer ${token}` } });
+        const body = await res.json();
+        if (cancelled) return;
+        if (!res.ok) { setPlPrevError(body.error || "Couldn't load last year's profit and loss."); return; }
+        setPlPrev(body);
+      } catch (e) {
+        if (!cancelled) setPlPrevError("Couldn't reach the server.");
+      } finally {
+        if (!cancelled) setPlPrevLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [token, year, plReady]);
+
   // Cash movement covers the whole period, from the first day of its first
   // month, and only once the period has ended: a part-period would mislead.
   const periodComplete = bpMonthHasEnded(year, through, new Date());
@@ -4401,6 +4430,25 @@ function BoardPackPage({ token }) {
   const monthName = BP_MONTH_NAMES[through - 1]; // the month the period ends in, used for "Jan to ..." labels
   const plTotals = pl ? bpPlTotals(bpMonthsOf(pl, year, info.startMonth, info.endMonth)) : null;
   const cashClose = cash && cash.totals ? cash.totals.closing : null;
+  // EBITDA is always the calendar year to date, through the end of the period,
+  // however big the period: one month of it is too distorted by timing (fees in
+  // lumps, costs booked in arrears) to mean much. Gross profit and expenses
+  // stay for the period itself.
+  const ytdTotals = pl ? bpPlTotals(bpMonthsOf(pl, year, 1, through)) : null;
+  const ytdEbitda = ytdTotals ? ytdTotals.ebitda : null;
+  const prevYtdTotals = plPrev ? bpPlTotals(bpMonthsOf(plPrev, year - 1, 1, through)) : null;
+  const prevYtdEbitda = prevYtdTotals ? prevYtdTotals.ebitda : null;
+  const ebitdaNote = (text, color, bold) => React.createElement("div", { style: { fontSize: 11, marginTop: 4, color: color || INDIGO_MUTED, fontWeight: bold ? 600 : 400, lineHeight: 1.4 } }, text);
+  let ebitdaCompare = null;
+  if (ytdEbitda !== null) {
+    if (plPrevLoading) ebitdaCompare = ebitdaNote("Loading last year…");
+    else if (plPrevError) ebitdaCompare = ebitdaNote(`Last year's comparison could not be loaded: ${plPrevError}`);
+    else if (prevYtdEbitda === null) ebitdaCompare = plPrev ? ebitdaNote("No comparison: last year's figures are not complete for this period.") : null;
+    else if (prevYtdEbitda > 0) {
+      const pct = ((ytdEbitda - prevYtdEbitda) / prevYtdEbitda) * 100;
+      ebitdaCompare = ebitdaNote(`${pct >= 0 ? "▲" : "▼"} ${Math.abs(pct).toFixed(1)}% vs same period last year (${bpFmtMoney(prevYtdEbitda)})`, pct >= 0 ? VERDIGRIS : "#c0392b", true);
+    } else ebitdaCompare = ebitdaNote(`Same period last year: ${bpFmtMoney(prevYtdEbitda)} (a percentage change is not meaningful from zero or a loss)`);
+  }
   const xeroKpi = (label, value, color) => React.createElement(BpKpi, {
     label,
     value: value !== null && value !== undefined ? bpFmtMoney(value) : "Not available",
@@ -4458,10 +4506,10 @@ function BoardPackPage({ token }) {
         React.createElement("div", { style: { display: "flex", gap: 24, flexWrap: "wrap", marginTop: 18, paddingTop: 16, borderTop: `1px solid ${INDIGO_HAIRLINE}` } },
           xeroKpi(`Gross profit, ${info.short}`, plTotals ? plTotals.grossProfit : null, VERDIGRIS),
           xeroKpi("Total expenses", plTotals ? plTotals.expenses : null, MELON),
-          xeroKpi("EBITDA", plTotals ? plTotals.ebitda : null, INDIGO),
+          React.createElement(BpKpi, { label: through === 1 ? `EBITDA - ${monthName}` : `EBITDA - Jan to ${monthName}`, value: ytdEbitda !== null ? bpFmtMoney(ytdEbitda) : "Not available", color: ytdEbitda !== null ? INDIGO : INDIGO_MUTED, extra: ebitdaCompare }),
           xeroKpi(`Cash at ${info.noun === "half" ? "half-year" : info.noun} end`, cashClose, VERDIGRIS)
         ),
-        React.createElement("div", { style: { marginTop: 10, fontSize: 11, color: INDIGO_MUTED } }, "Xero figures are read live from Xero's profit and loss for each month in the period, and cash from its bank balances. EBITDA is net profit plus depreciation, interest and tax.")
+        React.createElement("div", { style: { marginTop: 10, fontSize: 11, color: INDIGO_MUTED } }, "Gross profit and total expenses are for the period. EBITDA is for the calendar year to date (net profit plus depreciation, interest and tax), compared with the same months last year. All of it is read live from Xero's profit and loss, and cash from its bank balances.")
       ),
 
       React.createElement(BpSection, { title: "Fee Revenue Analysis", source: "Atlas placements, including uplift rules. Will not match Xero invoiced revenue." },
