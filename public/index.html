@@ -2516,6 +2516,12 @@ function CompanyOverviewPage({ token }) {
           xeroStatus && xeroStatus.connected
             ? React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10 } },
                 React.createElement("div", { style: { fontSize: 12, color: VERDIGRIS, fontFamily: "'Work Sans', sans-serif" } }, `Connected to ${xeroStatus.tenantName || "Xero"}`),
+                // Whether the bank summary permission (cash received and spent) came with
+                // the connection. Unknown for a connection made before that was recorded.
+                React.createElement("div", { style: { fontSize: 11, color: xeroStatus.hasBankSummary === false ? "#c0392b" : INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif" } },
+                  xeroStatus.hasBankSummary === true ? "Bank summary permission: granted"
+                    : xeroStatus.hasBankSummary === false ? "Bank summary permission: not granted. Reconnect to add it."
+                    : "Bank summary permission: unknown until you reconnect"),
                 React.createElement("span", {
                   onClick: () => { window.location.href = `/api/xero-callback?action=connect&token=${encodeURIComponent(token)}`; },
                   style: { fontSize: 11, color: INDIGO_MUTED, textDecoration: "underline", cursor: "pointer" }
