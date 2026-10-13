@@ -2578,7 +2578,7 @@ function CompanyOverviewPage({ token }) {
                     React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO } }, `£${Math.round(data.revenuePerHeadGBP).toLocaleString()}`),
                     React.createElement("div", { style: { fontSize: 13, color: INDIGO_MUTED } }, `$${Math.round(data.revenuePerHeadUSD).toLocaleString()}`)
                   ),
-                  React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 2 } }, `Based on ${data.headcountUsedForPerHead} fee-earning staff`),
+                  React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 2 } }, data.averageHeadcountForPeriod ? `Based on an average of ${data.averageHeadcountForPeriod.toFixed(1)} fee-earning staff (${data.headcountUsedForPerHead || 0} at period end)` : `Based on ${data.headcountUsedForPerHead} fee-earning staff`),
                   React.createElement(PercentChangeDisplay, { changes: data.changes, field: "revenuePerHeadGBP", period })
                 )
               : React.createElement("div", { style: { fontFamily: "Georgia, serif", fontSize: 24, color: INDIGO_MUTED } }, "Not available")
@@ -3756,6 +3756,25 @@ function bpMonthsOf(pl, year, a, b) {
   return out;
 }
 
+// Average fee-earning headcount over a run of whole months (a to b, 1-12) of
+// one year. The headcount endpoint already gives each month's time-weighted
+// average, so the average over several months is those monthly figures
+// weighted by how many days each month has, which is exact for contiguous
+// months. Null when the figures are missing or nobody was employed, so a
+// revenue per head is never divided by zero or by a guess.
+function bpAverageHeadcount(monthly, year, a, b) {
+  if (!Array.isArray(monthly) || monthly.length < 12) return null;
+  let weighted = 0, days = 0;
+  for (let m = a; m <= b; m++) {
+    const entry = monthly[m - 1];
+    if (!entry || typeof entry.feeEarning !== "number") return null;
+    const d = new Date(Date.UTC(year, m, 0)).getUTCDate();
+    weighted += entry.feeEarning * d;
+    days += d;
+  }
+  return days > 0 && weighted > 0 ? weighted / days : null;
+}
+
 // EBITDA is net profit with depreciation, interest and tax added back. Net
 // profit already has all three taken off wherever they sit in the report, so
 // this needs no assumption about which section they are in. A line Xero did
@@ -4375,6 +4394,23 @@ function BoardPackPage({ token }) {
     return () => { cancelled = true; };
   }, [token, year, plReady]);
 
+  // Each month's average fee-earning headcount, for revenue per head. It reads
+  // only the roster, so it is cheap, and if it fails revenue per head simply
+  // shows n/a rather than a figure divided by the wrong number.
+  const [hcMonthly, setHcMonthly] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    setHcMonthly(null);
+    (async () => {
+      try {
+        const res = await fetch(`/api/headcount?action=monthly&year=${year}`, { headers: { Authorization: `Bearer ${token}` } });
+        const body = await res.json();
+        if (!cancelled && res.ok) setHcMonthly(body.monthly);
+      } catch (e) { /* n/a is shown instead */ }
+    })();
+    return () => { cancelled = true; };
+  }, [token, year]);
+
   // Cash movement covers the whole period, from the first day of its first
   // month, and only once the period has ended: a part-period would mislead.
   const periodComplete = bpMonthHasEnded(year, through, new Date());
@@ -4455,6 +4491,8 @@ function BoardPackPage({ token }) {
     color: value !== null && value !== undefined ? color : INDIGO_MUTED,
   });
   const headcount = ov && ov.headcountUsedForPerHead > 0 ? ov.headcountUsedForPerHead : null;
+  const avgYtd = hcMonthly ? bpAverageHeadcount(hcMonthly, year, 1, through) : null;
+  const avgPeriod = hcMonthly ? bpAverageHeadcount(hcMonthly, year, info.startMonth, info.endMonth) : null;
   const chip = (active, extra) => ({ ...chipStyle, background: active ? INDIGO : "rgba(46,64,91,0.06)", color: active ? WHITE : INDIGO, fontWeight: active ? 700 : 500, ...(extra || {}) });
 
   return React.createElement("div", { className: "bp-root" },
@@ -4508,7 +4546,7 @@ function BoardPackPage({ token }) {
           // Year to date, like the average fee and EBITDA: one month of fees is
           // too lumpy to compare with an annual benchmark. The period's own
           // figure stays underneath, except from January where it is the same.
-          React.createElement(BpKpi, { label: through === 1 ? `Revenue per head - ${monthName} starters` : `Revenue per head - Jan to ${monthName} starters`, value: headcount !== null ? bpFmtGBP(s.ytd / headcount) : "n/a", sub: headcount !== null && info.startMonth > 1 ? `${bpFmtGBP(s.periodRevenue / headcount)} in ${info.short}` : null })
+          React.createElement(BpKpi, { label: through === 1 ? `Revenue per head - ${monthName} starters` : `Revenue per head - Jan to ${monthName} starters`, value: avgYtd !== null ? bpFmtGBP(s.ytd / avgYtd) : "n/a", sub: avgYtd !== null ? `average ${avgYtd.toFixed(1)} fee earners` : null, extra: avgYtd !== null && avgPeriod !== null && info.startMonth > 1 ? React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 2 } }, `${bpFmtGBP(s.periodRevenue / avgPeriod)} in ${info.short}`) : null })
         ),
         React.createElement("div", { style: { display: "flex", gap: 24, flexWrap: "wrap", marginTop: 18, paddingTop: 16, borderTop: `1px solid ${INDIGO_HAIRLINE}` } },
           xeroKpi(`Gross profit, ${info.short}`, plTotals ? plTotals.grossProfit : null, VERDIGRIS),
