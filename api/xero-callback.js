@@ -3,6 +3,12 @@ const jwt = require("jsonwebtoken");
 
 const TOKENS_KEY = "xero-oauth-tokens"; // { refreshToken, tenantId, tenantName, connectedAt }
 
+// Text that arrives in the URL (Xero's error codes) must never be put into
+// the page as HTML, or a crafted link could inject content into it.
+function escapeHtml(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
 function htmlPage(title, message, ok) {
   return `<!DOCTYPE html><html><head><title>${title}</title></head>
   <body style="font-family: sans-serif; padding: 40px; text-align: center;">
@@ -43,6 +49,9 @@ async function handleStatus(req, res) {
     connected: true,
     tenantName: tokens.tenantName || null,
     connectedAt: tokens.connectedAt || null,
+    // true or false once a connection has recorded what it was granted; null
+    // for one made before that was recorded, which is genuinely unknown.
+    hasBankSummary: tokens.scope ? tokens.scope.split(" ").includes("accounting.reports.banksummary.read") : null,
   });
 }
 
@@ -107,6 +116,12 @@ async function handleConnect(req, res) {
     "email",
     "accounting.reports.profitandloss.read",
     "accounting.reports.balancesheet.read",
+    // Gives cash received and spent in Cash Movement. The name follows the
+    // pattern of the two report permissions above but has NOT been confirmed
+    // against Xero's own scopes list. If Xero does not recognise it, the
+    // reconnect fails with invalid_scope, and the existing saved connection
+    // is untouched (it is only ever replaced after a successful approval).
+    "accounting.reports.banksummary.read",
     "accounting.invoices.read",
     "offline_access",
   ].join(" ");
@@ -128,11 +143,15 @@ async function handleConnect(req, res) {
 // pull fresh reports later without asking anyone to log in again) and
 // finds out which Xero organization ("tenant") was actually connected.
 async function handleCallback(req, res) {
-  const { code, error } = req.query;
+  const { code, error, error_description } = req.query;
 
   if (error) {
     res.setHeader("Content-Type", "text/html");
-    return res.status(400).send(htmlPage("Connection cancelled", `Xero reported: ${error}`, false));
+    const detail = error_description ? `: ${escapeHtml(error_description)}` : "";
+    const message = error === "invalid_scope"
+      ? `Xero did not recognise one of the permissions this site asked for (invalid_scope${detail}). Your existing Xero connection has NOT been changed and still works. Tell whoever looks after this site, so the permission name can be corrected.`
+      : `Xero reported: ${escapeHtml(error)}${detail}. If you already had Xero connected, that connection has not been changed.`;
+    return res.status(400).send(htmlPage("Connection not changed", message, false));
   }
   if (!code) {
     res.setHeader("Content-Type", "text/html");
@@ -174,6 +193,9 @@ async function handleCallback(req, res) {
       tenantId: tenant ? tenant.tenantId : null,
       tenantName: tenant ? tenant.tenantName : null,
       connectedAt: new Date().toISOString(),
+      // The permissions Xero actually granted, so the page can say whether a
+      // reconnect gave the bank summary permission rather than leave anyone to infer it.
+      scope: tokenData.scope || null,
     });
 
     res.setHeader("Content-Type", "text/html");
