@@ -3611,7 +3611,7 @@ function AskAQuestionPage({ token }) {
       const body = await res.json();
       if (thisSessionId !== sessionIdRef.current) { loadConversationsList(); return; } // the user moved on before this came back — the answer is still saved, just don't pull them back to it
       if (!res.ok) { setError(body.error || "Something went wrong."); return; }
-      setMessages([...priorHistory, { role: "user", content: thisQuestion }, { role: "assistant", content: body.answer }]);
+      setMessages([...priorHistory, { role: "user", content: thisQuestion }, { role: "assistant", content: body.answer, ...(Array.isArray(body.lookups) && body.lookups.length ? { lookups: body.lookups } : {}) }]);
       setActiveConversationId(body.conversationId); // set on the very first question of a brand new thread, unchanged on a follow-up
       loadConversationsList(); // refresh the list — a new thread appears, an existing one's title/position updates
     } catch (e) {
@@ -3695,7 +3695,11 @@ function AskAQuestionPage({ token }) {
             )
           : React.createElement(React.Fragment, null,
               React.createElement("div", { style: { ...labelStyle, marginTop: 10, marginBottom: 6 } }, "Answer"),
-              React.createElement("div", { style: { fontFamily: "'Work Sans', sans-serif", fontSize: 14.5, color: INDIGO, whiteSpace: "pre-wrap", lineHeight: 1.6 } }, m.content)
+              React.createElement("div", { style: { fontFamily: "'Work Sans', sans-serif", fontSize: 14.5, color: INDIGO, whiteSpace: "pre-wrap", lineHeight: 1.6 } }, m.content),
+              // Which pages were read live to produce this answer, so a director can
+              // see what it was based on, and where a lookup failed.
+              Array.isArray(m.lookups) && m.lookups.length > 0 && React.createElement("div", { style: { fontFamily: "'Work Sans', sans-serif", fontSize: 11, color: INDIGO_MUTED, marginTop: 8, lineHeight: 1.5 } },
+                `Looked up live: ${m.lookups.map((l) => (l.ok === false ? `${l.label} (could not be read)` : l.label)).join("; ")}`)
             )
       ))
     )
