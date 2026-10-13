@@ -4320,7 +4320,12 @@ function autoPullNotice(loaded, status, now) {
   const hours = (now - new Date(status.lastSuccess)) / 3600000;
   if (hours > AUTO_PULL_STALE_HOURS) return { tone: "error", text: `Xero figures have not been refreshed automatically since ${when(status.lastSuccess)}. The job should run every morning, so it may have stopped. Check Cron Jobs in your Vercel project settings.` };
   const names = (status.refreshed || []).filter((r) => r.ok).map((r) => r.label);
-  return { tone: "muted", text: `Xero figures last refreshed automatically ${when(status.lastSuccess)}${names.length ? `: ${names.join(", ")}` : ""}.` };
+  // A record written before the job listed what it refreshed has no list at
+  // all. Saying so turns "why is there nothing after the time?" into a clear
+  // statement, and if it is still said after the job has been run again, the
+  // job on the server is the old version.
+  const legacy = !Array.isArray(status.refreshed);
+  return { tone: "muted", text: `Xero figures last refreshed automatically ${when(status.lastSuccess)}${names.length ? `: ${names.join(", ")}` : ""}.${legacy ? " This was recorded by an earlier version of the job, which did not list the periods it refreshed. Run the job once more to see them." : ""}` };
 }
 
 function BoardPackPage({ token }) {
