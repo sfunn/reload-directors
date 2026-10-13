@@ -4501,7 +4501,14 @@ function BoardPackPage({ token }) {
           // From January the year-to-date figure is the period itself, so it is not repeated.
           info.startMonth > 1 && React.createElement(BpKpi, { label: `Fee revenue - Jan to ${monthName} starters`, value: bpFmtGBP(s.ytd), extra: s.growthPct !== null ? React.createElement("div", { style: { fontSize: 11, marginTop: 4, color: s.growthPct >= 0 ? VERDIGRIS : "#c0392b", fontWeight: 600 } }, `${s.growthPct >= 0 ? "▲" : "▼"} ${Math.abs(s.growthPct).toFixed(1)}% vs same period last year`) : null }),
           React.createElement(BpKpi, { label: through === 1 ? `Average fee - ${monthName} starters` : `Average fee - Jan to ${monthName} starters`, value: s.ytdAverageFee !== null ? bpFmtGBP(s.ytdAverageFee) : "n/a", sub: `${s.ytdPlacements} ${s.ytdPlacements === 1 ? "placement" : "placements"}, onsite fees excluded` }),
-          React.createElement(BpKpi, { label: "Fee-earning headcount", value: headcount !== null ? String(headcount) : "n/a", sub: headcount !== null ? `${bpFmtGBP(s.periodRevenue / headcount)} revenue per head` : null })
+          // Headcount is counted as at the last day of the period, the same
+          // convention as Company Overview's revenue per head, and the date is
+          // printed so nobody has to guess which headcount was used.
+          React.createElement(BpKpi, { label: "Fee-earning headcount", value: headcount !== null ? String(headcount) : "n/a", sub: headcount !== null ? `as at ${new Date(Date.UTC(year, through, 0)).getUTCDate()} ${monthName}` : null }),
+          // Year to date, like the average fee and EBITDA: one month of fees is
+          // too lumpy to compare with an annual benchmark. The period's own
+          // figure stays underneath, except from January where it is the same.
+          React.createElement(BpKpi, { label: through === 1 ? `Revenue per head - ${monthName} starters` : `Revenue per head - Jan to ${monthName} starters`, value: headcount !== null ? bpFmtGBP(s.ytd / headcount) : "n/a", sub: headcount !== null && info.startMonth > 1 ? `${bpFmtGBP(s.periodRevenue / headcount)} in ${info.short}` : null })
         ),
         React.createElement("div", { style: { display: "flex", gap: 24, flexWrap: "wrap", marginTop: 18, paddingTop: 16, borderTop: `1px solid ${INDIGO_HAIRLINE}` } },
           xeroKpi(`Gross profit, ${info.short}`, plTotals ? plTotals.grossProfit : null, VERDIGRIS),
