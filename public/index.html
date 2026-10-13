@@ -2296,6 +2296,7 @@ function CompanyOverviewPage({ token }) {
   const [repeatData, setRepeatData] = useState(null);
   const [repeatError, setRepeatError] = useState("");
   const [autoPullStatus, setAutoPullStatus] = useState(null);
+  const [autoPullLoaded, setAutoPullLoaded] = useState("idle");
 
   // All-time, deliberately never re-fetched when the year picker changes —
   // "repeat" is a question across the whole relationship, not within
@@ -2320,11 +2321,13 @@ function CompanyOverviewPage({ token }) {
   const loadAutoPullStatus = useCallback(async () => {
     try {
       const res = await fetch("/api/xero-reports?action=auto-pull-status", { headers: { Authorization: `Bearer ${token}` } });
-      if (!res.ok) return;
+      if (!res.ok) { setAutoPullLoaded("failed"); return; }
       const body = await res.json();
       setAutoPullStatus(body.status);
+      setAutoPullLoaded("ok");
     } catch (e) {
-      // silent — this is just a status check, the rest of the page still works fine either way
+      // this is just a status check, the rest of the page still works either way
+      setAutoPullLoaded("failed");
     }
   }, [token]);
 
@@ -2544,10 +2547,13 @@ function CompanyOverviewPage({ token }) {
       )
     ),
     error && React.createElement("div", { style: errorStyle }, error),
-    autoPullStatus && autoPullStatus.lastError && React.createElement("div", { style: { ...errorStyle, background: "rgba(192,57,43,0.08)", padding: "10px 12px", borderRadius: 6, marginBottom: 12 } },
-      `The automated daily Xero pull last failed: ${autoPullStatus.lastError}`,
-      autoPullStatus.lastSuccess && ` (it last succeeded ${new Date(autoPullStatus.lastSuccess).toLocaleString("en-GB")}.)`
-    ),
+    (() => {
+      const n = autoPullNotice(autoPullLoaded, autoPullStatus, new Date());
+      if (!n) return null;
+      return n.tone === "error"
+        ? React.createElement("div", { style: { ...errorStyle, background: "rgba(192,57,43,0.08)", padding: "10px 12px", borderRadius: 6, marginBottom: 12 } }, n.text)
+        : React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginBottom: 12, lineHeight: 1.5 } }, n.text);
+    })(),
     loading && React.createElement(Panel, null, React.createElement("div", { style: { padding: 20, textAlign: "center", color: INDIGO_MUTED, fontFamily: "'Work Sans', sans-serif" } }, "Loading…")),
     !loading && data && React.createElement(React.Fragment, null,
       React.createElement(Panel, null,
@@ -4292,6 +4298,29 @@ function BpCashSection({ cash, cashError, cashLoading, periodComplete, info }) {
     );
   }
   return React.createElement(BpSection, { title: "Cash Movement", source: cash && cash.source === "balancesheet" ? "Xero balance sheet" : "Xero bank summary and balance sheet" }, body);
+}
+
+// What to tell a director about the automated daily Xero pull. Always says
+// when it last worked, because a job that has stopped running looks exactly
+// like one that runs perfectly unless the page shows its last success. It
+// is judged stale after 36 hours (a daily job, with room for the hour or so
+// the schedule can drift). If the status itself could not be fetched it says
+// nothing at all, rather than claim the job has never run.
+const AUTO_PULL_STALE_HOURS = 36;
+function autoPullNotice(loaded, status, now) {
+  if (loaded !== "ok") return null;
+  const when = (iso) => new Date(iso).toLocaleString("en-GB");
+  if (!status) return { tone: "error", text: "The automated daily Xero pull has never run on this site. It should run every morning, at about 6am UTC. Check Cron Jobs in your Vercel project settings." };
+  const lastOk = status.lastSuccess ? ` It last succeeded ${when(status.lastSuccess)}.` : " It has never succeeded.";
+  if (status.lastError) {
+    const reason = String(status.lastError);
+    return { tone: "error", text: `The automated daily Xero pull last failed (${when(status.lastAttempt)}): ${reason}${/[.!?]$/.test(reason) ? "" : "."}${lastOk}` };
+  }
+  if (!status.lastSuccess) return { tone: "error", text: "The automated daily Xero pull has run but has never succeeded." };
+  const hours = (now - new Date(status.lastSuccess)) / 3600000;
+  if (hours > AUTO_PULL_STALE_HOURS) return { tone: "error", text: `Xero figures have not been refreshed automatically since ${when(status.lastSuccess)}. The job should run every morning, so it may have stopped. Check Cron Jobs in your Vercel project settings.` };
+  const names = (status.refreshed || []).filter((r) => r.ok).map((r) => r.label);
+  return { tone: "muted", text: `Xero figures last refreshed automatically ${when(status.lastSuccess)}${names.length ? `: ${names.join(", ")}` : ""}.` };
 }
 
 function BoardPackPage({ token }) {
