@@ -579,3 +579,5 @@ module.exports = async (req, res) => {
 };
 
 module.exports.computeEBITDA = computeEBITDA;
+module.exports.effectiveYear = effectiveYear;
+module.exports.effectiveMonth = effectiveMonth;
