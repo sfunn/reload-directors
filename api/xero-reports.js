@@ -4,7 +4,10 @@ const { saveManualMetricForPeriod, normalizeYearMetrics, MANUAL_METRICS_KEY } = 
 // individual pull's result — read by Company Overview to show a
 // warning banner if the most recent attempt failed, without needing a
 // director to have been the one who triggered it.
-const AUTO_PULL_STATUS_KEY = "xero-auto-pull-status"; // { lastAttempt, lastSuccess, lastError }
+const AUTO_PULL_STATUS_KEY = "xero-auto-pull-status"; // { lastAttempt, lastSuccess, lastError, refreshed: [{ label, ok }] }
+const MONTHS_LONG = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+// A plain name for a period the job refreshed, for the page to show.
+const autoPullLabel = (r) => (r.period === "month" ? `${MONTHS_LONG[parseInt(r.month, 10) - 1]} ${r.year}` : r.period === "quarter" ? `${r.quarter} ${r.year}` : `${r.year} year`);
 
 // Maps a successful Xero pull's result into the field names
 // saveManualMetricForPeriod expects, leaving out any field Xero
@@ -64,9 +67,14 @@ function autoPullTargets(now) {
   const y = now.getUTCFullYear();
   const m = now.getUTCMonth(); // 0-11
   const d = now.getUTCDate();
+  // The whole-year figure is refreshed too. Company Overview's year view
+  // uses the saved year figure whenever there is one, so leaving it out meant
+  // those figures stayed as last saved by hand (cash, a balance at one moment
+  // in time, most visibly), however many mornings the job ran.
   const targets = [
     { year: y, period: "month", month: pad(m + 1), quarter: null },
     { year: y, period: "quarter", month: null, quarter: `Q${Math.floor(m / 3) + 1}` },
+    { year: y, period: "year", month: null, quarter: null },
   ];
   if (d <= CATCH_UP_DAYS) {
     const prevMonthIdx = m === 0 ? 11 : m - 1;
@@ -75,6 +83,8 @@ function autoPullTargets(now) {
     if (m % 3 === 0) {
       targets.push({ year: prevYear, period: "quarter", month: null, quarter: `Q${Math.floor(prevMonthIdx / 3) + 1}` });
     }
+    // In January the year that just ended is still being finalised.
+    if (m === 0) targets.push({ year: prevYear, period: "year", month: null, quarter: null });
   }
   return targets;
 }
@@ -781,7 +791,7 @@ module.exports = async (req, res) => {
       // but the banner still needs to know the last time it genuinely
       // worked, not just the most recent attempt.
       const priorStatusOnAuthFailure = (await kv.get(AUTO_PULL_STATUS_KEY)) || {};
-      await kv.set(AUTO_PULL_STATUS_KEY, { lastAttempt: now.toISOString(), lastSuccess: priorStatusOnAuthFailure.lastSuccess || null, lastError: autoAuth.error });
+      await kv.set(AUTO_PULL_STATUS_KEY, { lastAttempt: now.toISOString(), lastSuccess: priorStatusOnAuthFailure.lastSuccess || null, lastError: autoAuth.error, refreshed: [] });
       return res.status(200).json({ ok: false, error: autoAuth.error });
     }
     const autoXeroHeaders = {
@@ -813,6 +823,7 @@ module.exports = async (req, res) => {
       lastAttempt: now.toISOString(),
       lastSuccess: anySucceeded ? now.toISOString() : priorStatus.lastSuccess || null,
       lastError: anyFailed ? results.find((r) => !r.ok).error : null,
+      refreshed: results.map((r) => ({ label: autoPullLabel(r), ok: r.ok })),
     });
 
     return res.status(200).json({ ok: !anyFailed, results });
