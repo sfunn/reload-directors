@@ -1,7 +1,7 @@
 const { getDirectorFromRequest, kv } = require("./_directorAuth");
 const { resolveUplift, resolvedRevenueGBP, getOverrides, isExcludedProjectRecord } = require("./_dealRevenueUplift");
 const { EMPLOYMENT_KEY } = require("./roster");
-const { buildTimeline, countAsOf } = require("./headcount");
+const { buildTimeline, countAsOf, averageHeadcountOverPeriod } = require("./headcount");
 const { MANUAL_METRICS_KEY, normalizeYearMetrics, resolveManualMetricsForPeriod, saveManualMetricForPeriod } = require("./_manualMetricsStore");
 
 const RECORDS_KEY = "atlas-fee-records"; // shared with the incentive site — read only, never written here
@@ -268,8 +268,22 @@ async function computeOverviewForPeriod(year, period, month, quarter, shared) {
     const periodEndLastDay = periodEndMonth ? new Date(Date.UTC(year, parseInt(periodEndMonth, 10), 0)).getUTCDate() : 31;
     const yearEndDate = periodEndMonth ? `${year}-${periodEndMonth}-${String(periodEndLastDay).padStart(2, "0")}` : `${year}-12-31`;
     const headcountForYear = countAsOf(feeEarningTimeline, yearEndDate);
-    const revenuePerHeadGBP = headcountForYear > 0 ? totalRevenueGBP / headcountForYear : null;
-    const revenuePerHeadUSD = headcountForYear > 0 ? totalRevenueUSD / headcountForYear : null;
+    // Revenue per head is divided by the AVERAGE fee-earning headcount over
+    // the period, time-weighted, not by the headcount on its last day: a team
+    // that grew during the year earned that revenue with fewer people than it
+    // has now, so an end-of-period count understates what each person
+    // produced. The window stops at today for a period still in progress,
+    // because its revenue only runs to today too. headcountForYear stays as
+    // the plain end-of-period count, for display.
+    const avgFromMonth = period === "month" ? parseInt(month, 10) : period === "quarter" ? parseInt((QUARTER_MONTHS_LOOKUP[quarter] || ["01"])[0], 10) : 1;
+    const avgToMonth = period === "month" ? parseInt(month, 10) : period === "quarter" ? parseInt((QUARTER_MONTHS_LOOKUP[quarter] || ["01", "02", "03"])[2], 10) : 12;
+    const avgFrom = `${year}-${String(avgFromMonth).padStart(2, "0")}-01`;
+    const avgToExclusive = new Date(Date.UTC(year, avgToMonth, 1)).toISOString().slice(0, 10);
+    const todayForAvg = new Date().toISOString().slice(0, 10);
+    const avgTo = avgToExclusive < todayForAvg ? avgToExclusive : todayForAvg;
+    const averageHeadcount = avgTo > avgFrom ? averageHeadcountOverPeriod(feeEarningTimeline, avgFrom, avgTo) : 0;
+    const revenuePerHeadGBP = averageHeadcount > 0 ? totalRevenueGBP / averageHeadcount : null;
+    const revenuePerHeadUSD = averageHeadcount > 0 ? totalRevenueUSD / averageHeadcount : null;
 
     return {
       year,
@@ -286,6 +300,7 @@ async function computeOverviewForPeriod(year, period, month, quarter, shared) {
       revenuePerHeadGBP,
       revenuePerHeadUSD,
       headcountUsedForPerHead: headcountForYear > 0 ? headcountForYear : null,
+      averageHeadcountForPeriod: averageHeadcount > 0 ? averageHeadcount : null,
       // grossProfitAmount/grossProfitCurrency replace the old grossProfitUSD
       // field, which wrongly assumed this figure was always in USD — it
       // isn't, since it now often comes straight from Xero in Reload's own
