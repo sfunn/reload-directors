@@ -1014,14 +1014,42 @@ module.exports = async (req, res) => {
       }
 
       if (parsed) {
-        // Cross-check the closing balances against the balance sheet's cash line.
-        let reconciliation = null;
+        // Xero's bank summary lists every account it holds, credit cards
+        // included, but "cash" on the balance sheet is only the accounts in its
+        // Bank section. Counting a card as cash both overstated the gap against
+        // the balance sheet (it was exactly the two cards' balances) and put a
+        // liability inside the cash figure. So an account the balance sheet does
+        // not list under Bank is shown separately and left out of the cash
+        // totals. If the balance sheet cannot be read, or none of its account
+        // names match, nothing is left out and the page says it could not tell.
         const closing = await getBalanceSheet(monthEnd);
+        let accounts = parsed.accounts.map((a) => ({ ...a, countedAsCash: true }));
+        let detection = "unavailable";
+        if (closing.report) {
+          const bankNames = new Set(bankAccountsFromBalanceSheet(closing.report).accounts.map((a) => a.name.trim().toLowerCase()));
+          if (bankNames.size > 0 && accounts.some((a) => bankNames.has(a.name.trim().toLowerCase()))) {
+            accounts = accounts.map((a) => ({ ...a, countedAsCash: bankNames.has(a.name.trim().toLowerCase()) }));
+            detection = "balancesheet";
+          }
+        }
+        const totalsOf = (list) => {
+          const sum = (k) => list.reduce((s, a) => s + a[k], 0);
+          const t = { opening: sum("opening"), received: sum("received"), spent: sum("spent"), net: sum("received") - sum("spent"), closing: sum("closing") };
+          // Foreign accounts are revalued at month end, so closing is not always
+          // opening plus received minus spent. The difference is real, and shown,
+          // so the headline figures add up.
+          t.revaluation = t.closing - t.opening - t.net;
+          return t;
+        };
+        const counted = accounts.filter((a) => a.countedAsCash);
+        const others = accounts.filter((a) => !a.countedAsCash);
+        const totals = totalsOf(counted);
+        let reconciliation = null;
         if (closing.report) {
           const cash = findRowByLabel(closing.report.Rows, CASH_LABELS);
-          if (cash) reconciliation = { xero: cash.value, computed: parsed.totals.closing, difference: parsed.totals.closing - cash.value, differencePct: cash.value !== 0 ? ((parsed.totals.closing - cash.value) / Math.abs(cash.value)) * 100 : null };
+          if (cash) reconciliation = { xero: cash.value, computed: totals.closing, difference: totals.closing - cash.value, differencePct: cash.value !== 0 ? ((totals.closing - cash.value) / Math.abs(cash.value)) * 100 : null };
         }
-        return res.status(200).json({ year: cy, month: pad2(cm), asAt: monthEnd, fromMonth: pad2(fm), periodStart: monthStart, tenantName, source: "banksummary", bankSummaryProblem: null, accounts: parsed.accounts, totals: parsed.totals, reconciliation, headerLabels: parsed.headerLabels });
+        return res.status(200).json({ year: cy, month: pad2(cm), asAt: monthEnd, fromMonth: pad2(fm), periodStart: monthStart, tenantName, source: "banksummary", bankSummaryProblem: null, detection, accounts, totals, otherTotals: others.length ? totalsOf(others) : null, reconciliation, headerLabels: parsed.headerLabels });
       }
 
       const opening = await getBalanceSheet(prevEnd);
