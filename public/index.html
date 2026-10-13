@@ -4261,6 +4261,7 @@ function bpCashReconciliation(rec, fromBalanceSheet) {
     : `Xero's balance sheet shows ${bpFmtMoney(rec.xero)} in the bank at month end. The bank summary closing balances total ${bpFmtMoney(rec.computed)}, a difference of ${bpFmtMoney(Math.abs(rec.difference))}. `;
   const why = large ? "That is bigger than currency valuation would normally explain, so treat these figures with caution until it is checked."
     : Math.abs(rec.difference) < 1 ? "They agree."
+    : Math.abs(rec.difference) <= 5 ? "They agree to within rounding."
     : "Small gaps are typically foreign-currency accounts valued at different rates.";
   return React.createElement("div", { style: { fontSize: 11, marginTop: 8, color: large ? "#c0392b" : INDIGO_MUTED, fontWeight: large ? 600 : 400 } }, base + why);
 }
@@ -4279,7 +4280,11 @@ function BpCashSection({ cash, cashError, cashLoading, periodComplete, info }) {
     // Without the bank summary, received and spent are unknown, and are left
     // out rather than shown as zero.
     const fromBS = cash.source === "balancesheet";
-    const odd = cash.accounts.filter((a) => !a.consistent).map((a) => a.name);
+    // Accounts the balance sheet does not list as bank accounts (usually credit
+    // cards) are shown apart, and are not part of the cash figures above them.
+    const cashAccounts = cash.accounts.filter((a) => a.countedAsCash !== false);
+    const otherAccounts = cash.accounts.filter((a) => a.countedAsCash === false);
+    const odd = cashAccounts.filter((a) => !a.consistent).map((a) => a.name);
     const th = (x, right) => React.createElement("th", { style: { textAlign: right ? "right" : "left", padding: "4px 6px", color: INDIGO_MUTED, fontWeight: 600, fontSize: 11 } }, x);
     const td = (x, right, bold) => React.createElement("td", { style: { textAlign: right ? "right" : "left", padding: "4px 6px", fontWeight: bold ? 700 : 400 } }, x);
     const signed = (n) => (Math.round(n) === 0 ? "£0" : `${n > 0 ? "+" : ""}${bpFmtMoney(n)}`);
@@ -4289,14 +4294,26 @@ function BpCashSection({ cash, cashError, cashLoading, periodComplete, info }) {
         !fromBS && React.createElement(BpKpi, { label: "Cash received", value: bpFmtMoney(t.received), color: VERDIGRIS }),
         !fromBS && React.createElement(BpKpi, { label: "Cash spent", value: bpFmtMoney(t.spent), color: MELON }),
         React.createElement(BpKpi, { label: "Net movement", value: signed(t.net), color: t.net >= 0 ? VERDIGRIS : "#c0392b" }),
+        // Foreign-currency accounts are revalued at month end, which is why opening plus net
+        // movement is not always closing. Shown, so the figures across this row add up.
+        !fromBS && typeof t.revaluation === "number" && Math.abs(t.revaluation) >= 1 && React.createElement(BpKpi, { label: "Revaluation and other", value: signed(t.revaluation), sub: "foreign accounts, at month end" }),
         React.createElement(BpKpi, { label: `Closing cash, ${cash.asAt.slice(8)} ${BP_MONTH_NAMES[parseInt(cash.asAt.slice(5, 7), 10) - 1]}`, value: bpFmtMoney(t.closing) })
       ),
-      cash.accounts.length > 0 && React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 12, fontFamily: "'Work Sans', sans-serif", color: INDIGO } },
+      cashAccounts.length > 0 && React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 12, fontFamily: "'Work Sans', sans-serif", color: INDIGO } },
         React.createElement("thead", null, React.createElement("tr", null, th("Bank account"), th("Opening", true), !fromBS && th("Received", true), !fromBS && th("Spent", true), th("Net", true), th("Closing", true))),
-        React.createElement("tbody", null, ...cash.accounts.map((a) => React.createElement("tr", { key: a.name, style: { borderTop: `1px solid ${INDIGO_HAIRLINE}` } },
+        React.createElement("tbody", null, ...cashAccounts.map((a) => React.createElement("tr", { key: a.name, style: { borderTop: `1px solid ${INDIGO_HAIRLINE}` } },
           td(a.consistent ? a.name : `${a.name} *`), td(bpFmtMoney(a.opening), true), !fromBS && td(bpFmtMoney(a.received), true), !fromBS && td(bpFmtMoney(a.spent), true), td(signed(a.net), true), td(bpFmtMoney(a.closing), true, true))))
       ),
+      otherAccounts.length > 0 && React.createElement("div", { style: { marginTop: 18 } },
+      otherAccounts.length > 0 && React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 12, fontFamily: "'Work Sans', sans-serif", color: INDIGO } },
+        React.createElement("thead", null, React.createElement("tr", null, th("Not counted as cash"), th("Opening", true), !fromBS && th("Received", true), !fromBS && th("Spent", true), th("Net", true), th("Closing", true))),
+        React.createElement("tbody", null, ...otherAccounts.map((a) => React.createElement("tr", { key: a.name, style: { borderTop: `1px solid ${INDIGO_HAIRLINE}` } },
+          td(a.name), td(bpFmtMoney(a.opening), true), !fromBS && td(bpFmtMoney(a.received), true), !fromBS && td(bpFmtMoney(a.spent), true), td(signed(a.net), true), td(bpFmtMoney(a.closing), true, true))))
+      ),
+        React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 6 } }, `${otherAccounts.map((a) => a.name).join(", ")} ${otherAccounts.length === 1 ? "is" : "are"} in Xero's bank summary but not in the bank section of its balance sheet, which is where credit cards usually sit, so ${otherAccounts.length === 1 ? "it is" : "they are"} not counted as cash above.`)
+      ),
       odd.length > 0 && React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 6 } }, `* Opening plus received minus spent does not equal closing for: ${odd.join(", ")}. Currency valuation on a foreign account is the usual cause.`),
+      !fromBS && cash.detection === "unavailable" && React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 6 } }, "Could not tell which accounts are cash (the balance sheet's bank accounts could not be read or matched), so every account in the bank summary is counted, credit cards included."),
       bpCashReconciliation(cash.reconciliation, fromBS),
       fromBS
         ? React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, marginTop: 8 } }, `Cash received and spent are not shown: ${cash.bankSummaryProblem}. Net movement is calculated from the balance sheet's bank balances on ${cash.openingDate} and ${cash.asAt}, so it includes any currency revaluation on foreign accounts.`)
