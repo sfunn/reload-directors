@@ -215,12 +215,22 @@ function carryForwardValue(byYear, year) {
 // be the sum of each year's own correctly-computed total, never one
 // calculation run across every deal under whichever year's bands
 // happen to apply.
-function computeCommissionForYear(consultantId, year, allRecords, allRates, placements, allSettings) {
+//
+// The last argument is optional and OFF by default, so every existing caller
+// behaves exactly as before. With includeExcludedProjects true, fees on an
+// excluded project (CitSec Options) are NOT filtered out. Only the payroll
+// "Commission Due" export passes it, because the incentive site's own
+// commission engine has never filtered those fees, and the two lists must
+// agree to the penny. Note it changes more than the amount on those fees:
+// commission is cumulative through the year's bands, so including them can
+// move later deals into a higher band too.
+function computeCommissionForYear(consultantId, year, allRecords, allRates, placements, allSettings, options = {}) {
+  const includeExcluded = !!(options && options.includeExcludedProjects);
   const personSettings = allSettings[consultantId] || {};
 
   if (COORDINATOR_IDS.has(consultantId)) {
     const flatRate = carryForwardValue(personSettings.flatRateByYear, year) || DEFAULT_FLAT_RATE;
-    const yearRecords = allRecords.filter((r) => effectiveYear(r, placements) === year && r.coordinatorId === consultantId && !isExcludedProjectRecord(r));
+    const yearRecords = allRecords.filter((r) => effectiveYear(r, placements) === year && r.coordinatorId === consultantId && (includeExcluded || !isExcludedProjectRecord(r)));
     const withOrderDate = yearRecords.map((r) => {
       const placement = r.placementId ? placements[r.placementId] : null;
       const orderDate = (placement && placement.startDate) || r.feeDate;
@@ -255,7 +265,7 @@ function computeCommissionForYear(consultantId, year, allRecords, allRates, plac
   const bands = carryForwardValue(personSettings.bandsByYear, year) || STANDARD_BANDS;
   const target = (personSettings.targets && personSettings.targets[year]) || null;
 
-  const yearRecords = allRecords.filter((r) => effectiveYear(r, placements) === year && r.consultantId === consultantId && !isExcludedProjectRecord(r));
+  const yearRecords = allRecords.filter((r) => effectiveYear(r, placements) === year && r.consultantId === consultantId && (includeExcluded || !isExcludedProjectRecord(r)));
   const withOrderDate = yearRecords.map((r) => {
     const placement = r.placementId ? placements[r.placementId] : null;
     const orderDate = (placement && placement.startDate) || r.feeDate;
@@ -301,6 +311,45 @@ function computeCommissionForYear(consultantId, year, allRecords, allRates, plac
   };
 }
 
+// Everyone who can be owed commission, in the order the incentive site lists
+// them: its ten consultants, then the two team leads, then the two
+// coordinators. This is a COPY of the roster, so it has to be updated here
+// if someone joins or leaves.
+const COMMISSION_DUE_PEOPLE = [
+  "alex-silverman", "ash-thiara", "jack-thompson", "max-hart", "oleg-sokyrka",
+  "alex-aparo", "jack-routledge", "joe-purton", "josh-davis", "natasha-barnard",
+  "james-lancer", "josh-stark",
+  "izzy-coordinator", "zoe-coordinator",
+];
+
+// Each person's commission actually payable in one calendar month (UTC), for
+// payroll. No new commission maths: it calls computeCommissionForYear and adds
+// up the instalments that land in the month. A deal belongs to the commission
+// year of its placement start date, but its instalments run from the month
+// AFTER the invoice was settled, so a deal counted in one year can pay out in
+// the next. Looking at the year before, the year itself and the year after
+// covers that. An instalment with no paid date, or one marked "withheld", is
+// not payable and is left out.
+function computeCommissionDue(year, month, allRecords, allRates, placements, allSettings) {
+  const people = [];
+  for (const consultantId of COMMISSION_DUE_PEOPLE) {
+    let dueAmount = 0;
+    for (const y of [year - 1, year, year + 1]) {
+      const result = computeCommissionForYear(consultantId, y, allRecords, allRates, placements, allSettings, { includeExcludedProjects: true });
+      for (const line of result.lines) {
+        for (const installment of line.payout) {
+          if (!installment.paidDate || installment.status === "withheld") continue;
+          const d = new Date(installment.paidDate);
+          if (d.getUTCFullYear() === year && d.getUTCMonth() + 1 === month) dueAmount += installment.amount;
+        }
+      }
+    }
+    if (dueAmount > 0.005) people.push({ consultantId, amountDueGBP: Math.round(dueAmount * 100) / 100 });
+  }
+  people.sort((a, b) => b.amountDueGBP - a.amountDueGBP);
+  return people;
+}
+
 module.exports = async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
@@ -313,6 +362,25 @@ module.exports = async (req, res) => {
 
   const director = await getDirectorFromRequest(req);
   if (!director) return res.status(401).json({ error: "Director access required." });
+
+  // Payroll export: everyone's commission due in one month. Any signed-in
+  // director may use it. It sits before the consultantId check because it is
+  // about everyone, not one person. Read-only.
+  if (req.query.action === "compute-all-due") {
+    const now = new Date();
+    const rawYear = req.query.year;
+    const rawMonth = req.query.month;
+    const year = rawYear === undefined || rawYear === "" ? now.getUTCFullYear() : (/^\d{4}$/.test(String(rawYear)) ? parseInt(rawYear, 10) : NaN);
+    const month = rawMonth === undefined || rawMonth === "" ? now.getUTCMonth() + 1 : (/^\d{1,2}$/.test(String(rawMonth)) ? parseInt(rawMonth, 10) : NaN);
+    if (isNaN(year)) return res.status(400).json({ error: "year must be a four digit year such as 2026." });
+    if (isNaN(month) || month < 1 || month > 12) return res.status(400).json({ error: "month must be a number from 1 to 12." });
+
+    const dueRecords = (await kv.get(RECORDS_KEY)) || [];
+    const dueRates = (await kv.get(FX_KEY)) || {};
+    const duePlacements = (await kv.get(PLACEMENTS_KEY)) || {};
+    const dueSettings = (await kv.get(SETTINGS_KEY)) || {};
+    return res.status(200).json({ year, month, people: computeCommissionDue(year, month, dueRecords, dueRates, duePlacements, dueSettings) });
+  }
 
   const consultantId = req.query.consultantId;
   if (!consultantId) return res.status(400).json({ error: "consultantId is required." });
@@ -345,3 +413,5 @@ module.exports = async (req, res) => {
 };
 
 module.exports.computeCommissionForYear = computeCommissionForYear;
+module.exports.computeCommissionDue = computeCommissionDue;
+module.exports.COMMISSION_DUE_PEOPLE = COMMISSION_DUE_PEOPLE;
