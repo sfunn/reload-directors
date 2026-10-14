@@ -1094,7 +1094,7 @@ const CONSULTANTS = [
   { id: "zoe-coordinator", name: "Alexandra (Coordinator)" },
 ].sort((a, b) => a.name.localeCompare(b.name));
 
-function CommissionPage({ token }) {
+function CommissionByConsultant({ token }) {
   const [consultantId, setConsultantId] = useState(CONSULTANTS[0].id);
   const [year, setYear] = useState(new Date().getUTCFullYear());
   const [data, setData] = useState(null);
@@ -1406,6 +1406,152 @@ function CommissionPage({ token }) {
     )
   );
 }
+
+// ===================== Commission Due (payroll export) =====================
+// Everyone owed commission in one chosen month, one total each, ready to paste into
+// an email to payroll. The names are the ones payroll already sees on the incentive
+// site: the CONSULTANTS names, with the coordinators as "Izzy" and "Alexandra" rather
+// than "Izzy (Coordinator)". An id that is not in the list shows as the id itself, so
+// a real person can never silently disappear from what gets sent.
+function commissionDueName(consultantId) {
+  const found = CONSULTANTS.find((c) => c.id === consultantId);
+  return found ? found.name.replace(/\s*\(Coordinator\)\s*$/, "") : consultantId;
+}
+// £ with thousand separators and always two decimals: "25,000.00" reads at a glance, "25000" does not.
+function commissionDueAmount(amount) {
+  return `£${amount.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+function commissionDueEscape(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+// Added in whole pence, so a total of amounts that are each already pennies cannot drift by a fraction.
+function commissionDueTotal(people) {
+  return people.reduce((sum, p) => sum + Math.round(p.amountDueGBP * 100), 0) / 100;
+}
+// What gets copied: the rows only, never the total. A real HTML table, because an email body is
+// not a monospace font, so tab stops cannot be trusted to line up, and a table always does. The
+// names in it are escaped. A tab-separated plain-text version rides along for anything that only
+// takes plain text.
+function commissionDueClipboard(people) {
+  const rows = people.map((p) => ({ name: commissionDueName(p.consultantId), amount: commissionDueAmount(p.amountDueGBP) }));
+  const html = `<table style="border-collapse:collapse;font-family:sans-serif;">${rows.map((r) => `<tr><td style="padding:2px 16px 2px 0;">${commissionDueEscape(r.name)}</td><td style="padding:2px 0;">${commissionDueEscape(r.amount)}</td></tr>`).join("")}</table>`;
+  const plain = rows.map((r) => `${r.name}\t${r.amount}`).join("\n");
+  return { html, plain };
+}
+
+function CommissionDuePanel({ token }) {
+  const now = new Date();
+  const thisYear = now.getUTCFullYear();
+  const [month, setMonth] = useState(now.getUTCMonth() + 1);
+  const [year, setYear] = useState(thisYear);
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [copyState, setCopyState] = useState("idle"); // idle | copied
+  const [copyError, setCopyError] = useState("");
+  // A request counter: if the month is changed while an earlier request is still loading, that
+  // older answer arrives late and must not overwrite the newer one.
+  const reqId = useRef(0);
+  const copyTimer = useRef(null);
+
+  useEffect(() => {
+    const id = ++reqId.current;
+    setLoading(true); setError(null);
+    (async () => {
+      try {
+        const res = await fetch(`/api/commission?action=compute-all-due&year=${year}&month=${month}`, { headers: { Authorization: `Bearer ${token}` } });
+        const body = await res.json().catch(() => null);
+        if (id !== reqId.current) return;
+        if (!res.ok || !body || !Array.isArray(body.people)) throw new Error((body && body.error) || "Couldn't load commission due.");
+        setData(body);
+      } catch (e) {
+        if (id !== reqId.current) return;
+        setError((e && e.message) || "Couldn't load commission due.");
+        setData(null);
+      } finally {
+        if (id === reqId.current) setLoading(false);
+      }
+    })();
+  }, [token, year, month]);
+  useEffect(() => () => { reqId.current++; if (copyTimer.current) clearTimeout(copyTimer.current); }, []);
+
+  async function copyForPayroll() {
+    if (!data || data.people.length === 0) return;
+    const { html, plain } = commissionDueClipboard(data.people);
+    setCopyError("");
+    try {
+      try {
+        if (!(window.ClipboardItem && navigator.clipboard && navigator.clipboard.write)) throw new Error("rich copy unavailable");
+        await navigator.clipboard.write([new ClipboardItem({ "text/html": new Blob([html], { type: "text/html" }), "text/plain": new Blob([plain], { type: "text/plain" }) })]);
+      } catch (richProblem) {
+        // No ClipboardItem here, or it was refused for the rich version: the plain list is still worth copying.
+        if (!(navigator.clipboard && navigator.clipboard.writeText)) throw richProblem;
+        await navigator.clipboard.writeText(plain);
+      }
+      setCopyState("copied");
+      if (copyTimer.current) clearTimeout(copyTimer.current);
+      copyTimer.current = setTimeout(() => setCopyState("idle"), 2000);
+    } catch (e) {
+      setCopyState("idle");
+      setCopyError("Your browser would not let this page copy to the clipboard. Select the list below and copy it by hand instead.");
+    }
+  }
+
+  const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  const years = [thisYear - 3, thisYear - 2, thisYear - 1, thisYear, thisYear + 1];
+  const rowLabel = { fontWeight: 600, color: INDIGO, fontSize: 14, width: 150, flexShrink: 0, whiteSpace: "nowrap" };
+  const rowAmount = { fontWeight: 700, color: INDIGO, fontSize: 15 };
+
+  return React.createElement(Panel, null,
+    React.createElement(SectionTitle, { title: "Commission Due" }),
+    React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 13, marginBottom: 16 } }, "Everyone's total commission actually due in one specific month, on one page. Pick a month, then copy and paste straight into an email to payroll."),
+    React.createElement("div", { style: { display: "flex", gap: 12, alignItems: "flex-end", marginBottom: 20, flexWrap: "wrap" } },
+      React.createElement("div", null,
+        React.createElement("label", { style: labelStyle }, "Month"),
+        React.createElement("select", { value: month, onChange: (e) => setMonth(Number(e.target.value)), style: inputStyle }, MONTH_NAMES.map((m, i) => React.createElement("option", { key: i, value: i + 1 }, m)))
+      ),
+      React.createElement("div", null,
+        React.createElement("label", { style: labelStyle }, "Year"),
+        React.createElement("select", { value: year, onChange: (e) => setYear(Number(e.target.value)), style: inputStyle }, years.map((y) => React.createElement("option", { key: y, value: y }, y)))
+      ),
+      data && data.people.length > 0 && !loading && React.createElement("button", {
+        onClick: copyForPayroll,
+        style: { ...ghostStyle, background: copyState === "copied" ? "rgba(142,185,176,0.25)" : undefined },
+      }, copyState === "copied" ? "Copied!" : "Copy for payroll")
+    ),
+    copyError && React.createElement("div", { style: { color: MELON_LINK, fontSize: 13, marginBottom: 12 } }, copyError),
+    loading ? React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Loading…")
+      : error ? React.createElement("div", { style: { color: MELON_LINK, fontSize: 13 } }, error)
+      : !data || data.people.length === 0 ? React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Nobody has any commission due this month.")
+      : React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 10 } },
+          data.people.map((p) => React.createElement("div", { key: p.consultantId, style: { display: "flex", alignItems: "baseline" } },
+            React.createElement("span", { style: rowLabel }, commissionDueName(p.consultantId)),
+            React.createElement("span", { style: rowAmount }, commissionDueAmount(p.amountDueGBP))
+          )),
+          React.createElement("div", { style: { display: "flex", alignItems: "baseline", marginTop: 6, paddingTop: 10, borderTop: `1px solid ${INDIGO_HAIRLINE}` } },
+            React.createElement("span", { style: { ...rowLabel, fontWeight: 700 } }, "Total"),
+            React.createElement("span", { style: rowAmount }, commissionDueAmount(commissionDueTotal(data.people)))
+          )
+        )
+  );
+}
+
+// The Commission tab: the existing page for one consultant, or the payroll list. The
+// consultant page stays MOUNTED but hidden while the list is open, so the consultant and
+// year already picked there are still there when you come back.
+function CommissionPage({ token }) {
+  const [view, setView] = useState("consultant"); // consultant | due
+  const chip = (active) => ({ ...chipStyle, background: active ? INDIGO : "rgba(46,64,91,0.06)", color: active ? WHITE : INDIGO, fontWeight: active ? 700 : 500 });
+  return React.createElement("div", null,
+    React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 } },
+      React.createElement("button", { onClick: () => setView("consultant"), style: chip(view === "consultant") }, "By consultant"),
+      React.createElement("button", { onClick: () => setView("due"), style: chip(view === "due") }, "Commission Due")
+    ),
+    React.createElement("div", { style: { display: view === "consultant" ? "block" : "none" }, "aria-hidden": view !== "consultant" }, React.createElement(CommissionByConsultant, { token })),
+    view === "due" && React.createElement(CommissionDuePanel, { token })
+  );
+}
+
 
 const STATS_CONSULTANT_NAMES = {
   "alex-silverman": "Alex Silverman", "ash-thiara": "Ash Thiara", "jack-thompson": "Jack Thompson",
