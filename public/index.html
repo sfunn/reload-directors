@@ -1453,6 +1453,13 @@ function CommissionDuePanel({ token }) {
   // older answer arrives late and must not overwrite the newer one.
   const reqId = useRef(0);
   const copyTimer = useRef(null);
+  // The year figures (total due, paid so far, left to pay, average rate). They depend on the
+  // year only, so they load separately and are NOT reloaded when the month changes. Their own
+  // counter keeps a slow answer for one year from landing on top of the next year's.
+  const [summary, setSummary] = useState(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryError, setSummaryError] = useState(null);
+  const sumReqId = useRef(0);
 
   useEffect(() => {
     const id = ++reqId.current;
@@ -1473,7 +1480,26 @@ function CommissionDuePanel({ token }) {
       }
     })();
   }, [token, year, month]);
-  useEffect(() => () => { reqId.current++; if (copyTimer.current) clearTimeout(copyTimer.current); }, []);
+  useEffect(() => {
+    const id = ++sumReqId.current;
+    setSummaryLoading(true); setSummaryError(null);
+    (async () => {
+      try {
+        const res = await fetch(`/api/commission?action=compute-year-summary&year=${year}`, { headers: { Authorization: `Bearer ${token}` } });
+        const body = await res.json().catch(() => null);
+        if (id !== sumReqId.current) return;
+        if (!res.ok || !body || typeof body.totalDueForYear !== "number") throw new Error((body && body.error) || "Couldn't load the year figures.");
+        setSummary(body);
+      } catch (e) {
+        if (id !== sumReqId.current) return;
+        setSummaryError((e && e.message) || "Couldn't load the year figures.");
+        setSummary(null);
+      } finally {
+        if (id === sumReqId.current) setSummaryLoading(false);
+      }
+    })();
+  }, [token, year]);
+  useEffect(() => () => { reqId.current++; sumReqId.current++; if (copyTimer.current) clearTimeout(copyTimer.current); }, []);
 
   async function copyForPayroll() {
     if (!data || data.people.length === 0) return;
@@ -1520,6 +1546,14 @@ function CommissionDuePanel({ token }) {
       }, copyState === "copied" ? "Copied!" : "Copy for payroll")
     ),
     copyError && React.createElement("div", { style: { color: MELON_LINK, fontSize: 13, marginBottom: 12 } }, copyError),
+    summaryLoading ? React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 13, marginBottom: 20 } }, `Loading the ${year} figures…`)
+      : summaryError ? React.createElement("div", { style: { color: MELON_LINK, fontSize: 13, marginBottom: 20 } }, summaryError)
+      : summary && summary.year === year && React.createElement("div", { style: { display: "flex", gap: 24, flexWrap: "wrap", marginBottom: 22, paddingBottom: 18, borderBottom: `1px solid ${INDIGO_HAIRLINE}` } },
+          React.createElement(BpKpi, { label: `Total commission due, ${year}`, value: commissionDueAmount(summary.totalDueForYear), sub: "every instalment dated in the year, withheld ones left out" }),
+          React.createElement(BpKpi, { label: "Commission paid YTD", value: commissionDueAmount(summary.paidYTD), sub: "instalments dated up to today", color: VERDIGRIS }),
+          React.createElement(BpKpi, { label: "Commission left to pay", value: commissionDueAmount(summary.leftToPay), sub: `the rest of ${year}`, color: MELON_LINK }),
+          React.createElement(BpKpi, { label: "Average commission, % of fees", value: summary.avgCommissionPct === null ? "n/a" : `${summary.avgCommissionPct.toFixed(1)}%`, sub: summary.avgCommissionPct === null ? `no deals counted in ${year}` : `${commissionDueAmount(summary.commissionBaseGBP)} on ${commissionDueAmount(summary.feesBaseGBP)} of fees counted in ${year}, consultants and team leads` })
+        ),
     loading ? React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Loading…")
       : error ? React.createElement("div", { style: { color: MELON_LINK, fontSize: 13 } }, error)
       : !data || data.people.length === 0 ? React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Nobody has any commission due this month.")
