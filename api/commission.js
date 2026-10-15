@@ -377,37 +377,33 @@ function computeFeeRevenueForYear(year, allRecords, placements, allRates, overri
   return { allGBP, countedGBP, excluded };
 }
 
-// The year figures shown above the monthly list. Same instalment data as the list, so they
-// always tie back to it: every instalment dated in the chosen calendar year (withheld ones
-// left out), how much of that is dated on or before "now", and what is still to come. A fee
-// with no settled invoice has no payment date yet, so it is not in any of these until it is.
+// The year figures shown above the monthly list. They describe the deals that STARTED in the
+// year, the same deals the average rate is worked on, and not what happens to fall on payroll
+// in that calendar year (the monthly list is that view):
+//   total      = all the commission on those deals, paid or not, instalments in later years too
+//   paid so far = their instalments dated on or before "now" (a withheld instalment is not paid)
+//   left to pay = total minus paid: deals not yet paid, instalments still to come, and anything withheld
+// Coordinators' flat fees on those deals are in the total, and reported separately so the total
+// can be tied to the consultants and team leads figure the rate uses.
 //
-// The average rate is a different question: commission on every deal COUNTED in the year (by
-// placement start date, whether or not it has been paid yet), divided by the fee revenue of
-// those same deals, so payment timing cannot distort it. Consultants and team leads only: a
-// coordinator's flat fee is not a share of any fee, and people who are not paid commission are
-// taken out of the revenue. It is one pooled rate (total commission over total revenue), not an
-// average of each person's rate. The commission side is worked on the recorded fees, as it
-// always is, while the revenue side is the Company page's figure with its uplift, because
-// that is what the business actually earns. CitSec Options is out of both sides, as it is on
-// the Company page, so the two sides always describe the same deals.
+// The average rate is commission on those deals divided by the fee revenue of those same deals,
+// so payment timing cannot distort it. Consultants and team leads only: a coordinator's flat fee
+// is not a share of any fee, and people who are not paid commission are taken out of the revenue.
+// It is one pooled rate (total commission over total revenue), not an average of each person's
+// rate. The commission side is worked on the recorded fees, as it always is, while the revenue
+// side is the Company page's figure with its uplift, because that is what the business actually
+// earns. CitSec Options is out of every side, as it is on the Company page, so they all describe
+// the same deals.
 function computeCommissionYearSummary(year, now, allRecords, allRates, placements, allSettings, overrides) {
-  let total = 0, paid = 0, commissionBase = 0;
+  let total = 0, paid = 0, commissionBase = 0, coordinatorTotal = 0;
   for (const consultantId of COMMISSION_DUE_PEOPLE) {
-    for (const y of [year - 1, year, year + 1]) {
-      const result = computeCommissionForYear(consultantId, y, allRecords, allRates, placements, allSettings, { includeExcludedProjects: true });
-      for (const line of result.lines) {
-        for (const installment of line.payout) {
-          if (!installment.paidDate || installment.status === "withheld") continue;
-          const d = new Date(installment.paidDate);
-          if (d.getUTCFullYear() !== year) continue;
-          total += installment.amount;
-          if (d.getTime() <= now.getTime()) paid += installment.amount;
-        }
-      }
-      if (y === year) {
-        const forRate = computeCommissionForYear(consultantId, y, allRecords, allRates, placements, allSettings);
-        if (!forRate.isCoordinator) commissionBase += forRate.totalCommission;
+    const result = computeCommissionForYear(consultantId, year, allRecords, allRates, placements, allSettings);
+    total += result.totalCommission;
+    if (result.isCoordinator) coordinatorTotal += result.totalCommission; else commissionBase += result.totalCommission;
+    for (const line of result.lines) {
+      for (const installment of line.payout) {
+        if (!installment.paidDate || installment.status === "withheld") continue;
+        if (new Date(installment.paidDate).getTime() <= now.getTime()) paid += installment.amount;
       }
     }
   }
@@ -420,6 +416,7 @@ function computeCommissionYearSummary(year, now, allRecords, allRates, placement
     paidYTD: paidPence / 100,
     // worked from the two rounded figures, so what is on screen always adds up
     leftToPay: (totalPence - paidPence) / 100,
+    coordinatorCommissionGBP: pence(coordinatorTotal) / 100,
     avgCommissionPct: revenue.countedGBP > 0 ? Math.round((commissionBase / revenue.countedGBP) * 10000) / 100 : null,
     commissionBaseGBP: pence(commissionBase) / 100,
     feeRevenueGBP: pence(revenue.countedGBP) / 100,
