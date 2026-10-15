@@ -1,5 +1,5 @@
 const { getDirectorFromRequest, kv } = require("./_directorAuth");
-const { isExcludedProjectRecord } = require("./_dealRevenueUplift");
+const { isExcludedProjectRecord, resolvedRevenueGBP, getOverrides } = require("./_dealRevenueUplift");
 
 // ============================================================================
 // Everything below is a direct, deliberate port of the incentive site's own
@@ -350,19 +350,49 @@ function computeCommissionDue(year, month, allRecords, allRates, placements, all
   return people;
 }
 
+// Fee revenue for one year, counted EXACTLY as the Company Overview counts its "Fee revenue,
+// starters" figure: the same shared revenue function (so the revenue-only uplift on Citadel,
+// Jane Street, Virtu and PDT, and any manual corrections, are in it), records dated by
+// placement start, CitSec Options left out, anything that cannot convert to GBP skipped. That
+// is the figure to divide commission by, so the rate ties to the number shown on the Company
+// page. The people who are not paid commission (Lee, say) are taken out of it and listed, so
+// the difference to the Company page figure is always visible and never silent.
+function computeFeeRevenueForYear(year, allRecords, placements, allRates, overrides, commissionedIds) {
+  let allGBP = 0, countedGBP = 0;
+  const left = {};
+  for (const r of allRecords) {
+    if (effectiveYear(r, placements) !== year || isExcludedProjectRecord(r)) continue;
+    const placement = r.placementId ? placements[r.placementId] : null;
+    const client = (placement && placement.clientCompanyName) || r.projectClientName || "Unknown";
+    const hasPlacementName = !!(placement && placement.candidateName);
+    const gbp = resolvedRevenueGBP(r, client, year, overrides, hasPlacementName, allRates);
+    if (gbp === null) continue;
+    allGBP += gbp;
+    if (commissionedIds.has(r.consultantId)) { countedGBP += gbp; continue; }
+    const key = r.consultantId || "unknown";
+    if (!left[key]) left[key] = { consultantId: key, name: r.consultantName || key, revenueGBP: 0 };
+    left[key].revenueGBP += gbp;
+  }
+  const excluded = Object.values(left).map((e) => ({ ...e, revenueGBP: Math.round(e.revenueGBP * 100) / 100 })).sort((x, y) => y.revenueGBP - x.revenueGBP);
+  return { allGBP, countedGBP, excluded };
+}
+
 // The year figures shown above the monthly list. Same instalment data as the list, so they
 // always tie back to it: every instalment dated in the chosen calendar year (withheld ones
 // left out), how much of that is dated on or before "now", and what is still to come. A fee
 // with no settled invoice has no payment date yet, so it is not in any of these until it is.
 //
 // The average rate is a different question: commission on every deal COUNTED in the year (by
-// placement start date, whether or not it has been paid yet), divided by those deals' fees,
-// so payment timing cannot distort it. Consultants and team leads only: a coordinator's flat
-// fee is not a share of any fee. It is one pooled rate (total commission over total fees), not
-// an average of each person's rate, and the fees are the commissionable ones the engine uses,
-// so a special uplift on a deal sits inside both the commission and the fee.
-function computeCommissionYearSummary(year, now, allRecords, allRates, placements, allSettings) {
-  let total = 0, paid = 0, commissionBase = 0, feesBase = 0;
+// placement start date, whether or not it has been paid yet), divided by the fee revenue of
+// those same deals, so payment timing cannot distort it. Consultants and team leads only: a
+// coordinator's flat fee is not a share of any fee, and people who are not paid commission are
+// taken out of the revenue. It is one pooled rate (total commission over total revenue), not an
+// average of each person's rate. The commission side is worked on the recorded fees, as it
+// always is, while the revenue side is the Company page's figure with its uplift, because
+// that is what the business actually earns. CitSec Options is out of both sides, as it is on
+// the Company page, so the two sides always describe the same deals.
+function computeCommissionYearSummary(year, now, allRecords, allRates, placements, allSettings, overrides) {
+  let total = 0, paid = 0, commissionBase = 0;
   for (const consultantId of COMMISSION_DUE_PEOPLE) {
     for (const y of [year - 1, year, year + 1]) {
       const result = computeCommissionForYear(consultantId, y, allRecords, allRates, placements, allSettings, { includeExcludedProjects: true });
@@ -375,9 +405,14 @@ function computeCommissionYearSummary(year, now, allRecords, allRates, placement
           if (d.getTime() <= now.getTime()) paid += installment.amount;
         }
       }
-      if (y === year && !result.isCoordinator) { commissionBase += result.totalCommission; feesBase += result.totalGBP; }
+      if (y === year) {
+        const forRate = computeCommissionForYear(consultantId, y, allRecords, allRates, placements, allSettings);
+        if (!forRate.isCoordinator) commissionBase += forRate.totalCommission;
+      }
     }
   }
+  const feeEarners = new Set(COMMISSION_DUE_PEOPLE.filter((id) => !/-coordinator$/.test(id)));
+  const revenue = computeFeeRevenueForYear(year, allRecords, placements, allRates, overrides || {}, feeEarners);
   const pence = (n) => Math.round(n * 100);
   const totalPence = pence(total), paidPence = pence(paid);
   return {
@@ -385,9 +420,11 @@ function computeCommissionYearSummary(year, now, allRecords, allRates, placement
     paidYTD: paidPence / 100,
     // worked from the two rounded figures, so what is on screen always adds up
     leftToPay: (totalPence - paidPence) / 100,
-    avgCommissionPct: feesBase > 0 ? Math.round((commissionBase / feesBase) * 10000) / 100 : null,
+    avgCommissionPct: revenue.countedGBP > 0 ? Math.round((commissionBase / revenue.countedGBP) * 10000) / 100 : null,
     commissionBaseGBP: pence(commissionBase) / 100,
-    feesBaseGBP: pence(feesBase) / 100,
+    feeRevenueGBP: pence(revenue.countedGBP) / 100,
+    feeRevenueAllGBP: pence(revenue.allGBP) / 100,
+    feeRevenueExcluded: revenue.excluded,
   };
 }
 
@@ -433,7 +470,8 @@ module.exports = async (req, res) => {
     const sumRates = (await kv.get(FX_KEY)) || {};
     const sumPlacements = (await kv.get(PLACEMENTS_KEY)) || {};
     const sumSettings = (await kv.get(SETTINGS_KEY)) || {};
-    return res.status(200).json({ year, asOf: now.toISOString(), ...computeCommissionYearSummary(year, now, sumRecords, sumRates, sumPlacements, sumSettings) });
+    const sumOverrides = await getOverrides();
+    return res.status(200).json({ year, asOf: now.toISOString(), ...computeCommissionYearSummary(year, now, sumRecords, sumRates, sumPlacements, sumSettings, sumOverrides) });
   }
 
   const consultantId = req.query.consultantId;
@@ -470,3 +508,4 @@ module.exports.computeCommissionForYear = computeCommissionForYear;
 module.exports.computeCommissionDue = computeCommissionDue;
 module.exports.COMMISSION_DUE_PEOPLE = COMMISSION_DUE_PEOPLE;
 module.exports.computeCommissionYearSummary = computeCommissionYearSummary;
+module.exports.computeFeeRevenueForYear = computeFeeRevenueForYear;
