@@ -1421,6 +1421,10 @@ function commissionDueName(consultantId) {
 function commissionDueAmount(amount) {
   return `£${amount.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
+// Whole pounds, as the Company page shows its fee revenue.
+function commissionDueWhole(amount) {
+  return `£${Math.round(amount).toLocaleString("en-GB")}`;
+}
 function commissionDueEscape(s) {
   return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
@@ -1551,8 +1555,8 @@ function CommissionDuePanel({ token }) {
       : summary && summary.year === year && React.createElement("div", { style: { display: "flex", gap: 24, flexWrap: "wrap", marginBottom: 22, paddingBottom: 18, borderBottom: `1px solid ${INDIGO_HAIRLINE}` } },
           React.createElement(BpKpi, { label: `Total commission due, ${year}`, value: commissionDueAmount(summary.totalDueForYear), sub: "every instalment dated in the year, withheld ones left out" }),
           React.createElement(BpKpi, { label: "Commission paid YTD", value: commissionDueAmount(summary.paidYTD), sub: "instalments dated up to today", color: VERDIGRIS }),
-          React.createElement(BpKpi, { label: "Commission left to pay", value: commissionDueAmount(summary.leftToPay), sub: `the rest of ${year}`, color: MELON_LINK }),
-          React.createElement(BpKpi, { label: "Average commission, % of fees", value: summary.avgCommissionPct === null ? "n/a" : `${summary.avgCommissionPct.toFixed(1)}%`, sub: summary.avgCommissionPct === null ? `no deals counted in ${year}` : `${commissionDueAmount(summary.commissionBaseGBP)} on ${commissionDueAmount(summary.feesBaseGBP)} of fees counted in ${year}, consultants and team leads` })
+          React.createElement(BpKpi, { label: "Commission left to pay", value: commissionDueAmount(summary.leftToPay), sub: `already scheduled for the rest of ${year}, more will follow as deals settle`, color: MELON_LINK }),
+          React.createElement(BpKpi, { label: "Average commission, % of fee revenue", value: summary.avgCommissionPct === null ? "n/a" : `${summary.avgCommissionPct.toFixed(1)}%`, sub: summary.avgCommissionPct === null ? `no fee revenue counted for ${year}` : `${commissionDueWhole(summary.commissionBaseGBP)} commission on ${commissionDueWhole(summary.feeRevenueGBP)} of ${year} fee revenue (the Company page's ${commissionDueWhole(summary.feeRevenueAllGBP)}${summary.feeRevenueExcluded.length ? `, less ${commissionDueWhole(summary.feeRevenueExcluded.reduce((s, e) => s + e.revenueGBP, 0))} for ${summary.feeRevenueExcluded.map((e) => e.name).join(", ")}` : ""})` })
         ),
     loading ? React.createElement("div", { style: { color: INDIGO_MUTED, fontSize: 14 } }, "Loading…")
       : error ? React.createElement("div", { style: { color: MELON_LINK, fontSize: 13 } }, error)
@@ -3994,7 +3998,10 @@ function bpPlTotals(months) {
 // A month's accounts are rarely final the day it ends: payroll, commission
 // and other accruals are often booked afterwards, which flatters profit.
 // Rather than rely on anyone remembering, the pack says so for a while.
-const BP_PROVISIONAL_DAYS = 15;
+// A month is never formally closed. The accountant keeps posting adjustments (foreign exchange,
+// depreciation, tax) for up to a month and a week after it ends: until the 7th of the month after
+// next. September can still change until 7 November. So a figure is provisional until then.
+function bpAdjustmentDeadline(year, monthNum) { return Date.UTC(year, monthNum + 1, 7); }
 function bpDaysSinceMonthEnd(year, monthNum, now) {
   const monthEnd = Date.UTC(year, monthNum, 0);
   const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
@@ -4005,7 +4012,8 @@ function bpProvisionalNotice(year, monthNum, now, label) {
   const d = bpDaysSinceMonthEnd(year, monthNum, now);
   const name = label || BP_MONTH_NAMES[monthNum - 1];
   if (d <= 0) return `${name} has not ended. Figures are to date and incomplete.`;
-  if (d < BP_PROVISIONAL_DAYS) return `Provisional. ${name} ended ${d} ${d === 1 ? "day" : "days"} ago and the books may not be closed yet. Costs, accruals and commissions are often booked after month end, so profit can look better than it will once they are.`;
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  if (today <= bpAdjustmentDeadline(year, monthNum)) return `Provisional. ${name} ended ${d} ${d === 1 ? "day" : "days"} ago. Your accountant can still post adjustments (foreign exchange, depreciation and tax) until 7 ${BP_MONTH_NAMES[(monthNum + 1) % 12]}, so profit can still move.`;
   return null;
 }
 
@@ -4845,7 +4853,9 @@ function BoardPackPage({ token }) {
       React.createElement(BpDebtorsSection, { aged, agedError, agedLoading }),
 
       React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, lineHeight: 1.5 } },
-        "Basis of preparation: revenue is on an Atlas placement basis, dated by start date where one exists, and includes the agreed uplift rules. Rebates are only reflected in revenue if Atlas records them as negative fees. Profit, cost, cash, debtor and creditor figures are taken from Xero. The two sources are not reconciled to each other, so margins should not be calculated across them.")
+        "Basis of preparation: revenue is on an Atlas placement basis, dated by start date where one exists, and includes the agreed uplift rules. Rebates are only reflected in revenue if Atlas records them as negative fees. Profit, cost, cash, debtor and creditor figures are taken from Xero. The two sources are not reconciled to each other, so margins should not be calculated across them."),
+      React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED, lineHeight: 1.5, marginTop: 8 } },
+        "Staff costs and EBITDA: salaries and commission are booked in Xero as expenses (wages and salaries), not cost of sales, so gross profit is not net of staff costs. Commission is expensed in the month it is paid through payroll, which is after the fee is invoiced, so profit looks better in the months before the related commission has been paid. EBITDA is as reported (net profit plus depreciation, interest and tax) and is not adjusted for director pay or personal costs.")
     )
   );
 }
