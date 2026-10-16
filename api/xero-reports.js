@@ -1,4 +1,5 @@
 const { getDirectorFromRequest, kv } = require("./_directorAuth");
+const { buildPeopleDirectory, assertNoNames, isStaffCostLabel, isDebtLabel } = require("./_exportHelpers");
 const { saveManualMetricForPeriod, normalizeYearMetrics, MANUAL_METRICS_KEY } = require("./_manualMetricsStore");
 // Tracks the automated daily pull's own health, separate from any
 // individual pull's result — read by Company Overview to show a
@@ -51,17 +52,17 @@ function buildAutoPullSaveFields(pulled) {
   return fields;
 }
 
-// How many days into a new month (or quarter) the period that just
-// ended keeps getting refreshed. Month-end journals, late bills and
-// accruals land in Xero days after a period closes, so a figure frozen
-// at whatever Xero showed on the last day is not the final figure, and
-// a board pack built from it would be wrong.
-const CATCH_UP_DAYS = 30;
+// The day of the month, two months on, up to which the accountant can still
+// post adjustments (foreign exchange, depreciation, tax) to a month. A month
+// is never formally closed: it can change for up to a month and a week after
+// it ends, so September can still move until 7 November. A figure frozen at
+// whatever Xero showed on the last day is not the final figure, and a board
+// pack built from it would be wrong.
+const ACCOUNTANT_ADJUSTMENT_DAY = 7;
 
-// Which periods one daily run refreshes: always the current month and
-// current quarter, plus, during the catch-up window, the month that
-// just ended and (when a new quarter has just started) the quarter that
-// just ended. Pure function of the date, so it can be tested directly.
+// Which periods one daily run refreshes: always the current month, quarter and
+// year, plus every month still open to adjustments and any quarter or year
+// that month completes. Pure function of the date, so it can be tested directly.
 function autoPullTargets(now) {
   const pad = (n) => String(n).padStart(2, "0");
   const y = now.getUTCFullYear();
@@ -76,15 +77,19 @@ function autoPullTargets(now) {
     { year: y, period: "quarter", month: null, quarter: `Q${Math.floor(m / 3) + 1}` },
     { year: y, period: "year", month: null, quarter: null },
   ];
-  if (d <= CATCH_UP_DAYS) {
-    const prevMonthIdx = m === 0 ? 11 : m - 1;
-    const prevYear = m === 0 ? y - 1 : y;
-    targets.push({ year: prevYear, period: "month", month: pad(prevMonthIdx + 1), quarter: null });
-    if (m % 3 === 0) {
-      targets.push({ year: prevYear, period: "quarter", month: null, quarter: `Q${Math.floor(prevMonthIdx / 3) + 1}` });
-    }
-    // In January the year that just ended is still being finalised.
-    if (m === 0) targets.push({ year: prevYear, period: "year", month: null, quarter: null });
+  // A month is never formally closed. The accountant keeps posting adjustments
+  // (foreign exchange, depreciation, tax) for up to a month and a week after it
+  // ends: until the 7th of the month after next, so September can still change
+  // until 7 November. That means last month is always still open, and the month
+  // before it stays open for the first seven days of this one. A quarter or a
+  // year is open for exactly as long as its last month is.
+  const stillOpen = (monthsBack) => monthsBack === 1 || (monthsBack === 2 && d <= ACCOUNTANT_ADJUSTMENT_DAY);
+  const monthBack = (n) => (m - n >= 0 ? { year: y, idx: m - n } : { year: y - 1, idx: m - n + 12 });
+  const open = [1, 2].filter(stillOpen).map(monthBack);
+  for (const p of open) targets.push({ year: p.year, period: "month", month: pad(p.idx + 1), quarter: null });
+  for (const p of open) {
+    if (p.idx % 3 === 2) targets.push({ year: p.year, period: "quarter", month: null, quarter: `Q${Math.floor(p.idx / 3) + 1}` });
+    if (p.idx === 11) targets.push({ year: p.year, period: "year", month: null, quarter: null });
   }
   return targets;
 }
@@ -764,6 +769,171 @@ function cashMovementFromBalanceSheets(openingReport, closingReport) {
   };
 }
 
+// ---- Export Deck Data (Xero tabs) -----------------------------------------
+// Three read-only actions feed the Excel export. They sit behind the same director
+// login as everything else in this file. Names are scrubbed to initials here, on the
+// server, and a final check refuses to answer if any real name is still in the result,
+// so a missed scrub stops the export instead of shipping a name.
+
+const EXPORT_TOTAL_NAMES = new Set(["gross profit", "net profit", "net profit/(loss)", "net income", "net loss", "net assets", "net current assets", "net assets (liabilities)", "net liabilities", "operating profit"]);
+const isExportTotalLabel = (label) => /^total\b/i.test(String(label).trim()) || EXPORT_TOTAL_NAMES.has(String(label).trim().toLowerCase());
+
+// An amount as a report cell shows it: plain ("1234.56"), with thousands separators
+// ("1,234.56"), with a currency sign, or a bracketed negative ("(1,234.56)"). Anything else is
+// null, never a guess.
+function parseReportAmount(raw) {
+  if (raw === null || raw === undefined) return null;
+  let t = String(raw).trim();
+  if (t === "") return null;
+  const bracketed = /^\(.*\)$/.test(t);
+  t = t.replace(/[()£$€,\s]/g, "");
+  if (!/^-?\d+(\.\d+)?$/.test(t)) return null;
+  const n = Number(t);
+  return bracketed ? -Math.abs(n) : n;
+}
+
+// Same walk as collectAllLines, but tolerant of how an amount is written, so a report that
+// formats numbers with separators gives its lines instead of silently giving none.
+function collectExportRows(rows, currentSection) {
+  const out = [];
+  if (!Array.isArray(rows)) return out;
+  for (const row of rows) {
+    const sectionName = row.RowType === "Section" && row.Title ? row.Title : currentSection;
+    if (row.Cells && row.Cells[0] && typeof row.Cells[0].Value === "string" && row.Cells[0].Value.trim() !== "") {
+      const amount = parseReportAmount(row.Cells[1] ? row.Cells[1].Value : null);
+      if (amount !== null) out.push({ section: sectionName || null, label: row.Cells[0].Value.trim(), value: amount });
+    }
+    if (Array.isArray(row.Rows)) out.push(...collectExportRows(row.Rows, sectionName));
+  }
+  return out;
+}
+
+// Every line of one report, as {section, label, amount, kind}. With dropStaffCosts, lines
+// that are pay (wages, salaries, commission and what goes with them) are removed and only
+// their NAMES are reported back, so what was left out can be checked. A reported TOTAL is
+// kept as Xero reports it, so profit still reflects those costs.
+function exportLinesFromReport(report, directory, dropStaffCosts) {
+  const rows = report && Array.isArray(report.Rows) ? report.Rows : [];
+  const lines = [];
+  const excluded = [];
+  for (const l of collectExportRows(rows, null)) {
+    const total = isExportTotalLabel(l.label);
+    if (dropStaffCosts && !total && isStaffCostLabel(l.label)) { excluded.push(directory.scrub(l.label)); continue; }
+    lines.push({ section: l.section ? directory.scrub(l.section) : null, label: directory.scrub(l.label), amount: l.value, kind: total ? "total" : "line" });
+  }
+  return { lines, excluded };
+}
+
+// Invoices (or bills) of one type that fell due on or after fromDate, paid or not, with
+// everything on them, because a paid invoice's paid date is not in the summary view.
+async function fetchInvoicesDueSince(type, fromDate, xeroHeaders) {
+  const MAX_PAGES = 40;
+  const [yy, mm, dd] = fromDate.split("-").map(Number);
+  const where = encodeURIComponent(`Type=="${type}" AND (Status=="AUTHORISED" OR Status=="PAID") AND DueDate>=DateTime(${yy},${mm},${dd})`);
+  const invoices = [];
+  let truncated = false;
+  for (let page = 1; page <= MAX_PAGES; page++) {
+    const r = await fetch(`https://api.xero.com/api.xro/2.0/Invoices?where=${where}&page=${page}`, { headers: xeroHeaders });
+    if (!r.ok) {
+      const body = await r.text();
+      console.error("[xero-reports] export invoices fetch failed:", { type, page, status: r.status, body });
+      return { error: r.status === 429 ? "Xero is rate limiting requests right now. Try again in a minute." : `Xero rejected the invoices request (${xeroFailureDetail(r.status, body)}).` };
+    }
+    const data = await r.json();
+    const batch = Array.isArray(data.Invoices) ? data.Invoices : [];
+    invoices.push(...batch);
+    if (batch.length < 100) break;
+    if (page === MAX_PAGES) truncated = true;
+  }
+  return { invoices, truncated };
+}
+
+// Aged receivables by customer, and every invoice more than 30 days overdue. Customers
+// are Debtor 1, 2, 3 (largest balance first), never their names. An invoice counts as
+// "more than 30 days overdue" if it fell due in the last 12 months and was paid more than
+// 30 days after its due date, or is still unpaid more than 30 days after it. An unpaid
+// invoice more than 30 days overdue counts whenever it fell due.
+function buildReceivablesExport(unpaid, dueSince, asAt, windowFrom, directory) {
+  const base = "GBP";
+  const day = (s) => Date.parse(`${s}T00:00:00Z`);
+  const diffDays = (later, earlier) => Math.round((day(later) - day(earlier)) / 86400000);
+  const toGbp = (amount, inv) => {
+    const cur = inv.CurrencyCode || base;
+    if (cur === base) return amount;
+    const rate = Number(inv.CurrencyRate);
+    return rate > 0 ? amount / rate : null;
+  };
+  const nameOf = (inv) => (inv.Contact && inv.Contact.Name) || "Unknown";
+  const emptyBuckets = () => ({ current: 0, d1_30: 0, d31_60: 0, d61_90: 0, older: 0, total: 0 });
+
+  const byContact = {};
+  const totals = emptyBuckets();
+  const diagnostics = { unpaidInvoices: 0, missingRate: 0, missingPaidDate: 0 };
+  const lateRaw = [];
+  const seen = new Set();
+
+  for (const inv of unpaid || []) {
+    const due = Number(inv.AmountDue);
+    if (!(due > 0)) continue;
+    diagnostics.unpaidInvoices++;
+    const dueStr = parseXeroDate(inv.DueDateString || inv.DueDate) || parseXeroDate(inv.DateString || inv.Date) || asAt;
+    const daysOverdue = diffDays(asAt, dueStr);
+    const bucket = ageBucketFor(daysOverdue);
+    const gbp = toGbp(due, inv);
+    if (gbp === null) { diagnostics.missingRate++; } else {
+      const name = nameOf(inv);
+      if (!byContact[name]) byContact[name] = emptyBuckets();
+      byContact[name][bucket] += gbp; byContact[name].total += gbp;
+      totals[bucket] += gbp; totals.total += gbp;
+    }
+    if (daysOverdue > 30 && dueStr < windowFrom) {
+      seen.add(inv.InvoiceID || inv.InvoiceNumber);
+      lateRaw.push({ name: nameOf(inv), inv, dueStr, paidStr: null, daysLate: daysOverdue });
+    }
+  }
+  for (const inv of dueSince || []) {
+    const key = inv.InvoiceID || inv.InvoiceNumber;
+    const dueStr = parseXeroDate(inv.DueDateString || inv.DueDate);
+    if (!dueStr || dueStr < windowFrom || seen.has(key)) continue;
+    let paidStr = null, daysLate;
+    if (inv.Status === "PAID") {
+      paidStr = parseXeroDate(inv.FullyPaidOnDateString || inv.FullyPaidOnDate);
+      if (!paidStr) { diagnostics.missingPaidDate++; continue; }
+      daysLate = diffDays(paidStr, dueStr);
+    } else {
+      if (!(Number(inv.AmountDue) > 0)) continue;
+      daysLate = diffDays(asAt, dueStr);
+    }
+    if (daysLate > 30) { seen.add(key); lateRaw.push({ name: nameOf(inv), inv, dueStr, paidStr, daysLate }); }
+  }
+
+  // Debtor numbers: largest current balance first, then biggest late value, then name.
+  const lateValueBy = {};
+  for (const l of lateRaw) lateValueBy[l.name] = (lateValueBy[l.name] || 0) + (toGbp(Number(l.inv.Total), l.inv) || 0);
+  const names = [...new Set([...Object.keys(byContact), ...lateRaw.map((l) => l.name)])]
+    .sort((a, b) => ((byContact[b] ? byContact[b].total : 0) - (byContact[a] ? byContact[a].total : 0)) || ((lateValueBy[b] || 0) - (lateValueBy[a] || 0)) || a.localeCompare(b));
+  const label = {};
+  names.forEach((n, i) => { label[n] = `Debtor ${i + 1}`; });
+
+  const contacts = Object.keys(byContact).map((n) => ({ debtor: label[n], ...byContact[n] })).sort((a, b) => b.total - a.total);
+  const lateInvoices = lateRaw.map((l) => {
+    const total = Number(l.inv.Total);
+    const currency = l.inv.CurrencyCode || base;
+    return {
+      debtor: label[l.name],
+      invoiceDate: parseXeroDate(l.inv.DateString || l.inv.Date),
+      dueDate: l.dueStr,
+      paidDate: l.paidStr,
+      daysLate: l.daysLate,
+      state: l.paidStr ? "Paid late" : "Still unpaid",
+      value: total,
+      currency,
+      valueGBP: toGbp(total, l.inv),
+    };
+  }).sort((a, b) => (a.dueDate < b.dueDate ? 1 : a.dueDate > b.dueDate ? -1 : 0));
+  return { asAt, windowFrom, baseCurrency: base, aged: { totals, contacts }, lateInvoices, diagnostics };
+}
+
 module.exports = async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -910,6 +1080,109 @@ module.exports = async (req, res) => {
     "Xero-tenant-id": tenantId,
     Accept: "application/json",
   };
+
+  // ---- Export Deck Data: three read-only actions, same director login as the rest of this file ----
+  const exportFailure = (e, what) => {
+    console.error(`[xero-reports] ${what} error:`, e);
+    return { status: 500, body: { error: e && /^Export blocked/.test(e.message) ? e.message : `Something went wrong building the ${what}. Check the Vercel logs for details.` } };
+  };
+
+  if (req.query.action === "export-pl-lines") {
+    const exYear = parseInt(req.query.year, 10);
+    if (!(exYear >= 2000 && exYear <= 2100)) return res.status(400).json({ error: "A valid year is required." });
+    const today = new Date().toISOString().slice(0, 10);
+    if (today < `${exYear}-01-01`) return res.status(400).json({ error: "That year hasn't started yet." });
+    // Complete months only, as everywhere else on this site.
+    const thisYear = parseInt(today.slice(0, 4), 10);
+    const lastCompleteMonth = exYear < thisYear ? 12 : parseInt(today.slice(5, 7), 10) - 1;
+    const pad2 = (n) => String(n).padStart(2, "0");
+    const monthKeys = Array.from({ length: Math.max(lastCompleteMonth, 0) }, (_, i) => `${exYear}-${pad2(i + 1)}`);
+    try {
+      const directory = buildPeopleDirectory((await kv.get("atlas-fee-records")) || []);
+      const rates = (await kv.get("atlas-fx-rates")) || {};
+      const fetched = await mapWithConcurrency(monthKeys, 3, async (mk) => {
+        const [yy, mm] = mk.split("-").map(Number);
+        const lastDay = new Date(Date.UTC(yy, mm, 0)).getUTCDate();
+        const r = await fetch(`https://api.xero.com/api.xro/2.0/Reports/ProfitAndLoss?fromDate=${mk}-01&toDate=${mk}-${pad2(lastDay)}`, { headers: xeroHeaders });
+        if (!r.ok) {
+          const body = await r.text();
+          console.error("[xero-reports] export P&L failed:", { month: mk, status: r.status, body });
+          return { error: r.status === 429 ? "Xero is rate limiting requests right now. Try again in a minute." : `Xero rejected a monthly P&L request (${xeroFailureDetail(r.status, body)}).` };
+        }
+        const data = await r.json();
+        return { month: mk, ...exportLinesFromReport(data.Reports && data.Reports[0], directory, true) };
+      });
+      const failure = fetched.find((f) => f && f.error);
+      if (failure) return res.status(502).json({ error: failure.error });
+      const done = fetched.filter(Boolean);
+      const excluded = [...new Set(done.flatMap((f) => f.excluded))].sort();
+      const payload = {
+        year: exYear,
+        baseCurrency: "GBP",
+        months: done.map((f) => ({ month: f.month, usdPerGbp: rates[f.month] && Number(rates[f.month].GBP) > 0 ? Number(rates[f.month].GBP) : null, lines: f.lines })),
+        excludedLabels: excluded,
+      };
+      assertNoNames(payload, directory.people);
+      return res.status(200).json(payload);
+    } catch (e) {
+      const f = exportFailure(e, "P&L export");
+      return res.status(f.status).json(f.body);
+    }
+  }
+
+  if (req.query.action === "export-balance-sheet") {
+    // The latest month end: the last day of last month.
+    const now = new Date();
+    const asAt = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0)).toISOString().slice(0, 10);
+    try {
+      const directory = buildPeopleDirectory((await kv.get("atlas-fee-records")) || []);
+      const r = await fetch(`https://api.xero.com/api.xro/2.0/Reports/BalanceSheet?date=${asAt}`, { headers: xeroHeaders });
+      if (!r.ok) {
+        const body = await r.text();
+        console.error("[xero-reports] export balance sheet failed:", { asAt, status: r.status, body });
+        return res.status(502).json({ error: r.status === 429 ? "Xero is rate limiting requests right now. Try again in a minute." : `Xero rejected the balance sheet request (${xeroFailureDetail(r.status, body)}).` });
+      }
+      const data = await r.json();
+      // Pay-related lines (PAYE and NI payable, accrued wages, pension liabilities) are left out
+      // here too, and listed by name only. Reported totals stay as Xero reports them.
+      const { lines, excluded } = exportLinesFromReport(data.Reports && data.Reports[0], directory, true);
+      const cashRow = lines.find((l) => l.kind === "total" && /^total\s+(bank|cash)/i.test(l.label));
+      const debtLines = lines.filter((l) => l.kind === "line" && isDebtLabel(l.label) && /liabilit/i.test(l.section || ""));
+      const payload = {
+        asAt,
+        baseCurrency: "GBP",
+        lines,
+        cash: cashRow ? cashRow.amount : null,
+        debt: { lines: debtLines, total: debtLines.reduce((sum, l) => sum + l.amount, 0) },
+        excludedLabels: [...new Set(excluded)].sort(),
+      };
+      assertNoNames(payload, directory.people);
+      return res.status(200).json(payload);
+    } catch (e) {
+      const f = exportFailure(e, "balance sheet export");
+      return res.status(f.status).json(f.body);
+    }
+  }
+
+  if (req.query.action === "export-receivables") {
+    const now = new Date();
+    const asAt = now.toISOString().slice(0, 10);
+    const windowFrom = new Date(Date.UTC(now.getUTCFullYear() - 1, now.getUTCMonth(), now.getUTCDate())).toISOString().slice(0, 10);
+    try {
+      const directory = buildPeopleDirectory((await kv.get("atlas-fee-records")) || []);
+      const unpaid = await fetchUnpaidInvoices("ACCREC", xeroHeaders);
+      if (unpaid.error) return res.status(502).json({ error: unpaid.error });
+      const dueSince = await fetchInvoicesDueSince("ACCREC", windowFrom, xeroHeaders);
+      if (dueSince.error) return res.status(502).json({ error: dueSince.error });
+      const payload = buildReceivablesExport(unpaid.invoices, dueSince.invoices, asAt, windowFrom, directory);
+      payload.truncated = !!(unpaid.truncated || dueSince.truncated);
+      assertNoNames(payload, directory.people);
+      return res.status(200).json(payload);
+    } catch (e) {
+      const f = exportFailure(e, "receivables export");
+      return res.status(f.status).json(f.body);
+    }
+  }
 
   if (req.query.action === "pl-monthly") {
     const plYear = parseInt(req.query.year, 10) || new Date().getUTCFullYear();
@@ -1348,3 +1621,6 @@ module.exports.plFiguresFromReport = plFiguresFromReport;
 module.exports.bankSummaryFromReport = bankSummaryFromReport;
 module.exports.cashMovementFromBalanceSheets = cashMovementFromBalanceSheets;
 module.exports.xeroFailureDetail = xeroFailureDetail;
+module.exports.exportLinesFromReport = exportLinesFromReport;
+module.exports.buildReceivablesExport = buildReceivablesExport;
+module.exports.parseReportAmount = parseReportAmount;
