@@ -2452,6 +2452,223 @@ function CompactChange({ changes }) {
   );
 }
 
+// ===================== Export Deck Data =====================
+// One Excel file from Xero and Atlas data, for people outside the business: people are
+// initials, clients are Client A, B, C, and no salary or commission is in it. The data is
+// fetched through the existing, login-protected endpoints (nothing public), anonymised on
+// the server, and the workbook is built here in the browser. It is all or nothing: if any
+// part fails, nothing is downloaded, so a half-empty file can never be sent by mistake.
+
+const DECK_SHEETJS_URL = "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js";
+const DECK_FROM_YEAR = 2023;
+
+function deckLoadSheetJs() {
+  return new Promise((resolve, reject) => {
+    if (window.XLSX) return resolve(window.XLSX);
+    const s = document.createElement("script");
+    s.src = DECK_SHEETJS_URL;
+    s.onload = () => (window.XLSX ? resolve(window.XLSX) : reject(new Error("The spreadsheet library loaded but is not usable.")));
+    s.onerror = () => reject(new Error("Couldn't load the spreadsheet library. Check your connection and try again."));
+    document.head.appendChild(s);
+  });
+}
+
+// Lines from several months merged into one list that keeps each line next to its neighbours,
+// so a line that first appears in a later month still sits in its own section, not after Net Profit.
+function deckMergeLines(months) {
+  const order = [];
+  const info = {};
+  for (const m of months) {
+    let prevKey = null;
+    for (const l of m.lines) {
+      const key = `${l.section || ""}|${l.label}`;
+      if (!info[key]) {
+        info[key] = { section: l.section || "", label: l.label, kind: l.kind, values: {} };
+        const at = prevKey === null ? 0 : order.indexOf(prevKey) + 1;
+        order.splice(at, 0, key);
+      }
+      info[key].values[m.month] = l.amount;
+      prevKey = key;
+    }
+  }
+  return order.map((k) => info[k]);
+}
+
+// The tabs, as plain rows, from the data the endpoints returned. Pure: no browser, no library.
+function deckSheetsFromData({ atlas, plYears, bs, rc, generatedAt }) {
+  const sheets = [];
+  const blank = [];
+
+  // 1. Monthly P&L
+  const months = plYears.flatMap((y) => y.months);
+  const monthKeys = months.map((m) => m.month);
+  sheets.push({ name: "1 Monthly P&L", widths: [24, 38], rows: [
+    [`Monthly profit and loss from ${monthKeys[0] || DECK_FROM_YEAR}, in GBP (Xero). Totals are as Xero reports them and include staff costs, which are not itemised.`],
+    blank,
+    ["Section", "Line", ...monthKeys],
+    ["", "USD per £1 used for USD fees (Atlas monthly rate)", ...months.map((m) => (m.usdPerGbp === null || m.usdPerGbp === undefined ? null : m.usdPerGbp))],
+    ...deckMergeLines(months).map((l) => [l.section, l.label, ...monthKeys.map((k) => (l.values[k] === undefined ? null : l.values[k]))]),
+  ] });
+
+  // 2. Balance sheet
+  sheets.push({ name: "2 Balance sheet", widths: [28, 44, 16], rows: [
+    [`Balance sheet at ${bs.asAt}, in GBP (Xero)`],
+    blank,
+    ["Cash (total of bank accounts)", null, bs.cash],
+    ["Debt (loans, overdrafts and credit cards)", null, bs.debt.total],
+    ...bs.debt.lines.map((l) => ["", l.label, l.amount]),
+    blank,
+    ["Section", "Line", "Amount"],
+    ...bs.lines.map((l) => [l.section || "", l.label, l.amount]),
+  ] });
+
+  // 3. Receivables
+  const t = rc.aged.totals;
+  sheets.push({ name: "3 Receivables", widths: [14, 14, 14, 14, 14, 14, 16, 12, 14], rows: [
+    [`Aged receivables at ${rc.asAt}, in GBP (Xero). Customers are numbered, largest balance first.`],
+    ["Debtor", "Current", "1 to 30 days", "31 to 60 days", "61 to 90 days", "Over 90 days", "Total"],
+    ...rc.aged.contacts.map((c) => [c.debtor, c.current, c.d1_30, c.d31_60, c.d61_90, c.older, c.total]),
+    ["Total", t.current, t.d1_30, t.d31_60, t.d61_90, t.older, t.total],
+    blank,
+    [`Invoices more than 30 days overdue: due in the last 12 months (from ${rc.windowFrom}) and paid more than 30 days late or still unpaid, plus any older invoice that is still unpaid and more than 30 days overdue.`],
+    ["Debtor", "Invoice date", "Due date", "Paid date", "Days overdue", "Status", "Value", "Currency", "Value (GBP)"],
+    ...rc.lateInvoices.map((l) => [l.debtor, l.invoiceDate, l.dueDate, l.paidDate, l.daysLate, l.state, l.value, l.currency, l.valueGBP]),
+  ] });
+
+  // 4. Revenue by client by year
+  const cr = atlas.clientRevenue;
+  sheets.push({ name: "4 Revenue by client", widths: [14, ...cr.years.map(() => 14), 16], rows: [
+    [`Fee revenue by client by year, in ${cr.currency}, as reported on the Company page (by start date, with the agreed uplift). Clients are lettered, largest first.`],
+    ["Client", ...cr.years, "Total"],
+    ...cr.rows.map((r) => [r.client, ...r.byYear, r.total]),
+    ["Total", ...cr.yearTotals, cr.yearTotals.reduce((s, v) => s + v, 0)],
+  ] });
+
+  // 5. Deals by consultant
+  sheets.push({ name: "5 Deals by consultant", widths: [12, 14, 14, 14, 14, 10], rows: [
+    ["Deals by consultant, in the currency each fee was recorded in. Consultants are shown by initials."],
+    ["Consultant", "Type", "Start date", "Deal date", "Fee value", "Currency"],
+    ...atlas.deals.map((d) => [d.consultant, d.type, d.startDate, d.dealDate, d.feeValue, d.currency]),
+  ] });
+
+  // 6. Days to first deal
+  sheets.push({ name: "6 Days to first deal", widths: [12, 14, 16, 10, 40, 22], rows: [
+    ["Days from each consultant's start date to their first placement. Consultants are shown by initials."],
+    ["Consultant", "Start date", "First deal date", "Days", "Note", "Days since start (no deal yet)"],
+    ...atlas.daysToFirstDeal.map((d) => [d.consultant, d.startDate, d.firstDealDate, d.days, d.note, d.daysSinceStartWithNoDeal]),
+  ] });
+
+  // 7. Headcount and leavers
+  sheets.push({ name: "7 Headcount and leavers", widths: [12, 18, 18, 14, 10, 20, 20, 14], rows: [
+    ["Headcount at each month end (today for the current month) and leavers in the month. Average is time weighted."],
+    ["Month", "Fee earners", "Fee earners (average)", "Coordinators", "Total", "Leavers: fee earners", "Leavers: coordinators", "Month in progress"],
+    ...atlas.headcount.map((h) => [h.month, h.feeEarners, h.feeEarnersAverage, h.coordinators, h.total, h.leaversFeeEarners, h.leaversCoordinators, h.partial ? "Yes" : ""]),
+  ] });
+
+  // 8. Average fee and revenue per head
+  sheets.push({ name: "8 Fee and revenue per head", widths: [10, 12, 12, 16, 16, 16, 16, 16, 18, 18, 20], rows: [
+    ["Average fee (per placement) and revenue per head (per average fee-earning headcount), by year. Both are given in GBP and in USD, as labelled."],
+    ["Year", "Placements", "Onsite fees", "Revenue (GBP)", "Revenue (USD)", "Average fee (GBP)", "Average fee (USD)", "Average headcount", "Revenue per head (GBP)", "Revenue per head (USD)", "Note"],
+    ...atlas.perYear.map((y) => [y.year, y.placements, y.onsiteFees, y.revenueGBP, y.revenueUSD, y.averageFeeGBP, y.averageFeeUSD, y.averageHeadcount, y.revenuePerHeadGBP, y.revenuePerHeadUSD, y.partial ? "Year to date" : ""]),
+  ] });
+
+  // 9. Agreed placements for next year
+  const an = atlas.agreedNextYear;
+  sheets.push({ name: "9 Agreed next year", widths: [14, 14, 14, 14, 10], rows: [
+    [`Placements agreed for ${an.year} (starting in ${an.year}), in the currency recorded.`],
+    ["Consultant", "Deal date", "Start date", "Fee value", "Currency"],
+    ...an.placements.map((a) => [a.consultant, a.dealDate, a.startDate, a.feeValue, a.currency]),
+    ...Object.entries(an.totalsByCurrency).map(([cur, v]) => ["Total", null, null, v, cur]),
+    blank,
+    ["Open roles with a minimum fee: not included in this version."],
+  ] });
+
+  // Notes
+  sheets.push({ name: "Notes", widths: [110], rows: [
+    [`Reload deck data, generated ${generatedAt}`],
+    blank,
+    ["Anonymised. People are initials. Clients are Client A, B, C (largest first, the same letter on every tab) and Xero customers are Debtor 1, 2, 3."],
+    ["Salary and commission are not included. P&L and balance sheet lines that are pay are left out, but the reported totals (expenses, profit) still include them."],
+    ["The P&L covers complete months only. The USD rate is the Atlas monthly rate (USD per £1) used to convert USD fees to GBP; Xero converts its own foreign currency invoices at its own rates."],
+    ["Revenue is by start date and follows the Company page, which includes the agreed uplift on some clients."],
+    ["Open roles with a minimum fee are not in this version."],
+    // Anything the receivables export could not check is said out loud, never left as a silent gap.
+    ...(rc.diagnostics && rc.diagnostics.missingPaidDate ? [[`${rc.diagnostics.missingPaidDate} paid invoice(s) had no paid date in Xero, so they could not be checked for lateness and are not in the overdue list.`]] : []),
+    ...(rc.diagnostics && rc.diagnostics.missingRate ? [[`${rc.diagnostics.missingRate} unpaid foreign currency invoice(s) had no exchange rate on the invoice and are left out of the GBP totals.`]] : []),
+    ...(rc.truncated ? [["Xero returned more invoices than this export reads, so the receivables tab may be incomplete."]] : []),
+    blank,
+    ["P&L lines left out (names only):"],
+    ...(plYears.flatMap((y) => y.excludedLabels || []).filter((v, i, a) => a.indexOf(v) === i).sort().map((n) => [`   ${n}`])),
+    blank,
+    ["Balance sheet lines left out (names only):"],
+    ...((bs.excludedLabels || []).map((n) => [`   ${n}`])),
+  ] });
+  return sheets;
+}
+
+function deckBuildWorkbook(XLSX, sheets) {
+  const wb = XLSX.utils.book_new();
+  for (const s of sheets) {
+    const ws = XLSX.utils.aoa_to_sheet(s.rows);
+    if (s.widths) ws["!cols"] = s.widths.map((w) => ({ wch: w }));
+    XLSX.utils.book_append_sheet(wb, ws, s.name);
+  }
+  return wb;
+}
+
+function DeckExportButton({ token }) {
+  const [busy, setBusy] = useState(false);
+  const [step, setStep] = useState("");
+  const [error, setError] = useState("");
+
+  async function getJson(url) {
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    const body = await res.json().catch(() => null);
+    if (!res.ok || !body) throw new Error((body && body.error) || "A request failed.");
+    return body;
+  }
+
+  async function run() {
+    if (busy) return;
+    setBusy(true); setError("");
+    try {
+      const thisYear = new Date().getUTCFullYear();
+      const years = [];
+      for (let y = DECK_FROM_YEAR; y <= thisYear; y++) years.push(y);
+      const total = years.length + 4;
+      let done = 0;
+      const tick = (label) => { done += 1; setStep(`${label} (${done} of ${total})`); };
+      setStep(`Loading the spreadsheet library (0 of ${total})`);
+      const XLSX = await deckLoadSheetJs();
+      const atlas = await getJson("/api/company-overview?action=export-deck-data"); tick("Atlas and headcount done");
+      const plYears = [];
+      for (const y of years) { plYears.push(await getJson(`/api/xero-reports?action=export-pl-lines&year=${y}`)); tick(`P&L ${y} done`); }
+      const bs = await getJson("/api/xero-reports?action=export-balance-sheet"); tick("Balance sheet done");
+      const rc = await getJson("/api/xero-reports?action=export-receivables"); tick("Receivables done");
+      const generatedAt = new Date().toISOString().slice(0, 10);
+      const wb = deckBuildWorkbook(XLSX, deckSheetsFromData({ atlas, plYears, bs, rc, generatedAt }));
+      XLSX.writeFile(wb, `Reload deck data ${generatedAt}.xlsx`);
+      setStep("Downloaded");
+      setTimeout(() => setStep(""), 3000);
+    } catch (e) {
+      setStep("");
+      setError(`Export stopped, nothing was downloaded: ${(e && e.message) || "something went wrong."}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return React.createElement("div", { style: { display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 } },
+    React.createElement("button", {
+      onClick: run, disabled: busy,
+      title: "Downloads an anonymised Excel file of Xero and Atlas data. Salary and commission are not included.",
+      style: { ...ghostStyle, opacity: busy ? 0.7 : 1, cursor: busy ? "default" : "pointer" },
+    }, busy ? "Building the file…" : "Export Deck Data"),
+    step && React.createElement("div", { style: { fontSize: 11, color: INDIGO_MUTED } }, step),
+    error && React.createElement("div", { style: { fontSize: 12, color: MELON_LINK, maxWidth: 420, textAlign: "right" } }, error)
+  );
+}
+
 function CompanyOverviewPage({ token }) {
   const [year, setYear] = useState(new Date().getUTCFullYear());
   const [period, setPeriod] = useState("year");
@@ -2691,6 +2908,7 @@ function CompanyOverviewPage({ token }) {
       React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 } },
         React.createElement(SectionTitle, { title: "Company Overview" }),
         React.createElement("div", { style: { display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" } },
+          React.createElement(DeckExportButton, { token }),
           React.createElement("div", { style: { display: "flex", gap: 6 } },
             YEAR_OPTIONS.map(y => React.createElement("button", {
               key: y, onClick: () => setYear(y),
