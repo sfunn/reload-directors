@@ -101,3 +101,4 @@ module.exports = async (req, res) => {
     averageDaysToFirstPlacement: averageDays,
   });
 };
+module.exports.firstGenuinePlacementRecordFor = firstGenuinePlacementRecordFor;
