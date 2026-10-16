@@ -1,6 +1,8 @@
 const { getDirectorFromRequest, kv } = require("./_directorAuth");
 const { resolveUplift, resolvedRevenueGBP, getOverrides, isExcludedProjectRecord } = require("./_dealRevenueUplift");
-const { EMPLOYMENT_KEY } = require("./roster");
+const { EMPLOYMENT_KEY, ROSTER } = require("./roster");
+const { buildPeopleDirectory, assertNoNames, clientLabel, normaliseClientName } = require("./_exportHelpers");
+const { firstGenuinePlacementRecordFor } = require("./time-to-productivity");
 const { buildTimeline, countAsOf, averageHeadcountOverPeriod } = require("./headcount");
 const { MANUAL_METRICS_KEY, normalizeYearMetrics, resolveManualMetricsForPeriod, saveManualMetricForPeriod } = require("./_manualMetricsStore");
 
@@ -459,6 +461,135 @@ function addEntityChanges(currentList, prevList, sameLastYearList, keyField) {
   });
 }
 
+// ---- Export Deck Data (Atlas and headcount tabs) ---------------------------------
+// Everything the Excel export needs from Atlas fees, placements and the team dates,
+// already anonymised: people are initials, clients are Client A, B, C (the largest
+// first, the same letter in every tab). It never reads the salary history in the
+// employment records, only start and leaving dates. A final check refuses to answer if
+// any real name (people, clients, candidates) is still anywhere in the result.
+const DECK_FROM_YEAR = 2023;
+
+async function computeDeckExport(shared, now) {
+  const { records, placements, allRates, overrides, employment } = shared;
+  const directory = buildPeopleDirectory(records);
+  const currentYear = now.getUTCFullYear();
+  const today = now.toISOString().slice(0, 10);
+  const years = [];
+  for (let y = DECK_FROM_YEAR; y <= currentYear; y++) years.push(y);
+  const pad2 = (n) => String(n).padStart(2, "0");
+  const diffDays = (later, earlier) => Math.round((Date.parse(`${later}T00:00:00Z`) - Date.parse(`${earlier}T00:00:00Z`)) / 86400000);
+  const placementOf = (r) => (r.placementId ? placements[r.placementId] : null);
+  const clientOf = (r) => { const pl = placementOf(r); return (pl && pl.clientCompanyName) || r.projectClientName || "Unknown"; };
+  const startDateOf = (r) => { const pl = placementOf(r); return (pl && pl.startDate) || r.feeDate || null; };
+  const isPlacement = (r) => { const pl = placementOf(r); return !!(pl && pl.candidateName); };
+
+  // 1) Revenue by client by year: the Company page's own revenue function and filters.
+  const clientAgg = {};
+  const yearTotals = {};
+  for (const r of records) {
+    if (isExcludedProjectRecord(r)) continue;
+    const y = effectiveYear(r, placements);
+    if (!years.includes(y)) continue;
+    const gbp = resolvedRevenueGBP(r, clientOf(r), y, overrides, isPlacement(r), allRates);
+    if (gbp === null) continue;
+    const key = normaliseClientName(clientOf(r));
+    if (!clientAgg[key]) clientAgg[key] = { key, byYear: {}, total: 0 };
+    clientAgg[key].byYear[y] = (clientAgg[key].byYear[y] || 0) + gbp;
+    clientAgg[key].total += gbp;
+    yearTotals[y] = (yearTotals[y] || 0) + gbp;
+  }
+  const ranked = Object.values(clientAgg).sort((a, b) => b.total - a.total || a.key.localeCompare(b.key));
+  const clientRevenue = {
+    currency: "GBP",
+    years,
+    rows: ranked.map((c, i) => ({ client: clientLabel(i), byYear: years.map((y) => Math.round((c.byYear[y] || 0) * 100) / 100), total: Math.round(c.total * 100) / 100 })),
+    yearTotals: years.map((y) => Math.round((yearTotals[y] || 0) * 100) / 100),
+  };
+
+  // 2) Deals by consultant, in the currency each fee was recorded in.
+  const deals = records
+    .filter((r) => !isExcludedProjectRecord(r) && r.consultantId)
+    .map((r) => ({ consultant: directory.initialsFor(r.consultantId), type: isPlacement(r) ? "Placement" : "Onsite fee", startDate: startDateOf(r), dealDate: r.feeDate || null, feeValue: Number(r.shareAmount), currency: r.currency || null }))
+    .sort((a, b) => a.consultant.localeCompare(b.consultant) || String(a.startDate).localeCompare(String(b.startDate)));
+
+  // 3) Days from each consultant's start date to their first deal, by the same
+  //    definition of "first deal" the Time to Productivity page uses.
+  const daysToFirstDeal = Object.entries(ROSTER)
+    .filter(([, info]) => info.category === "feeEarning")
+    .map(([id]) => {
+      const emp = employment[id] || {};
+      const first = firstGenuinePlacementRecordFor(id, records, placements);
+      const startDate = emp.startDate || null;
+      const firstDealDate = first ? first.feeDate : null;
+      let days = null, note;
+      if (!startDate) note = "Start date not recorded";
+      else if (!first) { note = "No deal yet"; days = null; }
+      else { days = diffDays(firstDealDate, startDate); note = days < 0 ? "First deal is before the recorded start date" : "First deal made"; }
+      return { consultant: directory.initialsFor(id), startDate, firstDealDate, days, daysSinceStartWithNoDeal: startDate && !first ? diffDays(today, startDate) : null, note };
+    })
+    .sort((a, b) => a.consultant.localeCompare(b.consultant));
+
+  // 4) Headcount and leavers by month, from start and leaving dates only.
+  const feeTl = buildTimeline(employment, "feeEarning");
+  const coordTl = buildTimeline(employment, "coordinator");
+  const headcount = [];
+  for (let y = DECK_FROM_YEAR; y <= currentYear; y++) {
+    const lastMonth = y === currentYear ? now.getUTCMonth() + 1 : 12;
+    for (let m = 1; m <= lastMonth; m++) {
+      const from = `${y}-${pad2(m)}-01`;
+      const monthEnd = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+      const next = new Date(Date.UTC(y, m, 1)).toISOString().slice(0, 10);
+      const upTo = monthEnd < today ? monthEnd : today;
+      const avgTo = next < today ? next : today;
+      const leavers = (category) => Object.entries(ROSTER).filter(([id, info]) => info.category === category && employment[id] && employment[id].terminationDate && employment[id].terminationDate >= from && employment[id].terminationDate <= monthEnd).length;
+      const fe = countAsOf(feeTl, upTo), co = countAsOf(coordTl, upTo);
+      headcount.push({
+        month: `${y}-${pad2(m)}`,
+        partial: monthEnd >= today,
+        feeEarners: fe, coordinators: co, total: fe + co,
+        feeEarnersAverage: avgTo > from ? Math.round(averageHeadcountOverPeriod(feeTl, from, avgTo) * 100) / 100 : fe,
+        leaversFeeEarners: leavers("feeEarning"), leaversCoordinators: leavers("coordinator"),
+      });
+    }
+  }
+
+  // 5) Average fee and revenue per head, by year, in GBP and in USD.
+  const perYear = [];
+  for (const y of years) {
+    const o = await computeOverviewForPeriod(y, "year", null, null, shared);
+    perYear.push({
+      year: y, partial: y === currentYear,
+      placements: o.distinctPlacements, onsiteFees: o.onsiteFeeCount,
+      revenueGBP: o.totalRevenueGBP, revenueUSD: o.totalRevenueUSD,
+      averageFeeGBP: o.averageFeeGBP, averageFeeUSD: o.averageFeeUSD,
+      averageHeadcount: o.averageHeadcountForPeriod,
+      revenuePerHeadGBP: o.revenuePerHeadGBP, revenuePerHeadUSD: o.revenuePerHeadUSD,
+    });
+  }
+
+  // 6) Placements agreed for next year: placements starting next year, in the currency recorded.
+  const agreed = records
+    .filter((r) => !isExcludedProjectRecord(r) && r.consultantId && isPlacement(r) && effectiveYear(r, placements) === currentYear + 1)
+    .map((r) => ({ consultant: directory.initialsFor(r.consultantId), dealDate: r.feeDate || null, startDate: startDateOf(r), feeValue: Number(r.shareAmount), currency: r.currency || null }))
+    .sort((a, b) => String(a.startDate).localeCompare(String(b.startDate)) || a.consultant.localeCompare(b.consultant));
+  const agreedTotals = {};
+  for (const a of agreed) agreedTotals[a.currency || "?"] = (agreedTotals[a.currency || "?"] || 0) + a.feeValue;
+
+  const payload = {
+    generatedAt: now.toISOString(),
+    currentYear,
+    clientRevenue, deals, daysToFirstDeal, headcount, perYear,
+    agreedNextYear: { year: currentYear + 1, placements: agreed, totalsByCurrency: agreedTotals },
+    openRoles: { included: false, note: "Open roles with a minimum fee are not included in this version." },
+  };
+  // Nothing identifying may be left: people, clients and candidates are all checked.
+  const guard = [...directory.people];
+  for (const r of records) guard.push({ name: clientOf(r), always: true });
+  for (const pl of Object.values(placements)) if (pl && pl.candidateName) guard.push({ name: pl.candidateName, always: true });
+  assertNoNames(payload, guard);
+  return payload;
+}
+
 module.exports = async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -469,6 +600,17 @@ module.exports = async (req, res) => {
   if (!director) return res.status(401).json({ error: "Director access required." });
 
   const action = req.query.action;
+
+  // Export Deck Data: anonymised Atlas and headcount tabs. Read-only, director login only.
+  if (req.method === "GET" && action === "export-deck-data") {
+    try {
+      const shared = await loadSharedData();
+      return res.status(200).json(await computeDeckExport(shared, new Date()));
+    } catch (e) {
+      console.error("[company-overview] export-deck-data error:", e);
+      return res.status(500).json({ error: e && /^Export blocked/.test(e.message) ? e.message : "Something went wrong building the deck export. Check the Vercel logs for details." });
+    }
+  }
 
   if (req.method === "GET" && (!action || action === "overview")) {
     const year = parseInt(req.query.year, 10) || new Date().getUTCFullYear();
@@ -581,3 +723,4 @@ module.exports = async (req, res) => {
 module.exports.computeEBITDA = computeEBITDA;
 module.exports.effectiveYear = effectiveYear;
 module.exports.effectiveMonth = effectiveMonth;
+module.exports.computeDeckExport = computeDeckExport;
